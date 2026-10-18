@@ -482,6 +482,7 @@ impl TextInputState {
     }
 
     /// Set the maximum allowed grapheme-cluster count.
+    #[must_use]
     pub fn max_length(mut self, len: usize) -> Self {
         self.max_length = Some(len);
         self
@@ -520,6 +521,7 @@ impl TextInputState {
     /// let pin = TextInputState::with_placeholder("PIN").masked(true);
     /// assert!(pin.masked);
     /// ```
+    #[must_use]
     pub fn masked(mut self, on: bool) -> Self {
         self.masked = on;
         self
@@ -650,6 +652,7 @@ impl TextInputState {
 
     /// Builder: whether `Ctrl+A` selects all text while focused (default
     /// `true`). Set `false` to leave `Ctrl+A` to app shortcuts.
+    #[must_use]
     pub fn ctrl_a_select_all(mut self, on: bool) -> Self {
         self.editing.ctrl_a_disabled = !on;
         self
@@ -1081,6 +1084,7 @@ impl FormField {
     }
 
     /// Set placeholder text for this field's input.
+    #[must_use]
     pub fn placeholder(mut self, p: impl Into<String>) -> Self {
         self.input.placeholder = p.into();
         self
@@ -1102,12 +1106,14 @@ impl FormField {
     /// tb.assert_contains("••••••");
     /// tb.assert_not_contains("s3cret");
     /// ```
+    #[must_use]
     pub fn masked(mut self, on: bool) -> Self {
         self.input.masked = on;
         self
     }
 
     /// Builder: shorthand for [`masked(true)`](Self::masked).
+    #[must_use]
     pub fn password(self) -> Self {
         self.masked(true)
     }
@@ -1124,6 +1130,7 @@ impl FormField {
     /// let form = FormState::new().field(FormField::new("Courriel").key("email"));
     /// assert_eq!(form.get("email"), Some(""));
     /// ```
+    #[must_use]
     pub fn key(mut self, key: impl Into<String>) -> Self {
         self.key = Some(key.into());
         self
@@ -1151,18 +1158,21 @@ impl FormField {
     ///     .validate(validators::max_len(50, "too long"));
     /// # let _ = field;
     /// ```
+    #[must_use]
     pub fn validate(mut self, f: impl Fn(&str) -> Result<(), String> + 'static) -> Self {
         self.validators.push(Validator::new(f));
         self
     }
 
     /// Run this field's validators on every change (each keystroke).
+    #[must_use]
     pub fn on_change(mut self) -> Self {
         self.trigger = ValidateTrigger::OnChange;
         self
     }
 
     /// Run this field's validators when it loses focus (the default).
+    #[must_use]
     pub fn on_blur(mut self) -> Self {
         self.trigger = ValidateTrigger::OnBlur;
         self
@@ -1171,6 +1181,7 @@ impl FormField {
     /// Disable automatic validation; the app must call
     /// [`run_validators`](Self::run_validators) or
     /// [`FormState::validate_all`] explicitly.
+    #[must_use]
     pub fn manual(mut self) -> Self {
         self.trigger = ValidateTrigger::Manual;
         self
@@ -1312,6 +1323,7 @@ impl FormState {
     }
 
     /// Add a field and return the updated form for chaining.
+    #[must_use]
     pub fn field(mut self, field: FormField) -> Self {
         self.fields.push(field);
         self
@@ -1864,6 +1876,7 @@ impl TextareaState {
 
     /// Builder: whether `Ctrl+A` selects all text while focused (default
     /// `true`).
+    #[must_use]
     pub fn ctrl_a_select_all(mut self, on: bool) -> Self {
         self.ctrl_a_disabled = !on;
         self
@@ -1958,12 +1971,14 @@ impl TextareaState {
     }
 
     /// Set the maximum grapheme-cluster count, including logical newlines.
+    #[must_use]
     pub fn max_length(mut self, len: usize) -> Self {
         self.max_length = Some(len);
         self
     }
 
     /// Enable soft word-wrap at the given display-column width.
+    #[must_use]
     pub fn word_wrap(mut self, width: u32) -> Self {
         self.wrap_width = Some(width);
         self
@@ -1973,6 +1988,7 @@ impl TextareaState {
     ///
     /// When the history exceeds this cap the oldest step is dropped.
     /// Setting `0` disables undo recording — the field is read every keypress.
+    #[must_use]
     pub fn history_max(mut self, cap: usize) -> Self {
         self.history.max = cap;
         self
@@ -1996,6 +2012,7 @@ impl TextareaState {
     /// assert_eq!(state.history_bytes_cap(), 1 << 20);
     /// assert_eq!(state.history_bytes(), 0);
     /// ```
+    #[must_use]
     pub fn history_max_bytes(mut self, bytes: usize) -> Self {
         self.history.max_bytes = bytes;
         self
@@ -2235,6 +2252,7 @@ impl NumberInputState {
     /// let s = NumberInputState::new(0.0, 0.0, 1.0).step(0.1);
     /// assert!((s.step - 0.1).abs() < f64::EPSILON);
     /// ```
+    #[must_use]
     pub fn step(mut self, step: f64) -> Self {
         self.step = normalize_numeric_step(step);
         self

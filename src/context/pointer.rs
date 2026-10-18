@@ -6,7 +6,7 @@
 //! slot: the topmost, innermost
 //! interaction slot whose previous-frame rect contains the press. Responses
 //! report `clicked` / `right_clicked` / `double_clicked` only for that winner,
-//! so a popup button no longer also clicks the container behind it and a
+//! so a popup button does not also click the container behind it and a
 //! clickable row inside a clickable card fires once. Ancestors opt back in
 //! with [`ContainerBuilder::bubble_clicks`]; raw containment stays available
 //! as [`Response::clicked_any`].
@@ -882,7 +882,7 @@ impl Context {
     /// Build the pointer part of a [`Response`] for slot `id` at `rect`.
     pub(crate) fn pointer_response(&self, id: usize, rect: Rect) -> Response {
         let hovered = self.mouse_pos.is_some_and(|pos| rect_contains(&rect, pos));
-        // v0.21.1: per-widget wheel delta is hover-gated — only the widget
+        // Per-widget wheel delta is hover-gated: only the widget
         // under the cursor when the wheel moved sees a non-zero delta.
         let scroll_delta = self
             .scroll_pos
@@ -926,7 +926,7 @@ impl Context {
 impl ContainerBuilder<'_> {
     /// Also report clicks that land on a nested interactive descendant.
     ///
-    /// Since v0.26 a press activates only the topmost, innermost interactive
+    /// A press activates only the topmost, innermost interactive
     /// slot under the pointer: a clickable row inside a clickable card sets
     /// `clicked` on the row, not on the card. Call `bubble_clicks()` on the
     /// outer container to receive those clicks as well (like a DOM handler

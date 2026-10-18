@@ -35,7 +35,7 @@ pub(crate) use tree::{
 
 /// Test-only entry point exposing `wrap_segments` for allocation-budget tests.
 ///
-/// Not part of the stable API. Used by `tests/v020_perf_alloc.rs`.
+/// Not part of the stable API. Used by `tests/alloc_budget.rs`.
 #[doc(hidden)]
 pub fn __bench_wrap_segments(
     segments: &[(String, Style)],
@@ -46,8 +46,8 @@ pub fn __bench_wrap_segments(
 
 /// Test-only entry point exposing the modal-aware dim path.
 ///
-/// Not part of the stable API. Used by `tests/v020_perf_alloc.rs` and the
-/// `examples/v020_perf_audit` demo.
+/// Not part of the stable API. Used by `tests/alloc_budget.rs` and the
+/// `examples/perf_audit.rs` demo.
 #[doc(hidden)]
 pub fn __bench_dim_buffer_around(buf: &mut Buffer, modal_rect: Rect) {
     render::__bench_dim_buffer_around(buf, modal_rect);

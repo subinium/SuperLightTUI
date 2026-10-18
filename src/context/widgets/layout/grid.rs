@@ -1,3 +1,6 @@
+//! Grid layout: `grid`, `grid_with` and `grid_columns` place children in
+//! fixed or specified columns.
+
 use super::*;
 
 impl Context {

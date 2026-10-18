@@ -1,3 +1,5 @@
+//! Bar chart widgets: horizontal and vertical, grouped and stacked bars.
+
 use super::*;
 
 struct VerticalBarLayout {
@@ -335,7 +337,10 @@ impl Context {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "private renderer fed by the precomputed bar layout"
+    )]
     fn render_vertical_bar_body(
         &mut self,
         bars: &[Bar],

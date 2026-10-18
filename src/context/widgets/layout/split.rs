@@ -1,8 +1,8 @@
-// Split-pane container widgets — `split_pane` (horizontal) and
-// `vsplit_pane` (vertical). Each renders two panes separated by a 1-cell
-// drag handle. Mouse drag and arrow-key adjustment update the stored ratio.
-//
-// Introduced in v0.20.0 (#223).
+//! Split-pane container widgets — `split_pane` (horizontal) and
+//! `vsplit_pane` (vertical). Each renders two panes separated by a 1-cell
+//! drag handle. Mouse drag and arrow-key adjustment update the stored ratio.
+//!
+//! Issue #223.
 
 use super::*;
 

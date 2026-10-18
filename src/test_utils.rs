@@ -3,6 +3,10 @@
 //! [`TestBackend`] renders a UI closure to an in-memory buffer without a real
 //! terminal. [`EventBuilder`] constructs event sequences for simulating user
 //! input. Together they enable snapshot and assertion-based UI testing.
+//!
+//! Every `assert_*` helper panics on mismatch, like [`assert!`], with a
+//! message that includes the rendered frame; each documents this under
+//! `# Panics`.
 
 use crate::buffer::Buffer;
 use crate::context::Context;
@@ -327,6 +331,10 @@ impl FrameRecord {
 
     /// Assert any row in this frame contains `expected`. Panics with a
     /// row-by-row dump on failure.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the assertion fails; that panic is the test failure report.
     pub fn assert_contains(&self, expected: &str) {
         for line in &self.lines {
             if line.contains(expected) {
@@ -373,6 +381,7 @@ impl TestBackend {
     /// });
     /// tb.assert_contains("OK");
     /// ```
+    #[must_use]
     pub fn with_run_config(mut self, config: RunConfig) -> Self {
         self.config = config;
         self
@@ -403,6 +412,7 @@ impl TestBackend {
     /// tb.frames()[0].assert_contains("frame 0");
     /// tb.frames()[2].assert_contains("frame 2");
     /// ```
+    #[must_use]
     pub fn record_frames(mut self) -> Self {
         if self.frames.is_none() {
             self.frames = Some(Vec::new());
@@ -529,7 +539,7 @@ impl TestBackend {
     /// Render one frame with `events`, keeping the focus, hover and hook
     /// state carried from the previous frame.
     ///
-    /// Since v0.26 this no longer resets focus to slot 0 before the frame, so
+    /// Focus is not reset to slot 0 before the frame, so
     /// "press Tab, then type" reaches the widget a user would see focused.
     /// It is [`step`](Self::step) for a one-off `FnOnce` closure. To force a
     /// focus slot (the pre-0.26 behaviour), call
@@ -611,7 +621,11 @@ impl TestBackend {
         s.trim_end().to_string()
     }
 
-    /// Assert that row y contains `expected` as a substring
+    /// Assert that row y equals `expected` (trailing spaces trimmed).
+    ///
+    /// # Panics
+    ///
+    /// Panics when the assertion fails; that panic is the test failure report.
     pub fn assert_line(&self, y: u32, expected: &str) {
         let line = self.line(y);
         assert_eq!(
@@ -621,6 +635,10 @@ impl TestBackend {
     }
 
     /// Assert that row y contains `expected` as a substring
+    ///
+    /// # Panics
+    ///
+    /// Panics when the assertion fails; that panic is the test failure report.
     pub fn assert_line_contains(&self, y: u32, expected: &str) {
         let line = self.line(y);
         assert!(
@@ -630,6 +648,10 @@ impl TestBackend {
     }
 
     /// Assert that any line in the buffer contains `expected`
+    ///
+    /// # Panics
+    ///
+    /// Panics when the assertion fails; that panic is the test failure report.
     pub fn assert_contains(&self, expected: &str) {
         for y in 0..self.height {
             if self.line(y).contains(expected) {
@@ -678,6 +700,10 @@ impl TestBackend {
     /// Assert that no row in the buffer contains `expected` as a substring.
     ///
     /// Panics with the offending row indices and contents on failure.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the assertion fails; that panic is the test failure report.
     pub fn assert_not_contains(&self, expected: &str) {
         let mut offending: Vec<(u32, String)> = Vec::new();
         for y in 0..self.height {
@@ -697,6 +723,10 @@ impl TestBackend {
     }
 
     /// Assert that row `y` does NOT contain `expected` as a substring.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the assertion fails; that panic is the test failure report.
     pub fn assert_line_not_contains(&self, y: u32, expected: &str) {
         let line = self.line(y);
         assert!(
@@ -709,6 +739,10 @@ impl TestBackend {
     ///
     /// Useful for verifying that cleared, padded, or overflow-suppressed rows
     /// render as empty.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the assertion fails; that panic is the test failure report.
     pub fn assert_empty_line(&self, y: u32) {
         let line = self.line(y);
         assert!(line.is_empty(), "Line {y}: expected empty, got {line:?}");
@@ -719,6 +753,10 @@ impl TestBackend {
     /// Useful for focused color/modifier regression checks without committing
     /// to a full-buffer snapshot. Panics with `(x, y)`, the actual style, and
     /// the expected style on mismatch.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the assertion fails; that panic is the test failure report.
     pub fn assert_style_at(&self, x: u32, y: u32, expected: Style) {
         let actual = self.buffer.get(x, y).style;
         assert_eq!(
@@ -790,6 +828,10 @@ impl TestBackend {
     /// that fall outside the buffer are treated as blanks. Panics with an
     /// aligned expected-vs-actual diff on mismatch.
     ///
+    /// # Panics
+    ///
+    /// Panics when the assertion fails; that panic is the test failure report.
+    ///
     /// # Example
     ///
     /// ```
@@ -851,6 +893,10 @@ impl TestBackend {
     /// run is located with `find_text` (per-row, left-to-right), then each of
     /// the `needle`'s `char`-count cells starting at the match is tested.
     /// Panics if the needle is absent or any covered cell fails the predicate.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the assertion fails; that panic is the test failure report.
     ///
     /// # Example
     ///
@@ -917,6 +963,10 @@ impl TestBackend {
     /// snapshot is right-padded to the buffer width), so callers can write
     /// trimmed expected strings. The panic message lists each differing row
     /// with `-` (expected) / `+` (actual) markers.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the assertion fails; that panic is the test failure report.
     ///
     /// # Example
     ///
@@ -1049,6 +1099,7 @@ impl<'a> TestSequence<'a> {
     ///
     /// Equivalent to a single frame tick — useful for letting hooks /
     /// animations advance between input steps.
+    #[must_use]
     pub fn tick(mut self, f: impl FnOnce(&mut Context) + 'a) -> Self {
         self.steps.push(TestStep {
             events: Vec::new(),
@@ -1058,6 +1109,7 @@ impl<'a> TestSequence<'a> {
     }
 
     /// Append a step that fires a single key-press event with no modifiers.
+    #[must_use]
     pub fn key(mut self, code: KeyCode, f: impl FnOnce(&mut Context) + 'a) -> Self {
         let events = vec![Event::Key(KeyEvent {
             code,
@@ -1078,6 +1130,7 @@ impl<'a> TestSequence<'a> {
     /// character into a single render step — useful when the per-character
     /// frame state is not the assertion target. For per-keystroke rendering,
     /// chain individual `.key(...)` calls.
+    #[must_use]
     pub fn type_string(mut self, s: &str, f: impl FnOnce(&mut Context) + 'a) -> Self {
         let events = s
             .chars()
@@ -1100,6 +1153,7 @@ impl<'a> TestSequence<'a> {
     ///
     /// Useful for mouse interactions, paste events, or sequences built
     /// with [`EventBuilder`].
+    #[must_use]
     pub fn events(mut self, events: Vec<Event>, f: impl FnOnce(&mut Context) + 'a) -> Self {
         self.steps.push(TestStep {
             events,
@@ -1219,6 +1273,7 @@ impl PtyBackend {
     /// e.g. to enable [`RunConfig::pointer_shapes`]. Session-level settings
     /// (mouse mode, kitty keyboard) do not apply: the capture terminal never
     /// writes session enter/exit sequences. Since 0.26.0.
+    #[must_use]
     pub fn with_run_config(mut self, config: RunConfig) -> Self {
         self.config = config;
         self
@@ -1227,6 +1282,7 @@ impl PtyBackend {
     /// Set the [`ColorDepth`](crate::ColorDepth) the flush pipeline encodes
     /// SGR colors with (e.g. truecolor vs 256-color). Returns `self` for
     /// chaining.
+    #[must_use]
     pub fn with_color_depth(mut self, depth: crate::style::ColorDepth) -> Self {
         self.color_depth = depth;
         self
@@ -1240,6 +1296,10 @@ impl PtyBackend {
 
     /// Render one frame with injected input `events`, capturing the emitted
     /// bytes. Returns the just-captured [`PtyFrame`].
+    ///
+    /// # Panics
+    ///
+    /// Panics only if an internal invariant is broken: the frame was pushed just before it is returned.
     pub fn render_with_events(
         &mut self,
         events: Vec<Event>,
@@ -1276,6 +1336,10 @@ impl PtyBackend {
     /// Raw bytes of the most recently rendered frame.
     ///
     /// Panics if no frame has been rendered yet.
+    ///
+    /// # Panics
+    ///
+    /// Panics if no frame has been rendered yet.
     pub fn last_raw(&self) -> &[u8] {
         &self.frames.last().expect("no frame rendered").raw
     }
@@ -1283,6 +1347,10 @@ impl PtyBackend {
     /// Assert the last frame's byte stream contains `needle`.
     ///
     /// Panics with an escaped + hex dump of the emitted bytes on a miss.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the assertion fails; that panic is the test failure report.
     pub fn assert_emits(&self, needle: &str) {
         let raw = self.last_raw();
         if find_subslice(raw, needle.as_bytes()).is_none() {
@@ -1299,6 +1367,10 @@ impl PtyBackend {
     /// Assert the last frame's byte stream does **not** contain `needle`.
     ///
     /// Panics with an escaped + hex dump on an unexpected hit.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the assertion fails; that panic is the test failure report.
     pub fn assert_not_emits(&self, needle: &str) {
         let raw = self.last_raw();
         if find_subslice(raw, needle.as_bytes()).is_some() {

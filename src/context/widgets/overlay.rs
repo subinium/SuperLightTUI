@@ -83,18 +83,21 @@ impl ModalOpts {
     }
 
     /// Enable or disable focus trapping (default `true`).
+    #[must_use]
     pub fn tab_trap(mut self, on: bool) -> Self {
         self.tab_trap = on;
         self
     }
 
     /// Pin the modal to `anchor` instead of centering it.
+    #[must_use]
     pub fn anchor(mut self, anchor: Anchor) -> Self {
         self.anchor = Some(anchor);
         self
     }
 
     /// Inset the anchored modal by `(dx, dy)` cells toward the center.
+    #[must_use]
     pub fn offset(mut self, dx: i32, dy: i32) -> Self {
         self.offset = (dx, dy);
         self

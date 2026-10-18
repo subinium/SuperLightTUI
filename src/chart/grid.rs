@@ -1,3 +1,6 @@
+//! Grid lines, legend rows and the value-to-cell mapping shared by the chart
+//! renderers.
+
 use super::*;
 use crate::width::UnicodeSegmentation;
 

@@ -1,3 +1,6 @@
+//! Built-in mouse text selection: region tracking across scroll views and
+//! the highlight overlay.
+
 use super::*;
 
 #[derive(Default)]

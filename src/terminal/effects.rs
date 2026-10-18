@@ -365,7 +365,6 @@ impl MetaEmitter {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct ClusterClasses(u8);
 
-#[allow(dead_code)]
 impl ClusterClasses {
     /// Emoji presentation selector U+FE0F.
     pub(crate) const VS16: Self = Self(1);
@@ -382,6 +381,7 @@ impl ClusterClasses {
         self.0 == 0
     }
 
+    #[cfg(test)]
     pub(crate) fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0 && other.0 != 0
     }
@@ -602,8 +602,7 @@ impl TerminalEffects {
     }
 
     /// Override the multiplexer seen by clipboard passthrough (tests).
-    #[cfg(any(test, feature = "pty-test"))]
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(super) fn set_multiplexer(&mut self, multiplexer: Option<MultiplexerKind>) {
         self.multiplexer = multiplexer;
     }

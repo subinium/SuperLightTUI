@@ -1,3 +1,6 @@
+//! List widgets: `list`, `list_reorderable` and the windowed
+//! `virtual_list` / `virtual_list_variable` renderers.
+
 use super::*;
 
 impl Context {

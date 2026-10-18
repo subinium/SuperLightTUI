@@ -5,7 +5,7 @@
 //! renders nothing while idle, keeps animations ticking, wakes promptly for
 //! keys, resizes and async messages, and still shows a delayed tooltip with
 //! no further input. The `#[ignore]`d `idle_cpu_report` records the idle CPU,
-//! output bytes and frame counts quoted in docs/PERFORMANCE.md.
+//! output bytes and frame counts quoted in docs/internals/performance.md.
 
 #![cfg(all(unix, feature = "crossterm"))]
 
@@ -465,7 +465,7 @@ fn idle_skip_delivers_async_messages_promptly() {
     assert!(p95[1] < 20.0, "skip-mode message p95 {:.2} ms", p95[1]);
 }
 
-/// Idle CPU, output bytes and frames over 30 s at 200x60 (docs/PERFORMANCE.md,
+/// Idle CPU, output bytes and frames over 30 s at 200x60 (docs/internals/performance.md,
 /// #414). Run with `cargo test --release --all-features --test pty_idle
 /// idle_cpu_report -- --ignored --nocapture`; `SLT_IDLE_REPORT_SECS` changes
 /// the window and `SLT_IDLE_REPORT_CASE=static|async` runs one case.

@@ -1,3 +1,6 @@
+//! [`Color`] (named, 256-color indexed and RGB), luminance, contrast and
+//! blending helpers, and color-depth downsampling.
+
 /// Terminal color.
 ///
 /// Covers the standard 16 named colors, 256-color palette indices, and
@@ -147,6 +150,7 @@ impl Color {
     /// let gray = white.blend_f64(black, 0.5);
     /// // ≈ Rgb(128, 128, 128)
     /// ```
+    #[must_use]
     pub fn blend_f64(self, other: Color, alpha: f64) -> Color {
         let alpha = if alpha.is_finite() {
             alpha.clamp(0.0, 1.0)
@@ -171,6 +175,7 @@ impl Color {
     ///
     /// Blends toward white. `amount = 0.0` returns the original color;
     /// `amount = 1.0` returns white.
+    #[must_use]
     pub fn lighten_f64(self, amount: f64) -> Color {
         Color::Rgb(255, 255, 255).blend_f64(self, amount)
     }
@@ -179,6 +184,7 @@ impl Color {
     ///
     /// Blends toward black. `amount = 0.0` returns the original color;
     /// `amount = 1.0` returns black.
+    #[must_use]
     pub fn darken_f64(self, amount: f64) -> Color {
         Color::Rgb(0, 0, 0).blend_f64(self, amount)
     }
@@ -217,6 +223,7 @@ impl Color {
     ///
     /// Named colors (`Red`, `Green`, etc.) and `Reset` pass through at
     /// depths other than `NoColor`.
+    #[must_use]
     pub fn downsampled(self, depth: ColorDepth) -> Color {
         match depth {
             ColorDepth::TrueColor => self,
@@ -348,6 +355,7 @@ impl Color {
     /// // Rotating pure red by 120° lands on pure green.
     /// assert_eq!(Color::Rgb(255, 0, 0).rotate_hue_f64(120.0), Color::Rgb(0, 255, 0));
     /// ```
+    #[must_use]
     pub fn rotate_hue_f64(self, degrees: f64) -> Color {
         let (r, g, b) = self.to_rgb();
         let (h, s, l) = rgb_to_hsl(r, g, b);
@@ -1226,7 +1234,6 @@ fn xterm256_to_rgb(idx: u8) -> (u8, u8, u8) {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
     use super::*;
 
     #[test]
@@ -1361,7 +1368,7 @@ mod tests {
         );
     }
 
-    // --- v0.21.1: ergonomic constructors / conversions ---
+    // --- Ergonomic constructors / conversions ---
 
     use std::str::FromStr;
 

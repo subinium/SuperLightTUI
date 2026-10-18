@@ -438,8 +438,7 @@ pub struct Constraints {
 /// Compile-time regression guard for `Constraints` size.
 ///
 /// The unified `WidthSpec`/`HeightSpec` representation is required to fit
-/// in 24 bytes (12 + 12) — half the size of the v0.19 representation
-/// (36 bytes). Layout state stores this struct on every `LayoutNode`, so
+/// in 24 bytes (12 + 12). Layout state stores this struct on every `LayoutNode`, so
 /// the cache footprint compounds.
 const _ASSERT_CONSTRAINTS_SIZE: () = assert!(
     std::mem::size_of::<Constraints>() == 24,
@@ -447,7 +446,7 @@ const _ASSERT_CONSTRAINTS_SIZE: () = assert!(
 );
 
 impl Constraints {
-    // ─── builder methods (preserved from v0.19, dispatch into enum) ───
+    // ─── builder methods (dispatch into the width / height enums) ───
 
     /// Set the minimum width constraint.
     ///
@@ -655,7 +654,7 @@ impl Constraints {
     //
     // # Compatibility
     //
-    // Public for downstream callers that adopted these from v0.19. New code
+    // Public for downstream callers that set the bounds directly. New code
     // that owns a `Constraints` value should prefer the chainable builders
     // (`Constraints::default().min_w(10).max_w(40)`).
 
@@ -1078,7 +1077,27 @@ impl Style {
 /// ui.container().apply(&CARD).col(|ui| { ... });
 /// ui.container().apply(&CARD).apply(&DANGER).col(|ui| { ... });
 /// ```
+///
+/// `ContainerStyle` is `Copy` and every builder method returns a new value,
+/// so a builder call used as a statement changes nothing and is rejected
+/// under `#[deny(unused_must_use)]`:
+///
+/// ```compile_fail
+/// #![deny(unused_must_use)]
+/// let card = slt::ContainerStyle::new();
+/// card.p(1); // error: unused `ContainerStyle` that must be used
+/// ```
+///
+/// Bind the result instead:
+///
+/// ```
+/// #![deny(unused_must_use)]
+/// let card = slt::ContainerStyle::new();
+/// let card = card.p(1);
+/// assert_eq!(card.padding.map(|p| p.top), Some(1));
+/// ```
 #[derive(Debug, Clone, Copy, Default)]
+#[must_use = "builder methods return a new value; bind or pass it"]
 pub struct ContainerStyle {
     /// Border style for the container.
     pub border: Option<Border>,
@@ -1561,6 +1580,7 @@ impl ContainerStyle {
 ///
 /// Literal [`Color`] fields and [`ThemeColor`] fields can be set independently.
 /// Resolution order: `theme_*` field > literal field > theme default.
+#[must_use = "builder methods return a new value; bind or pass it"]
 pub struct WidgetColors {
     /// Foreground color override.
     pub fg: Option<Color>,
@@ -1693,6 +1713,7 @@ impl WidgetColors {
 #[derive(Debug, Clone, Copy, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(default))]
+#[must_use = "builder methods return a new value; bind or pass it"]
 pub struct WidgetTheme {
     /// Default colors for buttons.
     pub button: WidgetColors,

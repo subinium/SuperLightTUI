@@ -1,3 +1,7 @@
+//! The [`Context`] struct and the per-frame state it carries: command list,
+//! hook slots, focus bookkeeping, previous-frame geometry and the rollback
+//! snapshot used by error boundaries.
+
 use super::*;
 
 /// The main rendering context passed to your closure each frame.
@@ -64,11 +68,11 @@ pub struct Context {
     /// Replaces the single `click_pos` / `right_click_pos` /
     /// `double_click_pos` slots that dropped all but the last press.
     pub(crate) pointer: PointerFrame,
-    /// v0.21.1: position of the most recent scroll-wheel event this frame, used
+    /// Position of the most recent scroll-wheel event this frame, used
     /// to hover-gate `Response::scroll_delta`. `None` when the wheel did not
     /// move.
     pub(crate) scroll_pos: Option<(u32, u32)>,
-    /// v0.21.1: net vertical wheel delta accumulated this frame (positive =
+    /// Net vertical wheel delta accumulated this frame (positive =
     /// up, negative = down). Surfaced per-widget through
     /// `Response::scroll_delta` when `scroll_pos` falls inside the widget rect.
     pub(crate) scroll_delta_frame: i32,

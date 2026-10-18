@@ -1,3 +1,5 @@
+//! Chart widgets: sparkline, candlestick, line chart, scatter and histogram.
+
 use super::*;
 
 impl Context {

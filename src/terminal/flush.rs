@@ -2,8 +2,6 @@
 
 use super::*;
 
-#[allow(clippy::too_many_arguments)]
-#[allow(unused_assignments)]
 pub(super) fn flush_buffer_diff(
     stdout: &mut impl Write,
     current: &Buffer,
@@ -41,8 +39,14 @@ pub(super) fn width_uncertain_cluster(cluster: &str) -> bool {
     .any(|class| classes.intersects(class))
 }
 
-#[allow(clippy::too_many_arguments)]
-#[allow(unused_assignments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "hot-path flush kernel; bundling the per-frame inputs into a struct adds a copy per call"
+)]
+#[expect(
+    unused_assignments,
+    reason = "flush_run! always records the run's end cursor; some expansion sites reset it right after"
+)]
 pub(super) fn flush_buffer_diff_rows(
     stdout: &mut impl Write,
     current: &Buffer,

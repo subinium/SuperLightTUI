@@ -16,6 +16,7 @@ Run the full Core Gate AND Extended Gate locally BEFORE pushing. The branch must
 - [ ] `cargo fmt -- --check`
 - [ ] `cargo check --all-features`
 - [ ] `cargo clippy --all-features -- -D warnings`
+- [ ] `cargo clippy --all-features --all-targets -- -D warnings`
 - [ ] `cargo test --all-features`
 - [ ] `cargo check --examples --all-features`
 - [ ] `typos`
@@ -87,8 +88,9 @@ cargo fmt -- --check
 # 2. Compilation
 cargo check --all-features
 
-# 3. Clippy (deny all warnings)
+# 3. Clippy (deny all warnings; lib, then tests / examples / benches)
 cargo clippy --all-features -- -D warnings
+cargo clippy --all-features --all-targets -- -D warnings
 
 # 4. Full test suite
 cargo test --all-features
@@ -131,7 +133,7 @@ cargo deny check
 | Format | `cargo fmt -- --check` | Yes |
 | Check (stable) | `cargo check --all-features` | Yes |
 | Check (MSRV 1.88) | `cargo check --features async,serde` (toolchain 1.88) | Yes |
-| Clippy | `cargo clippy --all-features -- -D warnings` | Yes |
+| Clippy | `cargo clippy --all-features -- -D warnings` + `cargo clippy --all-features --all-targets -- -D warnings` | Yes |
 | Test | `cargo test --all-features` | Yes |
 | Typos | `typos` | Yes |
 | API Audit | `bash scripts/api_audit.sh --strict` + `python3 scripts/check_doc_examples.py` | Yes |

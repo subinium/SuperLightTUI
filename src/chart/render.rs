@@ -1,3 +1,6 @@
+//! Chart rendering entry point: turns a [`ChartConfig`] into styled rows of
+//! axis labels, plot cells and legend.
+
 use super::*;
 #[cfg(test)]
 use unicode_width::UnicodeWidthStr;

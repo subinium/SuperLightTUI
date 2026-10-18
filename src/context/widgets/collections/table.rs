@@ -1,3 +1,6 @@
+//! The `table` widget (sorting, filtering, multi-select, column widths,
+//! zebra rows) and the `paginator`.
+
 use super::*;
 
 /// Maximum page count rendered as dots before [`Context::paginator`] falls back
@@ -426,7 +429,7 @@ impl Context {
             // Base style for the whole row, applied to every cell unless the
             // per-column renderer overrides it. Priority: focused cursor row >
             // multi-selected row > zebra > plain. When `multi_selected` is empty
-            // (the default), this collapses to the pre-v0.21 behavior verbatim.
+            // (the default), only the cursor row and zebra striping apply.
             let base = if view_idx == state.view_cursor() {
                 let mut style = Style::new()
                     .bg(colors.accent.unwrap_or(self.theme.selected_bg))

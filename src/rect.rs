@@ -99,6 +99,7 @@ impl Rect {
     /// assert_eq!(inner, Rect::new(3, 3, 4, 4));
     /// ```
     #[inline]
+    #[must_use]
     pub fn centered(&self, inner_w: u32, inner_h: u32) -> Rect {
         let w = inner_w.min(self.width);
         let h = inner_h.min(self.height);
@@ -126,6 +127,7 @@ impl Rect {
     /// assert_eq!(union, Rect::new(0, 0, 8, 8));
     /// ```
     #[inline]
+    #[must_use]
     pub fn union(&self, other: Rect) -> Rect {
         let x = self.x.min(other.x);
         let y = self.y.min(other.y);
@@ -249,6 +251,7 @@ impl Rect {
     /// assert_eq!(r, Rect::new(40, 15, 40, 10));
     /// ```
     #[inline]
+    #[must_use]
     pub const fn center_in(self, parent: Rect) -> Rect {
         let w = if self.width < parent.width {
             self.width
@@ -284,6 +287,7 @@ impl Rect {
     /// assert_eq!(r, Rect::new(45, 5, 30, 3));
     /// ```
     #[inline]
+    #[must_use]
     pub const fn center_horizontally_in(self, parent: Rect) -> Rect {
         let w = if self.width < parent.width {
             self.width
@@ -313,6 +317,7 @@ impl Rect {
     /// assert_eq!(r, Rect::new(2, 15, 20, 10));
     /// ```
     #[inline]
+    #[must_use]
     pub const fn center_vertically_in(self, parent: Rect) -> Rect {
         let h = if self.height < parent.height {
             self.height

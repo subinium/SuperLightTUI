@@ -1,3 +1,6 @@
+//! Sixel image encoding: RGBA resampling, 6x6x6 palette quantization and
+//! bounded-output DCS generation.
+
 const SIXEL_START: &str = "\x1bPq";
 const SIXEL_END: &str = "\x1b\\";
 const MAX_SIXEL_WORK_UNITS: u64 = 268_435_456;
@@ -333,7 +336,7 @@ mod tests {
     use crate::TestBackend;
 
     #[test]
-    fn v024_sixel_resample_decodes_to_expected_four_color_quadrants() {
+    fn sixel_resample_decodes_to_expected_four_color_quadrants() {
         let rgba = [
             255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255,
         ];
@@ -375,7 +378,7 @@ mod tests {
                 }
                 value @ b'?'..=b'~' => {
                     for bit in 0..6 {
-                        if value - b'?' & (1 << bit) != 0 {
+                        if (value - b'?') & (1 << bit) != 0 {
                             assert!(x < 4 && y + bit < 4, "out-of-footprint pixel");
                             decoded[y + bit][x] = color;
                         }

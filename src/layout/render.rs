@@ -1,3 +1,6 @@
+//! Layout-tree rendering into a [`Buffer`]: borders, clipping, scroll
+//! offsets, layer tinting and the debug overlay.
+
 use super::*;
 
 pub(crate) fn render(node: &LayoutNode, buf: &mut Buffer) {
@@ -60,7 +63,7 @@ fn dim_cell_range(content: &mut [crate::cell::Cell], start: usize, end: usize) {
 }
 
 /// Test-only re-export of [`dim_buffer_around`] for the perf alloc tests
-/// and the `v020_perf_audit` demo. Not part of the stable API.
+/// and the `perf_audit` example. Not part of the stable API.
 #[doc(hidden)]
 pub(crate) fn __bench_dim_buffer_around(buf: &mut Buffer, modal_rect: Rect) {
     dim_buffer_around(buf, modal_rect)
@@ -161,9 +164,8 @@ enum LayerTint {
 
 /// Per-layer widget breakdown for the debug status bar.
 ///
-/// Returned by [`count_leaf_widgets_layered`]. The legacy `total` accessor
-/// preserves the v0.19.3 "N widgets" status line so existing snapshot tests
-/// stay green; the per-layer fields surface in the new
+/// Returned by [`count_leaf_widgets_layered`]. `total` drives the
+/// "N widgets" status line that snapshot tests pin; the per-layer fields surface in the
 /// "(N base, M overlay, K modal)" suffix.
 #[derive(Debug, Clone, Copy, Default)]
 struct LayerCounts {
@@ -1428,7 +1430,6 @@ pub(super) fn truncate_with_ellipsis(text: &str, max_width: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
     use super::tree::default_container_config;
     use super::*;
 
@@ -1465,7 +1466,7 @@ mod tests {
     }
 
     #[test]
-    fn v024_clipped_text_matches_visual_source_cell_positions() {
+    fn clipped_text_matches_visual_source_cell_positions() {
         let style = Style::new().fg(Color::Red);
         let url = "https://example.com";
         for text in [

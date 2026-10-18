@@ -357,6 +357,7 @@ impl SliderOpts {
     }
 
     /// Set an explicit finite positive keyboard step.
+    #[must_use]
     pub fn step(mut self, step: f64) -> Self {
         self.step = Some(normalize_numeric_step(step));
         self
@@ -478,8 +479,8 @@ mod spinner_tests {
 /// confirm the displayed value (clamped to `0.0..=1.0`). Implements
 /// `Deref<Target = Response>` so `r.hovered` etc. work directly.
 ///
-/// Note: `ratio` was widened from `f32` to `f64` in v0.20.0 so the gauge
-/// family aligns with `animate_value`, chart APIs, and `progress_bar`.
+/// `ratio` is `f64` so the gauge family aligns with `animate_value`, chart
+/// APIs, and `progress_bar`.
 #[derive(Debug, Clone, Default)]
 #[must_use = "GaugeResponse contains interaction state — check .hovered or .ratio"]
 pub struct GaugeResponse {

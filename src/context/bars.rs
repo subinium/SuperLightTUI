@@ -1,3 +1,6 @@
+//! Bar chart value types: [`Bar`], [`BarGroup`], [`BarDirection`] and
+//! [`BarChartConfig`].
+
 use super::*;
 
 /// Direction for bar chart rendering.
@@ -38,18 +41,21 @@ impl Bar {
     }
 
     /// Set the bar color.
+    #[must_use]
     pub fn color(mut self, color: Color) -> Self {
         self.color = Some(color);
         self
     }
 
     /// Set the display text for this bar's value.
+    #[must_use]
     pub fn text_value(mut self, text: impl Into<String>) -> Self {
         self.text_value = Some(text.into());
         self
     }
 
     /// Set the style for the value text.
+    #[must_use]
     pub fn value_style(mut self, style: Style) -> Self {
         self.value_style = Some(style);
         self

@@ -1,13 +1,13 @@
-// Gauge / line_gauge widgets — block-fill and single-line progress indicators
-// with optional inline labels.
-//
-// Introduced in v0.20.0 (#224). Complements the unlabeled
-// `Context::progress_bar` / `Context::progress` (`textarea_progress.rs`).
-//
-// Callers use a chainable builder pattern
-// (`ui.gauge(0.5).label("CPU").width(48)`). Auto-renders on `Drop`; call
-// `.show()` to get a [`GaugeResponse`] back. Ratios are `f64` to match
-// `animate_value`, chart APIs, and `progress_bar` — no more `f32` outliers.
+//! Gauge / line_gauge widgets — block-fill and single-line progress indicators
+//! with optional inline labels.
+//!
+//! Issue #224. Complements the unlabeled
+//! `Context::progress_bar` / `Context::progress` (`textarea_progress.rs`).
+//!
+//! Callers use a chainable builder pattern
+//! (`ui.gauge(0.5).label("CPU").width(48)`). Auto-renders on `Drop`; call
+//! `.show()` to get a [`GaugeResponse`] back. Ratios are `f64` to match
+//! `animate_value`, chart APIs, and `progress_bar` — no more `f32` outliers.
 
 use super::*;
 
@@ -100,6 +100,10 @@ pub struct Gauge<'a> {
     color: Option<Color>,
 }
 
+#[expect(
+    clippy::return_self_not_must_use,
+    reason = "the widget call already recorded the element (or renders on drop); modifiers edit it in place, so a statement-terminated chain is the intended use"
+)]
 impl<'a> Gauge<'a> {
     fn new(ctx: &'a mut Context, ratio: f64) -> Self {
         Self {
@@ -191,6 +195,10 @@ pub struct LineGauge<'a> {
     empty: char,
 }
 
+#[expect(
+    clippy::return_self_not_must_use,
+    reason = "the widget call already recorded the element (or renders on drop); modifiers edit it in place, so a statement-terminated chain is the intended use"
+)]
 impl<'a> LineGauge<'a> {
     fn new(ctx: &'a mut Context, ratio: f64) -> Self {
         Self {

@@ -169,7 +169,6 @@ pub(crate) fn reorder_line_visual(s: &str) -> String {
 /// image IDs, compression, and placement lifecycle. Images are deduplicated
 /// by `content_hash` — identical pixel data is uploaded only once.
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub(crate) struct KittyPlacement {
     /// Hash of the RGBA pixel data for dedup (avoids re-uploading).
     pub content_hash: u64,
@@ -203,10 +202,15 @@ pub(crate) struct KittyPlacement {
 /// entry points currently emit fully-`Opaque` footprints, while `Mixed` /
 /// `Transparent` are reserved for partial-coverage callers and `Annihilated`
 /// for the flush-time damage flip. The full set is exercised by the flush tests
-/// and is part of the matrix contract, so the unused-construction lint is
-/// suppressed (mirrors [`KittyPlacement`]).
+/// and is part of the matrix contract.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "Mixed / Transparent / Annihilated are matched by the flush damage model but constructed only by tests until partial-coverage callers exist (#265)"
+    )
+)]
 pub(crate) enum SprixelCell {
     /// Graphic fully covers the cell; a text write here forces a re-blit.
     Opaque,
@@ -228,11 +232,15 @@ pub(crate) enum SprixelCell {
 /// than re-blitting every stored sequence on any delta (issue #265).
 ///
 /// `seq` / `cells` are read only by the `crossterm` flush layer
-/// (`flush_sprixels`), so the unused-field lint is suppressed for
-/// `--no-default-features` builds where that consumer is gated out (mirrors
-/// [`KittyPlacement`]).
+/// (`flush_sprixels`).
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
+#[cfg_attr(
+    not(feature = "crossterm"),
+    expect(
+        dead_code,
+        reason = "seq / cells are read only by the crossterm flush layer, which is compiled out"
+    )
+)]
 pub(crate) struct SprixelPlacement {
     /// Hash of the source bytes for change detection across frames.
     pub content_hash: u64,
@@ -264,7 +272,7 @@ impl PartialEq for SprixelPlacement {
 }
 
 #[cfg(test)]
-mod v024_tests {
+mod buffer_contract_tests {
     use super::*;
 
     proptest::proptest! {
@@ -834,13 +842,15 @@ impl Buffer {
     }
 
     /// Push horizontal crop metadata for a raw draw callback.
-    #[allow(dead_code)] // Called by the pending lib.rs raw-draw integration.
     pub(crate) fn push_kitty_horizontal_clip(&mut self, info: KittyHorizontalClipInfo) {
         self.kitty_horizontal_clip_stack.push(info);
     }
 
     /// Restore the previous horizontal crop metadata.
-    #[allow(dead_code)] // Called by the pending lib.rs raw-draw integration.
+    ///
+    /// The frame kernel restores the stack by truncating to a saved depth
+    /// (see `invoke_deferred_draw`); only tests pop single entries.
+    #[cfg(test)]
     pub(crate) fn pop_kitty_horizontal_clip(&mut self) -> Option<KittyHorizontalClipInfo> {
         self.kitty_horizontal_clip_stack.pop()
     }
@@ -888,7 +898,13 @@ impl Buffer {
     }
 
     /// Whether an uncroppable media payload fits wholly in the active region.
-    #[cfg_attr(not(feature = "crossterm"), allow(dead_code))]
+    #[cfg_attr(
+        not(feature = "crossterm"),
+        expect(
+            dead_code,
+            reason = "only the crossterm image entry points place uncroppable media"
+        )
+    )]
     pub(crate) fn media_rect_visible(&self, rect: Rect) -> bool {
         if rect.is_empty() || !rect.has_valid_edges() || self.area.intersection(rect) != Some(rect)
         {
@@ -987,10 +1003,14 @@ impl Buffer {
     /// [`SprixelCell::Annihilated`] when a text write overwrites graphic ink so
     /// only dirtied graphics are re-emitted (issue #265).
     ///
-    /// Callers (`sixel_image` / `iterm_image*`) are `crossterm`-gated, so this
-    /// is unused under `--no-default-features`; the lint is suppressed only on
-    /// that build so a genuine dead-code signal still fires by default.
-    #[cfg_attr(not(feature = "crossterm"), allow(dead_code))]
+    /// Callers (`sixel_image` / `iterm_image*`) are `crossterm`-gated.
+    #[cfg_attr(
+        not(feature = "crossterm"),
+        expect(
+            dead_code,
+            reason = "callers sixel_image / iterm_image* are crossterm-gated"
+        )
+    )]
     pub(crate) fn sprixel_place(&mut self, p: SprixelPlacement) {
         // Issue #491: see `kitty_place`.
         #[cfg(feature = "crossterm")]
@@ -1045,8 +1065,12 @@ impl Buffer {
 
     /// Return a reference to the cell at `(x, y)`.
     ///
-    /// Panics if `(x, y)` is out of bounds. Use [`Buffer::try_get`] when the
-    /// coordinates may come from untrusted input.
+    /// Use [`Buffer::try_get`] when the coordinates may come from untrusted
+    /// input.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `(x, y)` is outside the buffer area.
     #[inline]
     pub fn get(&self, x: u32, y: u32) -> &Cell {
         assert!(
@@ -1059,8 +1083,12 @@ impl Buffer {
 
     /// Return a mutable reference to the cell at `(x, y)`.
     ///
-    /// Panics if `(x, y)` is out of bounds. Use [`Buffer::try_get_mut`] when
-    /// the coordinates may come from untrusted input.
+    /// Use [`Buffer::try_get_mut`] when the coordinates may come from
+    /// untrusted input.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `(x, y)` is outside the buffer area.
     #[inline]
     pub fn get_mut(&mut self, x: u32, y: u32) -> &mut Cell {
         assert!(
@@ -1397,7 +1425,10 @@ impl Buffer {
     ///
     /// `symbol` must already be the output of [`normalize_cell_symbol`]; it
     /// is stored without re-normalizing.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "hot-path cell writer takes the already-split grapheme fields by value"
+    )]
     fn set_grapheme_normalized(
         &mut self,
         x: u32,
@@ -1756,6 +1787,11 @@ impl Buffer {
     ///
     /// If the new area is larger, new cells are initialized to blank. All
     /// existing content is discarded.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the cell storage for `area` cannot be allocated. Use
+    /// [`Buffer::try_resize`] to handle that case.
     pub fn resize(&mut self, area: Rect) {
         self.try_resize(area)
             .unwrap_or_else(|error| panic!("Buffer::resize({area:?}) failed: {error}"));

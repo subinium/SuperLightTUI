@@ -1,3 +1,5 @@
+//! Heatmap (full-cell and half-block) and squarified treemap widgets.
+
 use super::*;
 
 impl Context {

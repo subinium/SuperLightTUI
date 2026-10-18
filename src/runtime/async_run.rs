@@ -157,6 +157,11 @@ pub struct AsyncRunHandle<M> {
 #[cfg(all(feature = "crossterm", feature = "async"))]
 impl<M> AsyncRunHandle<M> {
     /// Clone the wake-aware sender while retaining ownership of the run loop.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if an internal invariant is broken: the sender is held until `join`, `cancel_and_join` or `detach`
+    /// consumes the handle.
     pub fn sender(&self) -> AsyncSender<M> {
         self.sender
             .as_ref()
@@ -182,6 +187,10 @@ impl<M> AsyncRunHandle<M> {
     ///
     /// Joining drops this handle's sender first. Sender clones must also be
     /// dropped, or the UI must quit, before a disconnect-driven loop can end.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if an internal invariant is broken: the join handle is consumed exactly once, by this call.
     pub async fn join(mut self) -> Result<(), AsyncRunError> {
         self.sender.take();
         let join = self
@@ -194,6 +203,10 @@ impl<M> AsyncRunHandle<M> {
     }
 
     /// Request cancellation and wait for deterministic teardown.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if an internal invariant is broken: the join handle is consumed exactly once, by this call.
     pub async fn cancel_and_join(mut self) -> Result<(), AsyncRunError> {
         self.cancel();
         self.sender.take();
@@ -210,6 +223,10 @@ impl<M> AsyncRunHandle<M> {
     ///
     /// This compatibility path intentionally makes completion errors
     /// unobservable. Prefer retaining and joining the owned handle.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if an internal invariant is broken: the sender is held until this call consumes the handle.
     pub fn detach(mut self) -> AsyncSender<M> {
         self.cancel_on_drop = false;
         self.join.take();

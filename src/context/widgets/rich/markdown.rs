@@ -1,3 +1,6 @@
+//! The `markdown` widget: block parsing (headings, lists, quotes, code,
+//! tables) and inline segments (emphasis, code, links).
+
 use super::*;
 
 /// Inline markdown segment — text, link, or image reference.

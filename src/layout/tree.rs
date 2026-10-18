@@ -1,3 +1,6 @@
+//! The [`LayoutNode`] tree built from the command stream, text wrapping
+//! helpers and the per-frame node pool.
+
 use super::*;
 
 /// Regression guard for the size of [`LayoutNode`] (issues #153, #488).
@@ -8,11 +11,11 @@ use super::*;
 /// `Container`, `RawDraw`), which are the vast majority of nodes, pay only
 /// the 8-byte `Option<Box<TextNodeData>>`.
 ///
-/// History: 432 B before the #153 split; grown by scalar layout fields for
-/// flex-wrap / flex-basis (#258), horizontal scroll (#247), the per-frame
-/// intrinsic-size memo (v0.22) and bound scroll identity (v0.25) to 368 B.
+/// The node carries scalar layout fields for flex-wrap / flex-basis (#258),
+/// horizontal scroll (#247), the per-frame intrinsic-size memo and bound
+/// scroll identity.
 ///
-/// v0.26 (#488) lowered the bound to 336 B: the text-only `link_url`
+/// The bound is 336 B (#488): the text-only `link_url`
 /// moved into [`TextNodeData`] (24 B), and the three intrinsic-size memos
 /// switched from `Cell<Option<..>>` to `u32::MAX` sentinels (28 B -> 16 B),
 /// which pays for the new 4-byte [`LayoutNode::arena_slot`]. If a future
@@ -324,7 +327,10 @@ impl LayoutNode {
     }
 
     /// [`LayoutNode::text`] reusing a recycled (reset) payload box (#488).
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "mirrors LayoutNode::text plus the recycled payload box"
+    )]
     fn text_in(
         mut data: Box<TextNodeData>,
         content: String,
@@ -844,7 +850,10 @@ pub(crate) fn wrap_lines(text: &str, max_width: u32) -> Vec<String> {
 
     // Append a word that is known to fit within `max_width` to the current line,
     // flushing the line first if the word would overflow.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "wrap kernel threads line buffers and running widths without allocation"
+    )]
     fn append_fitting_word(
         text: &str,
         lines: &mut Vec<String>,
@@ -870,7 +879,10 @@ pub(crate) fn wrap_lines(text: &str, max_width: u32) -> Vec<String> {
 
     // Handle a completed word (skipping empty ranges). Words wider than
     // `max_width` are split into sub-chunks via `split_long_word`.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "wrap kernel threads line buffers and running widths without allocation"
+    )]
     fn push_word(
         text: &str,
         lines: &mut Vec<String>,
@@ -1263,7 +1275,10 @@ pub(crate) struct LayoutArena {
     /// Reset text payload boxes ready for reuse. The boxes themselves are
     /// the recycled allocations (a node holds `Box<TextNodeData>`), so the
     /// pool must keep them boxed.
-    #[allow(clippy::vec_box)]
+    #[expect(
+        clippy::vec_box,
+        reason = "the boxes are the recycled allocations a LayoutNode holds"
+    )]
     text_pool: Vec<Box<TextNodeData>>,
     /// Text payloads handed out by the current build.
     used_text: usize,

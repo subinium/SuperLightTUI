@@ -1,3 +1,6 @@
+//! Key bindings with display text: [`Binding`] and the [`KeyMap`] builder
+//! used by help bars and key dispatch.
+
 use crate::event::{KeyEvent, KeyEventKind};
 use crate::{KeyCode, KeyModifiers, ModifierKey};
 
@@ -96,6 +99,7 @@ impl KeyMap {
     }
 
     /// Bind a character key.
+    #[must_use]
     pub fn bind(mut self, key: char, description: &str) -> Self {
         self.bindings.push(Binding {
             key: KeyCode::Char(key),
@@ -108,6 +112,7 @@ impl KeyMap {
     }
 
     /// Bind a special key (Enter, Esc, Up, Down, etc.).
+    #[must_use]
     pub fn bind_code(mut self, key: KeyCode, description: &str) -> Self {
         self.bindings.push(Binding {
             display: display_for_key_code(&key),
@@ -120,6 +125,7 @@ impl KeyMap {
     }
 
     /// Bind a key with modifier (Ctrl+S, etc.).
+    #[must_use]
     pub fn bind_mod(mut self, key: char, mods: KeyModifiers, description: &str) -> Self {
         self.bindings.push(Binding {
             key: KeyCode::Char(key),
@@ -144,6 +150,7 @@ impl KeyMap {
     ///     .bind_code_mod(KeyCode::Enter, KeyModifiers::CONTROL, "Submit")
     ///     .bind_code_mod(KeyCode::Up, KeyModifiers::ALT, "Jump to top");
     /// ```
+    #[must_use]
     pub fn bind_code_mod(mut self, key: KeyCode, mods: KeyModifiers, description: &str) -> Self {
         let display = display_for_code_mod(&key, mods);
         self.bindings.push(Binding {
@@ -157,6 +164,7 @@ impl KeyMap {
     }
 
     /// Bind but hide from help bar display.
+    #[must_use]
     pub fn bind_hidden(mut self, key: char, description: &str) -> Self {
         self.bindings.push(Binding {
             key: KeyCode::Char(key),

@@ -80,7 +80,7 @@ pub struct ScrollState {
     /// After layout, SLT finds the child that was at the top of the viewport
     /// on the previous frame and shifts `offset` by however far that child
     /// moved, like the browser's `overflow-anchor: auto`. Collapsing or
-    /// growing a block above the viewport therefore no longer moves the text
+    /// growing a block above the viewport therefore does not move the text
     /// under the user's eyes. Children are matched by their
     /// [`group`](crate::Context::group) name when they have one, otherwise by
     /// position plus their leading text, so give repeated, identical-looking
@@ -188,6 +188,7 @@ impl ScrollState {
     /// let log = ScrollState::new().stick_to_bottom(true);
     /// assert!(log.stick_to_bottom);
     /// ```
+    #[must_use]
     pub fn stick_to_bottom(mut self, enabled: bool) -> Self {
         self.stick_to_bottom = enabled;
         self
@@ -226,7 +227,7 @@ impl ScrollState {
 
     /// Get the scroll progress as a ratio in `[0.0, 1.0]`.
     ///
-    /// Returns `f64` to match the rest of the ratio surface unified in v0.20
+    /// Returns `f64` to match the rest of the ratio surface
     /// (`Gauge::ratio`, `SplitPaneState::ratio`, `progress(ratio)`,
     /// `progress_bar(ratio)`). Feed the value straight into [`Context::gauge`]
     /// or [`Context::progress_bar`] without a cast.
@@ -536,6 +537,7 @@ impl SplitPaneState {
     }
 
     /// Override the minimum ratio for either pane (clamped to `[0.0, 0.49]`).
+    #[must_use]
     pub fn with_min_ratio(mut self, min: f64) -> Self {
         self.min_ratio = min.clamp(0.0, 0.49);
         self.ratio = self.ratio.clamp(self.min_ratio, 1.0 - self.min_ratio);

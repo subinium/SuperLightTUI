@@ -718,7 +718,7 @@ impl CanvasContext {
 }
 
 #[cfg(test)]
-mod v024_canvas_tests {
+mod canvas_budget_tests {
     use super::*;
 
     #[test]
@@ -1071,9 +1071,9 @@ impl<'a> ContainerBuilder<'a> {
     /// [`group`](Context::group) container (or this container, when it is the
     /// group).
     ///
-    /// Since 0.26 this matches the hovered group *instance*: rows built in a
-    /// loop with the same group name highlight one at a time. It no longer
-    /// fires on keyboard focus; use [`focus_within_bg`](Self::focus_within_bg)
+    /// This matches the hovered group *instance*: rows built in a
+    /// loop with the same group name highlight one at a time. It does not
+    /// fire on keyboard focus; use [`focus_within_bg`](Self::focus_within_bg)
     /// on the group container for that. For hover styling of this container
     /// alone, [`hover_bg`](Self::hover_bg) needs no group name at all.
     pub fn group_hover_bg(mut self, color: Color) -> Self {
@@ -1912,7 +1912,7 @@ impl<'a> ContainerBuilder<'a> {
     /// reversible* half: a measured, author-keyed stability gate plus
     /// diagnostics. The streaming benchmark `bench_streaming_append_chat`
     /// (`benches/benchmarks.rs`) quantifies the upstream cost this gate is
-    /// designed to eventually elide; see `docs/PERFORMANCE.md`.
+    /// designed to eventually elide; see `docs/internals/performance.md`.
     ///
     /// # Pattern: cache the chrome, not the stream
     ///
@@ -2612,8 +2612,9 @@ impl StateStyles {
 }
 
 #[cfg(test)]
-mod hotfix_tests {
-    //! Regression tests for v0.19.1 A3 hotfixes (issues #143, #144, #146, #149).
+mod canvas_geometry_tests {
+    //! Canvas shape rasterization, label width and raw-draw geometry guards
+    //! (issues #143, #144, #146, #149).
 
     use super::*;
 

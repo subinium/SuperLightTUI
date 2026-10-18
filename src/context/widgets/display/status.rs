@@ -1,3 +1,6 @@
+//! Status and summary display widgets: breadcrumb, accordion, definition
+//! list, divider text, key hints, stat trends and empty states.
+
 use super::*;
 
 mod builders;
@@ -168,8 +171,6 @@ impl Context {
     ///
     /// Returns a [`Response`] carrying real `hovered` / `right_clicked` state
     /// for the hint's rect, so callers can attach `.on_hover(...)` tooltips.
-    /// Prior to v0.21.0 this always returned [`Response::none()`]; statement-form
-    /// callers compile unchanged.
     ///
     /// # Example
     ///
@@ -203,8 +204,7 @@ impl Context {
     ///
     /// Returns a [`Response`] carrying real `hovered` / `clicked` /
     /// `right_clicked` state for the stat's column rect, so callers can attach
-    /// `.on_hover(...)` tooltips. Prior to v0.21.0 this always returned
-    /// [`Response::none()`]; statement-form callers compile unchanged.
+    /// `.on_hover(...)` tooltips.
     ///
     /// [`Trend::Up`]: crate::widgets::Trend::Up
     /// [`Trend::Down`]: crate::widgets::Trend::Down
@@ -249,8 +249,7 @@ impl Context {
     ///
     /// Returns a [`Response`] carrying real `hovered` / `clicked` /
     /// `right_clicked` state for the placeholder rect, so callers can attach
-    /// `.on_hover(...)` tooltips. Prior to v0.21.0 this always returned
-    /// [`Response::none()`]; statement-form callers compile unchanged.
+    /// `.on_hover(...)` tooltips.
     ///
     /// # Example
     ///
@@ -272,7 +271,7 @@ impl Context {
     /// Render a centered empty-state placeholder with an action button.
     ///
     /// Returns a [`Response`] whose `clicked` field is `true` on the frame
-    /// the action button is activated. As of v0.21.0 the response also carries
+    /// the action button is activated. The response also carries
     /// real `hovered` / `right_clicked` state (and the laid-out `rect`) for the
     /// placeholder area, so callers can attach `.on_hover(...)` tooltips. The
     /// `clicked` / `changed` fields still track the action button specifically,
@@ -330,6 +329,10 @@ pub struct Breadcrumb<'a> {
     color: Option<Color>,
 }
 
+#[expect(
+    clippy::return_self_not_must_use,
+    reason = "the widget call already recorded the element (or renders on drop); modifiers edit it in place, so a statement-terminated chain is the intended use"
+)]
 impl<'a> Breadcrumb<'a> {
     pub(super) fn new(ctx: &'a mut Context, segments: &'a [&'a str]) -> Self {
         Self {

@@ -1,3 +1,6 @@
+//! Geometry feedback for focus and pointer routing: clipped rects,
+//! navigation rects and the previous-frame geometry cache.
+
 use super::*;
 use std::sync::Arc;
 
