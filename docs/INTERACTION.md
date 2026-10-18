@@ -316,6 +316,27 @@ let _ = ui.scrollable(&mut page).grow(1).col(|ui| {
 });
 ```
 
+Scrollables keep what you are reading in place. When content above the
+viewport changes height (a block collapses, a streamed message finishes),
+`ScrollState::anchor` (on by default) shifts the offset by the same amount, like
+the browser's `overflow-anchor`. Children are matched by `group` name when they
+have one, else by position and leading text, so give repeated look-alike
+children a group name. Set `scroll.anchor = false` to keep raw offsets. For
+logs and chat transcripts, `ScrollState::new().stick_to_bottom(true)` follows
+new content while the view is at the end; scrolling up disengages it and
+scrolling back to the end re-engages it:
+
+<!-- slt-check: {"name":"ix_stick_to_bottom","features":[],"context":"ui"} -->
+```rust
+let mut log = ScrollState::new().stick_to_bottom(true);
+let lines = ["build started", "compiling", "done"];
+let _ = ui.scrollable(&mut log).grow(1).col(|ui| {
+    for line in lines {
+        ui.text(line);
+    }
+});
+```
+
 `ScrollState::follow_focus` (on by default) scrolls a newly focused child into
 view, so Tab through a long form keeps the focused field visible. Set it to
 `false` when your app controls the offset (`set_offset`, `scroll_down`).
@@ -427,10 +448,10 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-Two details matter here. The header is clickable *and* focusable, but nothing
-inside it is clickable, so a click is never reported twice (see Known
-limitations). And collapsing a block above the viewport shifts everything
-below it up, because SLT has no scroll anchoring.
+Two details matter here. The header is clickable *and* focusable, and a click
+goes only to the innermost slot under the pointer, so it is never reported
+twice. And collapsing a block above the viewport does not move what you are
+reading: scroll anchoring adjusts the offset by the rows that disappeared.
 
 ## Keyboard focus and shortcuts
 
@@ -586,13 +607,10 @@ These are current behaviors, not misuse. Design around them for now.
 1. **Text selection can start during handle drags.** Dragging a scrollbar
    thumb or a split handle may also activate the built-in selection overlay
    and copy text on release.
-2. **No scroll anchoring.** Collapsing or inserting content above the
-   viewport shifts the visible content, and there is no stick-to-bottom mode
-   for logs. Adjust `ScrollState::offset` yourself when you need either.
-3. **Emoji width disagreements.** Some multiplexers and terminals measure ZWJ
+2. **Emoji width disagreements.** Some multiplexers and terminals measure ZWJ
    sequences, skin-tone modifiers, and VS16 emoji differently from SLT, which
    can leave artifacts on that row.
-4. **Missing primitives.** No disabled or active (pressed) widget states, no
+3. **Missing primitives.** No disabled or active (pressed) widget states, no
    context-menu widget (use `right_clicked` plus your own overlay), and no
    cursor-shape API.
 

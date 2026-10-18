@@ -23,7 +23,7 @@ pub use command::Direction;
 pub(crate) use command::{BeginContainerArgs, BeginScrollableArgs, Command};
 pub(crate) use flexbox::compute;
 pub(crate) use focus::{
-    FocusScrollState, GeometryFeedback, ScrollAdjustment, apply_scroll_adjustments,
+    FocusScrollState, GeometryFeedback, ScrollAdjustment, ScrollPolicy, apply_scroll_adjustments,
 };
 pub(crate) use render::{InspectorFocus, render, render_debug_overlay, render_inspector};
 pub(crate) use tree::{

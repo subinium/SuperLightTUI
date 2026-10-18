@@ -362,6 +362,8 @@ pub(crate) fn run_frame_kernel(
     // that Vec into `state.commands_buf` after the frame so the next call
     // to `Context::new` can pick it up via `mem::take` (matches the #204
     // pattern for the other six recycled buffers).
+    // #443: scroll anchoring policies recorded by this frame's bindings.
+    let scroll_policies = std::mem::take(&mut ctx.pointer.scroll_policies);
     let mut tree = layout::build_tree(&mut ctx.commands);
     let area = crate::rect::Rect::new(0, 0, w, h);
     layout::compute(&mut tree, area);
@@ -374,16 +376,22 @@ pub(crate) fn run_frame_kernel(
     let mut fd = std::mem::take(&mut state.frame_data);
     fd.swap_feedback(&mut state.layout_feedback);
     layout::collect_all(&tree, &mut fd);
-    if state
+    let mut adjusted = state
         .focus
         .scroll
-        .prepare(ctx.rollback.focused_widget_id, &fd.geometry)
-    {
+        .prepare(ctx.rollback.focused_widget_id, &fd.geometry);
+    adjusted |= state
+        .focus
+        .scroll
+        .anchor(&tree, &fd.geometry, &scroll_policies);
+    if adjusted {
         layout::apply_scroll_adjustments(&mut tree, &state.focus.scroll.pending);
         // Recollect only when a focus transition or fresh bounds moved a
         // viewport, so rendering and mouse feedback share the adjusted tree.
         layout::collect_all(&tree, &mut fd);
     }
+    state.focus.scroll.record_anchors(&fd.geometry);
+    state.pointer.scroll_policy_buf = scroll_policies;
     debug_assert_eq!(
         fd.scroll_infos.len(),
         fd.scroll_rects.len(),

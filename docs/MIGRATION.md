@@ -32,6 +32,11 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
   region (popups, pickers) that must keep the wheel. A wheel event that no
   region can move is left unconsumed, so `ui.scroll_up()` / `ui.scroll_down()`
   may now see it where the innermost region used to swallow it.
+- **Scroll anchoring (#443).** `ScrollState::anchor` defaults to `true`, so the
+  offset moves when content above the viewport changes height. Apps that do
+  their own offset math for that case should set `scroll.anchor = false` (or
+  drop the manual correction). Use `ScrollState::new().stick_to_bottom(true)`
+  instead of hand-rolled "follow the tail" logic.
 
 ---
 

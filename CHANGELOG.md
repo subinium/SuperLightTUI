@@ -18,8 +18,18 @@
   `RunConfig`.
 - `ContainerBuilder::overscroll_contain()` keeps wheel events inside a
   scrollable at its limit, like CSS `overscroll-behavior: contain` (#440).
+- Scroll anchoring and stick-to-bottom for every `scrollable` (#443).
+  `ScrollState::anchor` (default `true`) keeps the visible content in place
+  when content above the viewport changes height; `ScrollState::stick_to_bottom`
+  (field, plus the `stick_to_bottom(bool)` builder) follows appended content
+  while the view is at the end. Focus reveal wins on the frame focus moves.
 
 ### Changed
+
+- Scrollables anchor by default (#443): collapsing or growing content above
+  the viewport now adjusts `ScrollState::offset` by the height change instead
+  of letting the visible text jump. Set `ScrollState::anchor = false` for the
+  previous raw-offset behavior.
 
 - **Breaking:** each mouse press now activates only the topmost, innermost
   interactive slot under the pointer (#439). A button in a non-modal

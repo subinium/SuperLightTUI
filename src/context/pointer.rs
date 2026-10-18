@@ -71,6 +71,8 @@ pub(crate) struct PointerState {
     pub contain_prev: Vec<u64>,
     /// Recycled buffer for this frame's contained scroll ids.
     pub contain_buf: Vec<u64>,
+    /// Recycled buffer for this frame's scroll anchoring policies (#443).
+    pub scroll_policy_buf: Vec<crate::layout::ScrollPolicy>,
     /// `RunConfig::click_on_release`, refreshed by the frame kernel.
     pub click_on_release: bool,
 }
@@ -146,6 +148,9 @@ pub(crate) struct PointerFrame {
     pub contain_prev: Vec<u64>,
     /// `ScrollState` ids marked `overscroll_contain` this frame.
     pub contain: Vec<u64>,
+    /// Anchoring / stick-to-bottom policy of every `ScrollState` bound this
+    /// frame, consumed by the layout pass (#443).
+    pub scroll_policies: Vec<crate::layout::ScrollPolicy>,
     /// `RunConfig::click_on_release` for this frame.
     pub click_on_release: bool,
     /// Lazily computed gestures for this frame.
@@ -163,6 +168,8 @@ impl PointerFrame {
         hit_flags.clear();
         let mut contain = std::mem::take(&mut state.pointer.contain_buf);
         contain.clear();
+        let mut scroll_policies = std::mem::take(&mut state.pointer.scroll_policy_buf);
+        scroll_policies.clear();
         Self {
             presses: SmallVec::new(),
             hit_meta: std::mem::take(&mut state.layout_feedback.prev_hit_meta),
@@ -172,6 +179,7 @@ impl PointerFrame {
             capture_in: state.pointer.capture,
             contain_prev: std::mem::take(&mut state.pointer.contain_prev),
             contain,
+            scroll_policies,
             click_on_release: state.pointer.click_on_release,
             gestures: OnceCell::new(),
             targets: OnceCell::new(),

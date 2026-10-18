@@ -574,6 +574,15 @@ impl Context {
         if let Some(index) = index {
             self.auto_scroll_nested(index, state, is_horizontal);
         }
+        // #443: hand this binding's anchoring policy to the layout pass.
+        self.pointer
+            .scroll_policies
+            .push(crate::layout::ScrollPolicy {
+                state_id: id,
+                anchor: state.anchor,
+                stick_to_bottom: state.stick_to_bottom,
+                dragging: state.dragging,
+            });
 
         // Carry both axis offsets; the tree builder applies the one matching
         // the finalizing `.row()` / `.col()` direction (#247).
