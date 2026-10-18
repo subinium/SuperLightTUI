@@ -250,7 +250,7 @@ fn bench_animation_churn(c: &mut Criterion) {
 /// frame, refresh row hashes, or emit ANSI, so this excludes the diff/flush
 /// cost a real frame pays. Do not compare it with ratatui's `Terminal::draw`,
 /// which does diff; the matched-harness comparison is in
-/// `docs/PERFORMANCE.md` §5. ratatui is not linked as a dev-dependency:
+/// `docs/internals/performance.md` §5. ratatui is not linked as a dev-dependency:
 /// ratatui 0.29 pulled the advisory `lru 0.12` (RUSTSEC-2026-0002), which
 /// would fail the release audit gate for a benchmark-only comparison.
 fn bench_headtohead(c: &mut Criterion) {

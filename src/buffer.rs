@@ -272,7 +272,7 @@ impl PartialEq for SprixelPlacement {
 }
 
 #[cfg(test)]
-mod v024_tests {
+mod buffer_contract_tests {
     use super::*;
 
     proptest::proptest! {

@@ -5,7 +5,7 @@
 //! which groups them by widget family (`widgets/<family>.rs`, paired with
 //! the state file of the same name in [`crate::widgets`]).
 //! See [`crate`] root for the entry-point [`crate::run`] / [`crate::frame`]
-//! functions and `docs/ARCHITECTURE.md` for the 5-layer model that
+//! functions and `docs/internals/architecture.md` for the 5-layer model that
 //! organizes which method lives where.
 
 use crate::FrameState;

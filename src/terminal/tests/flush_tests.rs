@@ -3,7 +3,7 @@
 use super::*;
 
 #[test]
-fn v024_underline_extended_to_plain_never_reenables() {
+fn underline_extended_to_plain_never_reenables() {
     for style in [
         UnderlineStyle::Straight,
         UnderlineStyle::Double,

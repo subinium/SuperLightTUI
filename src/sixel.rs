@@ -333,7 +333,7 @@ mod tests {
     use crate::TestBackend;
 
     #[test]
-    fn v024_sixel_resample_decodes_to_expected_four_color_quadrants() {
+    fn sixel_resample_decodes_to_expected_four_color_quadrants() {
         let rgba = [
             255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255,
         ];

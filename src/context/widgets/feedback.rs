@@ -195,7 +195,7 @@ impl Context {
     ///
     /// Argument order is `(message, level)` — message first, then the
     /// [`AlertLevel`](crate::widgets::AlertLevel). This is the executable
-    /// proof that [API_DESIGN.md](https://github.com/subinium/superlighttui/blob/main/docs/API_DESIGN.md)
+    /// proof that [API review rules](https://github.com/subinium/superlighttui/blob/main/docs/internals/design-principles.md#api-review-rules)
     /// Rule 3 matches the shipped signature.
     ///
     /// # Example

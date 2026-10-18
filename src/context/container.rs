@@ -718,7 +718,7 @@ impl CanvasContext {
 }
 
 #[cfg(test)]
-mod v024_canvas_tests {
+mod canvas_budget_tests {
     use super::*;
 
     #[test]
@@ -1912,7 +1912,7 @@ impl<'a> ContainerBuilder<'a> {
     /// reversible* half: a measured, author-keyed stability gate plus
     /// diagnostics. The streaming benchmark `bench_streaming_append_chat`
     /// (`benches/benchmarks.rs`) quantifies the upstream cost this gate is
-    /// designed to eventually elide; see `docs/PERFORMANCE.md`.
+    /// designed to eventually elide; see `docs/internals/performance.md`.
     ///
     /// # Pattern: cache the chrome, not the stream
     ///

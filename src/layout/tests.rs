@@ -2,7 +2,7 @@ use super::tree::{ContainerConfig, default_container_config};
 use super::*;
 
 #[test]
-fn v024_allocations_remain_full_when_scrolled_outside_viewport() {
+fn allocations_remain_full_when_scrolled_outside_viewport() {
     let mut root = LayoutNode::container(Direction::Column, default_container_config());
     root.size = (8, 3);
     root.is_scrollable = true;
@@ -26,7 +26,7 @@ fn v024_allocations_remain_full_when_scrolled_outside_viewport() {
 }
 
 #[test]
-fn v024_recursive_height_cache_follows_width_and_fixed_constraints() {
+fn recursive_height_cache_follows_width_and_fixed_constraints() {
     let mut column = LayoutNode::container(Direction::Column, default_container_config());
     let mut row = LayoutNode::container(Direction::Row, default_container_config());
     let text = LayoutNode::text(
@@ -1340,7 +1340,7 @@ fn count_leaf_widgets_matches_outline_count_with_overlays() {
         "status bar widget count must include overlay nodes; got {bottom:?}"
     );
     // Per-layer breakdown is appended in parens whenever more than one
-    // layer family is non-empty (matches the doc update in DEBUGGING.md).
+    // layer family is non-empty (matches docs/reference/debugging.md).
     assert!(
         bottom.contains("2 base") && bottom.contains("1 overlay"),
         "status bar must include per-layer breakdown when multiple layers \

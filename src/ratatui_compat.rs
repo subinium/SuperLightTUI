@@ -8,7 +8,7 @@
 //! The bridge is render-only: a ratatui [`Widget`] draws into a scratch
 //! ratatui [`Buffer`](ratatui_core::buffer::Buffer) sized to the laid-out SLT
 //! region, and the result is copied cell by cell into SLT's
-//! [`Buffer`](crate::Buffer) through the normal clipped, grapheme-safe write
+//! [`Buffer`] through the normal clipped, grapheme-safe write
 //! path. Input handling, focus, and `StatefulWidget` state stay with the
 //! caller.
 //!

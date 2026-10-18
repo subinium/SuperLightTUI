@@ -5,7 +5,7 @@
 //! `widgets/selection.rs`, `context/widgets/collections.rs` renders the types
 //! in `widgets/collections.rs`, and so on. Families without persistent state
 //! (`media`, `viz`, `events`) have no state file. See
-//! `docs/ARCHITECTURE.md` for the full family table.
+//! `docs/internals/architecture.md` for the full family table.
 
 use super::*;
 

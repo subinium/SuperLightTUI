@@ -1,4 +1,4 @@
-//! The "expandable tool-call log" scenario from docs/INTERACTION.md, end to
+//! The "expandable tool-call log" scenario from docs/guide/04-interaction.md, end to
 //! end through the v0.26 pointer model:
 //!
 //! - a click on a header toggles that block (and only that block, #439);

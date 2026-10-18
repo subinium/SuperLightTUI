@@ -65,7 +65,7 @@ exclude = [
 # most demo_*) stay in examples/ but are reached only via
 # `#[path = ...] mod` includes from the tour binaries or tests. Every
 # `examples/*.rs` file must be reachable from one of those targets;
-# `tests/docs_contract.rs` enforces it. See `docs/DEMO_GUIDE.md` for the
+# `tests/docs_contract.rs` enforces it. See `docs/internals/demo-guide.md` for the
 # archetype rules.
 autoexamples = false
 
@@ -206,7 +206,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 # ── Tour binaries (6) — integrated demos covering feature families and
 #    domain showcases. Each tour bundles 4–16 source demos via the
-#    DEMO_GUIDE.md archetype rules. Run these for end-to-end review.
+#    docs/internals/demo-guide.md archetype rules. Run these for end-to-end review.
 
 [[example]]
 name = "widgets_tour"

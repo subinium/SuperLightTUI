@@ -3,7 +3,7 @@
 use super::*;
 
 #[test]
-fn v024_kitty_delete_all_requires_fresh_upload_and_placement() {
+fn kitty_delete_all_requires_fresh_upload_and_placement() {
     let mut manager = KittyImageManager::new();
     let current = kitty_placements(1);
     let mut bytes = Vec::new();
@@ -17,7 +17,7 @@ fn v024_kitty_delete_all_requires_fresh_upload_and_placement() {
 }
 
 #[test]
-fn v024_kitty_shape_and_crop_participate_in_identity() {
+fn kitty_shape_and_crop_participate_in_identity() {
     let mut manager = KittyImageManager::new();
     let mut current = kitty_placements(1);
     let mut bytes = Vec::new();
@@ -40,7 +40,7 @@ fn v024_kitty_shape_and_crop_participate_in_identity() {
 }
 
 #[test]
-fn v024_kitty_failed_output_invalidates_uploads() {
+fn kitty_failed_output_invalidates_uploads() {
     struct Fails;
     impl Write for Fails {
         fn write(&mut self, _: &[u8]) -> io::Result<usize> {

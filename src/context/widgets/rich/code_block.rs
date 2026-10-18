@@ -9,7 +9,7 @@ impl Context {
     /// Call `.show()` (instead of dropping) to capture the [`Response`].
     ///
     /// This is the consuming-builder shape shared with [`Context::gauge`] /
-    /// [`Context::breadcrumb`] — see [API_DESIGN.md](https://github.com/subinium/superlighttui/blob/main/docs/API_DESIGN.md) Rule 1.
+    /// [`Context::breadcrumb`] — see the [API review rules](https://github.com/subinium/superlighttui/blob/main/docs/internals/design-principles.md#api-review-rules), Rule 1.
     ///
     /// # Example
     ///

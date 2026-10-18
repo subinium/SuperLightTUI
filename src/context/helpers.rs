@@ -295,7 +295,7 @@ pub(crate) fn push_table_separator(out: &mut String, widths: &[u32]) {
 }
 
 #[cfg(test)]
-mod v024_table_tests {
+mod table_truncation_tests {
     use super::*;
 
     #[test]

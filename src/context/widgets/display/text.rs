@@ -35,7 +35,7 @@ use crate::KeyMap;
 /// The builder owns no heap data: `ui.text(s)` costs the same as before
 /// v0.26, when it returned `&mut Context`. The `Context`-level modifiers
 /// (`ui.bold()`, `ui.fg(..)`, ...) that styled "the last text" are deprecated
-/// in its favour; see `docs/MIGRATION.md`.
+/// in its favour; see `docs/reference/migration.md`.
 pub struct Text<'a> {
     ctx: &'a mut Context,
     /// Response computed when the element was recorded, for widgets that

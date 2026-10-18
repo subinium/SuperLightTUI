@@ -67,7 +67,7 @@ fn confirm_click_beyond_no_does_not_register() {
 
 #[test]
 fn alert_message_first_then_level() {
-    // Regression guard for the API_DESIGN.md arg-order drift: `(message,
+    // Regression guard for the API-review-rules arg-order drift: `(message,
     // level)` is the shipped order. Compiles == doc order matches code.
     let mut tb = TestBackend::new(40, 5);
     tb.render(|ui| {

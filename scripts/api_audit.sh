@@ -2,7 +2,7 @@
 # api_audit.sh — heuristic API consistency audit for SuperLightTUI.
 #
 # Reports (does not fix) the high-frequency violations called out in
-# docs/DESIGN_PRINCIPLES.md plus three v0.20 demo-bug regressions:
+# docs/internals/design-principles.md plus three v0.20 demo-bug regressions:
 #
 #   V1 — Two paths to the same thing
 #         Same method on Context AND ContainerBuilder.
@@ -41,7 +41,7 @@
 #         A non-deprecated `pub fn *_colored` that is new (not in the frozen
 #         allowlist) or does not take `&WidgetColors`.
 #   V10 — v0.26 rename table (#463)
-#         A removed or renamed name (docs/MIGRATION.md "0.25 → 0.26") that
+#         A removed or renamed name (docs/reference/migration.md "0.25 → 0.26") that
 #         came back as a non-deprecated `pub fn` on the same type, or
 #         `Context::line` not returning `Response`.
 #
@@ -285,7 +285,7 @@ if [[ "${#v3_files[@]}" -gt 0 ]]; then
     for f in "${v3_files[@]}"; do
         echo "  V3 (info): $(basename "$f") has both long (>20) and short (<=6) public method names"
     done
-    echo "    (informational — see NAMING.md \"Length Conventions\")"
+    echo "    (informational — see docs/internals/design-principles.md \"Length Conventions\")"
     warnings=$((warnings + ${#v3_files[@]}))
 else
     echo "  ✅ none"
@@ -596,7 +596,7 @@ PUB_FNS=$(pub_fn_inventory)
 echo
 echo "── V8: \`_with\` suffix reserved for an extra closure parameter ──"
 
-# docs/NAMING.md: `_with` means "same as the base call plus a closure
+# docs/internals/design-principles.md#naming-conventions: `_with` means "same as the base call plus a closure
 # parameter" (`error_boundary_with`, `table_with`, `canvas_with`,
 # `bar_chart_with`). Variants that add a value (a variant enum, an options
 # struct, a column list) are deprecated in 0.26 in favour of builder methods
@@ -625,7 +625,7 @@ while IFS=$'\t' read -r loc impl name dep sig; do
     [[ "$name" == *_with ]] || continue
     is_allowlisted_v8 "$name" && continue
     if ! [[ "$sig" =~ Fn(Once|Mut)?[[:space:]]*\( ]]; then
-        echo "  V8: ${loc} — ${name}() ends in _with but takes no closure; use a builder method instead (docs/NAMING.md)"
+        echo "  V8: ${loc} — ${name}() ends in _with but takes no closure; use a builder method instead (docs/internals/design-principles.md#naming-conventions)"
         v8_count=$((v8_count + 1))
     fi
 done <<< "${PUB_FNS}"
@@ -639,7 +639,7 @@ violations=$((violations + v8_count))
 echo
 echo "── V9: \`_colored\` suffix = base call + trailing &WidgetColors ──"
 
-# docs/NAMING.md: since 0.26 `_colored` has one shape, the base widget's
+# docs/internals/design-principles.md#naming-conventions: since 0.26 `_colored` has one shape, the base widget's
 # arguments plus `&WidgetColors`, and only the stateful widgets below keep
 # it. Single-color variants are builder methods (`.color(c)`), and a new
 # widget takes colors through its builder, so a new `_colored` name fails.
@@ -690,7 +690,7 @@ echo "── V10: v0.26 rename table (removed or renamed names) ──"
 # Issue #463 removed the items deprecated in 0.20-0.22 and renamed the
 # overlapping meanings; #460 moved `_with` / `_colored` variants to builders.
 # None of these may come back as a non-deprecated `pub fn` on the listed
-# type. `Type::name -> replacement`, matching docs/MIGRATION.md.
+# type. `Type::name -> replacement`, matching docs/reference/migration.md.
 V10_TABLE=(
     "Context::use_state_named -> use_state_keyed"
     "Context::use_state_named_default -> use_state_keyed_default"

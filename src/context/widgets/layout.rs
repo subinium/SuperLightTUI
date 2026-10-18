@@ -1082,7 +1082,7 @@ impl Context {
 mod line_wrap_tests;
 
 #[cfg(test)]
-mod v024_geometry_cache_tests {
+mod geometry_cache_tests {
     use super::*;
 
     fn assert_fresh_matches(ui: &mut Context) {

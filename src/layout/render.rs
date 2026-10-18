@@ -60,7 +60,7 @@ fn dim_cell_range(content: &mut [crate::cell::Cell], start: usize, end: usize) {
 }
 
 /// Test-only re-export of [`dim_buffer_around`] for the perf alloc tests
-/// and the `v020_perf_audit` demo. Not part of the stable API.
+/// and the `perf_audit` example. Not part of the stable API.
 #[doc(hidden)]
 pub(crate) fn __bench_dim_buffer_around(buf: &mut Buffer, modal_rect: Rect) {
     dim_buffer_around(buf, modal_rect)
@@ -1464,7 +1464,7 @@ mod tests {
     }
 
     #[test]
-    fn v024_clipped_text_matches_visual_source_cell_positions() {
+    fn clipped_text_matches_visual_source_cell_positions() {
         let style = Style::new().fg(Color::Red);
         let url = "https://example.com";
         for text in [

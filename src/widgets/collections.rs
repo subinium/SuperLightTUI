@@ -2558,7 +2558,7 @@ impl Default for CalendarState {
 }
 
 #[cfg(test)]
-mod table_v021_width_tests {
+mod table_column_width_tests {
     use super::TableColumn;
     use super::TableState;
 
@@ -2845,7 +2845,7 @@ mod list_state_reorder_tests {
 }
 
 #[cfg(test)]
-mod v024_collection_state_tests {
+mod list_height_metadata_tests {
     use super::*;
 
     fn heights(state: &ListState) -> Vec<u32> {
@@ -2937,7 +2937,7 @@ mod v024_collection_state_tests {
 }
 
 #[cfg(test)]
-mod v026_selection_index_tests {
+mod selection_index_tests {
     //! Issue #455: selected-item reads and removal use the data index of the
     //! row the user sees highlighted, with or without a filter or sort.
     use super::*;
