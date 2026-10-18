@@ -98,7 +98,7 @@ slt::RunConfig::default()
 
 Embedding with your own event loop (issue #278): the built-in crossterm backends `slt::Terminal` / `slt::InlineTerminal` are public — construct one, render into `buffer_mut()`, call `flush()`, and feed input you read yourself through `slt::event::from_crossterm`. The `crossterm` crate is re-exported as `slt::crossterm` so you never pin a mismatched version.
 
-`AppState::new()` holds frame-to-frame state; reuse the same instance across frames. `AppState::tick()`, `::fps()`, `::set_debug(bool)`.
+`AppState::new()` holds frame-to-frame state; reuse the same instance across frames. `AppState::tick()`, `::fps_f64()`, `::set_debug(bool)`.
 
 ---
 
@@ -109,7 +109,7 @@ Embedding with your own event loop (issue #278): the built-in crossterm backends
 |---|---|
 | `Context` | Per-frame handle you call widgets on (`ui`). |
 | `Response` | `{ clicked: bool, hovered: bool, changed: bool, focused: bool, rect: Rect }`. `Response::none()` for a zero struct. |
-| `State<T>` | Handle returned from `use_state`; read with `.get(ui)`, mutate with `.get_mut(ui)`. |
+| `State<T>` / `StateHandle<T>` | Handle returned from `use_state` / `use_state_keyed`; read with `.get(ui)`, mutate with `.get_mut(ui)`. `StateHandle<T>` is an alias that reads clearer next to widget state structs. |
 | `Widget` | Trait for custom widgets (`type Response; fn ui(&mut self, ui: &mut Context) -> Self::Response`). |
 | `ContainerBuilder` | Fluent builder returned by `container()`, `bordered()`, `scrollable()`, `group()`. Finalize with `.col(f)`, `.row(f)`, or a raw-draw method. |
 | `CanvasContext` | Braille canvas passed to `ui.canvas(w, h, |cv| { ... })`. |
@@ -215,7 +215,7 @@ Embedding with your own event loop (issue #278): the built-in crossterm backends
 | `SpinnerState` | `spinner` |
 | `ToastState`, `ToastMessage`, `ToastLevel` | `toast` |
 | `AlertLevel` | `alert` severity |
-| `ButtonVariant` | `button_with` (`Default`, `Primary`, `Danger`, `Outline`) |
+| `ButtonVariant` | `ui.button(label).variant(v)` (`Default`, `Primary`, `Danger`, `Outline`) |
 | `Trend` | `stat_trend` (`Up`, `Down`) |
 | `FormState`, `FormField` | `form`, `form_field`, `form_submit` |
 | `ScreenState` | `screen(name, &mut screens, f)` |
@@ -225,7 +225,7 @@ Embedding with your own event loop (issue #278): the built-in crossterm backends
 | `DiffState`, `DiffResponse`, `HunkId`, `HunkAction`, `HunkDecision`, `DiffLayout`, `DiffKeys`, `DiffColors`, `DiffParseError` (model: `slt::widgets::{DiffFile, DiffHunk, DiffLine, DiffLineKind, DiffFileStatus}`) | `diff` |
 | `ContextItem` | `context_bar(items)` |
 | `RichLogState`, `RichLogEntry` | `rich_log` |
-| `GridColumn` | Per-column spec for `grid_with` |
+| `GridColumn` | Per-column spec for `grid_columns` |
 | `StaticOutput` | Scrollback buffer for `run_static` |
 
 ### Palette
@@ -236,7 +236,9 @@ Embedding with your own event loop (issue #278): the built-in crossterm backends
 
 ## 5. Widget catalog (dense)
 
-Legend: `Response = { clicked, hovered, changed, focused, rect }`. `&mut Self` means chain-return for style. `ContainerBuilder` means fluent builder you finalize with `.col/.row/.draw/.draw_interactive`. Every row lists: call, return, 1-line description, tiny example where load-bearing.
+Legend: `Response = { clicked, hovered, changed, focused, rect }` (`Copy`). `&mut Self` means chain-return for style. `ContainerBuilder` means fluent builder you finalize with `.col/.row/.draw/.draw_interactive`. Every row lists: call, return, 1-line description, tiny example where load-bearing.
+
+Widget builders (`Button`, `Badge`, `Stat`, `Help`, `Separator`, `ProgressBar`, `Slider`, `LineChart`) take their options as chained methods and deref to `Response`, so `ui.button("Save").clicked` works directly. Call `.show()` to get an owned `Response` when you store the result and call `ui.` again before reading it. Builder arguments cannot borrow `ui` again: bind `let c = ui.theme().success;` first, then `ui.badge("ok").color(c)`.
 
 ### 5.1 Text and inline display (`&mut Self` unless noted)
 
@@ -246,9 +248,9 @@ Legend: `Response = { clicked, hovered, changed, focused, rect }`. `&mut Self` m
 | `ui.styled(s, style)` | Text with a prebuilt `Style`. |
 | `ui.link(text, url)` | OSC 8 hyperlink. Opens URL on Enter/Space/click. |
 | `ui.spacer()` | Invisible flex element pushes siblings apart. |
-| `ui.separator()` | Horizontal divider. Variant: `ui.separator_colored(color)`. |
+| `ui.separator()` | Horizontal divider; `Separator` builder. Chain `.color(c)`; `.show()` returns `Response`. |
 | `ui.timer_display(duration)` | Format `Duration` as HH:MM:SS.CC. |
-| `ui.line(|ui| {...})` | Inline rich text — zero-gap row, no interaction. |
+| `ui.line(|ui| {...})` | Inline rich text — zero-gap row, no interaction. Returns `Response`. |
 | `ui.line_wrap(|ui| {...})` | Same but wraps at word boundaries. |
 
 ### 5.2 Rich text (return `Response`)
@@ -256,10 +258,7 @@ Legend: `Response = { clicked, hovered, changed, focused, rect }`. `&mut Self` m
 | Call | Notes |
 |---|---|
 | `ui.markdown(text)` | Headings, bold, italic, links, lists, fenced code. |
-| `ui.code_block(code)` | Plain fenced code. |
-| `ui.code_block_lang(code, lang)` | Lang-tagged code block; picks tree-sitter grammar when the matching `syntax-*` feature is enabled. |
-| `ui.code_block_numbered(code)` | With line numbers. |
-| `ui.code_block_numbered_lang(code, lang)` | With line numbers + highlighting. |
+| `ui.code_block(code)` | Fenced code; `CodeBlock` builder that renders on drop. `.lang(lang)` picks the tree-sitter grammar when the matching `syntax-*` feature is enabled; `.numbered()` adds line numbers; `.show()` returns `Response`. |
 | `ui.big_text(s)` | 8x8 bitmap text rendered as half-block pixels (4 rows tall). |
 
 ### 5.3 Status and info (return `Response` unless noted)
@@ -267,9 +266,9 @@ Legend: `Response = { clicked, hovered, changed, focused, rect }`. `&mut Self` m
 | Call | Notes |
 |---|---|
 | `ui.alert(msg, level)` | `AlertLevel`: `Info`, `Success`, `Warning`, `Error`. |
-| `ui.badge(label)` / `ui.badge_colored(label, color)` | Pill. |
+| `ui.badge(label)` | Pill; `Badge` builder. `.color(c)` overrides the theme color. |
 | `ui.key_hint(key)` | Keyboard shortcut badge. |
-| `ui.stat(label, value)` / `ui.stat_colored(label, value, color)` | Label + value. |
+| `ui.stat(label, value)` | Label + value; `Stat` builder. `.color(c)` colors the value. |
 | `ui.stat_trend(label, value, trend)` | `Trend::Up` or `Trend::Down`. |
 | `ui.empty_state(title, desc)` / `ui.empty_state_action(title, desc, action)` | Centered empty message. |
 | `ui.divider_text(label)` | Horizontal divider with centered label. |
@@ -277,17 +276,17 @@ Legend: `Response = { clicked, hovered, changed, focused, rect }`. `&mut Self` m
 | `ui.accordion(title, &mut open, |ui| {...})` | Collapsible. |
 | `ui.confirm(question, &mut result)` | Yes/No dialog; `result` set on click. |
 | `ui.breadcrumb(&segments)` | Returns a `Breadcrumb` builder. Chain `.separator(...)` / `.color(...)`; call `.show()` for `BreadcrumbResponse`. Dropping the builder still renders. |
-| `ui.help(&[(&str, &str)])` | Key/description help bar. `ui.help_colored(bindings, key_color, text_color)`. |
+| `ui.help(&[(&str, &str)])` | Key/description help bar; `Help` builder. `.key_color(c)` / `.text_color(c)` override the colors. |
 | `ui.help_from_keymap(&keymap)` | From a `KeyMap`. |
 
 ### 5.4 Layout (row/col/container)
 
 | Call | Returns | Notes |
 |---|---|---|
-| `ui.col(|ui| {...})` / `ui.col_gap(n, |ui| {...})` | `Response` | Vertical stack. |
-| `ui.row(|ui| {...})` / `ui.row_gap(n, |ui| {...})` | `Response` | Horizontal stack. |
+| `ui.col(|ui| {...})` | `Response` | Vertical stack. With a gap: `ui.container().gap(n).col(|ui| {...})`. |
+| `ui.row(|ui| {...})` | `Response` | Horizontal stack. With a gap: `ui.container().gap(n).row(|ui| {...})`. |
 | `ui.grid(cols, |ui| {...})` | `Response` | Fixed-column grid. |
-| `ui.grid_with(&[GridColumn], |ui| {...})` | `Response` | Per-column fractional/fixed widths. |
+| `ui.grid_columns(&[GridColumn], |ui| {...})` | `Response` | Per-column fractional/fixed widths. |
 | `ui.container()` | `ContainerBuilder` | Fluent — chain style then `.col/.row/.draw`. |
 | `ui.bordered(Border::Rounded)` | `ContainerBuilder` | Same as `container().border(...)`. |
 | `ui.scrollable(&mut scroll)` | `ContainerBuilder` | Scrollable subtree. |
@@ -317,13 +316,13 @@ Legend: `Response = { clicked, hovered, changed, focused, rect }`. `&mut Self` m
 Chain in any order; finalize with `.col(f)`, `.row(f)`, `.draw(f)`, `.draw_with(data, f)`, or `.draw_interactive(f)`.
 
 Border & decoration:
-`.border(Border)`, `.border_sides(BorderSides)`, `.border_top(bool)`, `.border_right(bool)`, `.border_bottom(bool)`, `.border_left(bool)`, `.border_x()`, `.border_y()`, `.rounded()`, `.border_style(Style)`, `.border_fg(Color)`, `.dark_border_style(Style)`, `.bg(Color)`, `.dark_bg(Color)`, `.text_color(Color)`, `.group_hover_bg(Color)`, `.group_hover_border_style(Style)`, `.title(impl Into<String>)`, `.title_styled(s, Style)`.
+`.border(Border)`, `.border_sides(BorderSides)`, `.border_top(bool)`, `.border_right(bool)`, `.border_bottom(bool)`, `.border_left(bool)`, `.border_x()`, `.border_y()`, `.rounded()`, `.border_style(Style)`, `.border_fg(Color)`, `.dark_border_style(Style)`, `.bg(Color)`, `.dark_bg(Color)`, `.fg(Color)` / `.text_color(Color)` (default text color for children), `.group_hover_bg(Color)`, `.group_hover_border_style(Style)`, `.title(impl Into<String>)`, `.title_styled(s, Style)`.
 
 Spacing:
-`.p(n)`, `.px(n)`, `.py(n)`, `.pt(n)`, `.pr(n)`, `.pb(n)`, `.pl(n)`, `.padding(Padding)`, `.m(n)`, `.mx(n)`, `.my(n)`, `.mt(n)`, `.mr(n)`, `.mb(n)`, `.ml(n)`, `.margin(Margin)`, `.gap(n)`, `.row_gap(n)`, `.col_gap(n)`. Deprecated compatibility alias: `.pad(n)`.
+`.p(n)`, `.px(n)`, `.py(n)`, `.pt(n)`, `.pr(n)`, `.pb(n)`, `.pl(n)`, `.padding(Padding)`, `.m(n)`, `.mx(n)`, `.my(n)`, `.mt(n)`, `.mr(n)`, `.mb(n)`, `.ml(n)`, `.margin(Margin)`, `.gap(n)`, `.row_gap(n)`, `.col_gap(n)`.
 
 Size:
-`.w(n)`, `.h(n)`, `.min_w(n)`, `.max_w(n)`, `.min_h(n)`, `.max_h(n)`, `.min_width(n)`, `.max_width(n)`, `.min_height(n)`, `.max_height(n)`, `.w_pct(u8)`, `.h_pct(u8)`, `.constraints(Constraints)`.
+`.w(n)`, `.h(n)`, `.min_w(n)`, `.max_w(n)`, `.min_h(n)`, `.max_h(n)`, `.w_pct(u8)`, `.h_pct(u8)`, `.w_ratio(num, den)`, `.h_ratio(num, den)`, `.constraints(Constraints)`.
 
 Layout:
 `.grow(n)`, `.align(Align)`, `.center()`, `.align_self(Align)`, `.justify(Justify)`, `.space_between()`, `.space_around()`, `.space_evenly()`, `.flex_center()`, `.scroll_offset(u32)`.
@@ -348,11 +347,10 @@ Finalization:
 
 | Call | State | Notes |
 |---|---|---|
-| `ui.button(label)` | — | Click button. Variants: `button_colored(label, &colors)`, `button_with(label, ButtonVariant)` (`Default`, `Primary`, `Danger`, `Outline`). |
+| `ui.button(label)` | — | Click button; `Button` builder (derefs to `Response`). `.variant(ButtonVariant)` (`Default`, `Primary`, `Danger`, `Outline`), `.colors(&WidgetColors)`; both compose: `ui.button("Delete").variant(ButtonVariant::Danger).colors(&c)`. `.show()` returns the `Response`. |
 | `ui.checkbox(label, &mut bool)` / `checkbox_colored` | — | Checkbox toggle. |
 | `ui.toggle(label, &mut bool)` / `toggle_colored` | — | Toggle switch. |
-| `ui.slider(label, &mut f64, range)` | — | Horizontal slider, `range: RangeInclusive<f64>`. Default step is `span / 20`. |
-| `ui.slider_with(&mut f64, SliderOpts::new(label, range).step(step))` | — | Slider with explicit step size using the v0.23 opts API. |
+| `ui.slider(label, &mut f64, range)` | — | Horizontal slider, `range: RangeInclusive<f64>`; `Slider` builder. Default step is `span / 20`; `.step(s)` sets an explicit step; `.show()` returns `Response`. |
 | `ui.text_input(&mut state)` / `text_input_colored` | `TextInputState` | Single-line input. |
 | `ui.textarea(&mut state, visible_rows)` | `TextareaState` | Multi-line editor. |
 | `ui.code_editor(&mut state)` | `CodeEditorState` | Builder; `.show()` returns `Response` (`changed` when the text changed). Syntax-highlighted editor on a `TextareaState` (same keys, selection, clipboard, undo / redo). `.line_numbers(bool)` (right-aligned gutter, on by default), `.h(rows)`, `.w(cols)`, `.wrap(bool)` (soft wrap; default horizontal scroll), `.current_line(bool)`, `.bracket_match(bool)`. Highlighting follows `CodeEditorState::lang` and needs the `syntax-*` feature (plain fallback edits identically). Tab inserts spaces to the next tab stop (`.tab_width(n)` / `.hard_tabs(true)` on the state), Tab / Shift+Tab indent / dedent a multi-line selection, Enter keeps the indentation (+1 level after `{` `(` `[`), PageUp / PageDown page. Owns Tab while focused unless `CodeEditorState::tab_indents(false)`. Only visible rows render; an edit re-highlights only its chunk. |
@@ -373,8 +371,8 @@ Finalization:
 
 | Call | Returns | State | Notes |
 |---|---|---|---|
-| `ui.progress(ratio)` | `Response` | — | Progress bar, `f64` 0.0..1.0. |
-| `ui.progress_bar(ratio, width)` | `Response` | — | Fixed-width. `progress_bar_colored(r, w, color)`. |
+| `ui.progress(ratio)` | `ProgressBar` | — | Progress bar, `f64` 0.0..1.0. `.color(c)`; `.show()` returns `Response`. |
+| `ui.progress_bar(ratio, width)` | `ProgressBar` | — | Fixed-width. `.color(c)`. |
 | `ui.spinner(&state)` | `Response` | `SpinnerState` | `SpinnerState::dots()` or `::line()`. |
 | `ui.toast(&mut state)` | `&mut Self` | `ToastState` | Render active toasts. |
 | `ui.notify(message, level)` | `()` | — | Fire-and-forget toast. `ToastLevel`: `Info`, `Success`, `Warning`, `Error`. |
@@ -389,8 +387,8 @@ Finalization:
 | `ui.bar_chart_stacked(&[BarGroup], max_height)` / `..._with` | Stacked bars. |
 | `ui.sparkline(&[f64], width)` | Inline sparkline. |
 | `ui.sparkline_styled(&[(f64, Option<Color>)], width)` | Per-point color. |
-| `ui.line_chart(&[f64], w, h)` / `line_chart_colored(..., color)` | Line chart. |
-| `ui.area_chart(&[f64], w, h)` / `area_chart_colored(..., color)` | Filled area. |
+| `ui.line_chart(&[f64], w, h)` | Line chart; `LineChart` builder. `.color(c)`; `.show()` returns `Response`. |
+| `ui.area_chart(&[f64], w, h)` | Filled area; same builder (`.color(c)`). |
 | `ui.scatter(&[(f64, f64)], w, h)` | Braille scatter. |
 | `ui.histogram(&[f64], w, h)` / `histogram_with(..., configure, w, h)` | Histogram. |
 | `ui.candlestick(&[Candle], up_color, down_color)` / `candlestick_hd(...)` | OHLC. |
@@ -441,7 +439,8 @@ Coordinate units are braille pixels: `cv.width() == cols*2`, `cv.height() == row
 ### 5.12 Runtime and hook methods on `Context`
 
 State:
-- `ui.use_state(|| init) -> State<T>`. Read: `state.get(ui)`. Write: `*state.get_mut(ui) = v`.
+- `ui.use_state(|| init) -> State<T>`. Read: `state.get(ui)`. Write: `*state.get_mut(ui) = v`. Positional: same call order every frame.
+- `ui.use_state_keyed(id, || init) -> State<T>` / `ui.use_state_keyed_default::<T>(id)`. Keyed by `id` (`&'static str` or runtime `String`), so it is safe inside `if` / `match` / loops. (`use_state_named` is a deprecated alias that shares the same slot.)
 - `ui.use_memo(&deps, |deps| compute) -> Memo<T>`. Read with `.get(ui)` / `.copied(ui)`; recomputes only when `deps` changes.
 
 Focus:
@@ -459,7 +458,6 @@ Keyboard (non-consuming unless noted):
 - `ui.key_code(KeyCode) -> bool`
 - `ui.key_mod(c, KeyModifiers) -> bool`
 - `ui.key_chord("gg") -> bool` — cross-frame multi-key sequence (vi `gg`, leader keys); buffers partial input across frames and times out on inactivity. `key_chord_timeout(seq, ticks)` sets a per-call timeout.
-- `ui.key_seq("gg") -> bool` — **deprecated** alias for `key_chord`.
 - `ui.key_release(c)` / `ui.key_code_release(code)`
 - `ui.raw_key_code(code)` / `ui.raw_key_mod(c, mods)` — ignore consumed state; for global shortcuts.
 - `ui.consume_key(c)` / `ui.consume_key_code(code)` — mark event consumed.
@@ -573,9 +571,9 @@ slt::run(|ui| {
 
 ### 6.7 Form with validation
 
-Prefer field-local validators and `validate_all`. The positional
-`FormValidator` slice shown in the legacy example below remains a compatibility
-path. For scrollable forms, the following recipe also exposes field feedback:
+Attach validators to each `FormField` with `.validate(..)` and run them all with
+`form.validate_all()`. For scrollable forms, the following recipe also exposes
+field feedback:
 
 <!-- slt-check: {"name":"focus_scrolling_form","features":["crossterm"],"context":"module"} -->
 ```rust
@@ -606,18 +604,18 @@ from clipped `Response.rect`; see `PREVIOUS_FRAME_GUIDE.md` for timing and coord
 
 ```rust
 let mut form = FormState::new()
-    .field(FormField::new("Email").placeholder("you@example.com"))
-    .field(FormField::new("Password"));
+    .field(FormField::new("Email").placeholder("you@example.com").validate(|v| {
+        if v.contains('@') { Ok(()) } else { Err("Invalid email".into()) }
+    }))
+    .field(FormField::new("Password").validate(|v| {
+        if v.len() >= 8 { Ok(()) } else { Err("Too short".into()) }
+    }));
 
 slt::run(move |ui| {
     ui.form(&mut form, |ui, form| {
         for field in &mut form.fields { ui.form_field(field); }
-        if ui.form_submit("Submit").clicked {
-            let ok = form.validate(&[
-                |v| if v.contains('@') { Ok(()) } else { Err("Invalid email".into()) },
-                |v| if v.len() >= 8 { Ok(()) } else { Err("Too short".into()) },
-            ]);
-            if ok { form.submitted = true; }
+        if ui.form_submit("Submit").clicked && form.validate_all() {
+            form.submitted = true;
         }
     });
 });
@@ -637,11 +635,11 @@ let show_confirm = ui.use_state(|| false);
 if *show_confirm.get(ui) {
     ui.modal(|ui| {
         ui.text("Delete item?").bold();
-        ui.row_gap(1, |ui| {
-            if ui.button_with("Cancel", ButtonVariant::Default).clicked {
+        ui.container().gap(1).row(|ui| {
+            if ui.button("Cancel").clicked {
                 *show_confirm.get_mut(ui) = false;
             }
-            if ui.button_with("Delete", ButtonVariant::Danger).clicked {
+            if ui.button("Delete").variant(ButtonVariant::Danger).clicked {
                 // perform delete
                 *show_confirm.get_mut(ui) = false;
             }
@@ -1042,7 +1040,7 @@ let c = WidgetColors::new()
     .theme_bg(ThemeColor::Surface)     // takes precedence over bg below
     .bg(Color::Black)
     .theme_accent(ThemeColor::Accent);
-ui.button_colored("Save", &c);
+if ui.button("Save").colors(&c).clicked { /* save */ }
 ui.table_colored(&mut tbl, &c);
 ```
 
@@ -1098,21 +1096,23 @@ tb.render_with_events(
 3. **Focus on frame 1.** `ui.focus_count()` returns 0 on the first frame; `Response.rect` is zero-sized until the frame after a widget's first appearance. Avoid relying on these for frame-0 decisions.
 4. **Borrow across `row()` / `col()`.** The closure passed to `.col(...)` borrows `ui` mutably. You cannot hold a reference to `ui` or to the parent `Response` inside that closure. Capture what you need before or read the `Response` after the call.
 5. **`ui.bg(c)` vs container bg.** `ui.text("x").bg(color)` sets the *text* background only. For a container background use `ui.container().bg(color).col(|ui| { ... })`.
-6. **`line()` vs `row()`.** Both are horizontal. `row()` returns `Response`, has gap, participates in flex fully. `line()` returns `&mut Self`, zero-gap, intended for inline rich text and no interaction.
-7. **`_colored` argument order.** Every `_colored` variant takes `&WidgetColors` *as the last argument* (e.g. `ui.button_colored("Save", &colors)`, `ui.list_colored(&mut state, &colors)`).
+6. **`line()` vs `row()`.** Both are horizontal and return `Response`. `row()` has gap and participates in flex fully. `line()` is zero-gap, intended for inline rich text and no interaction.
+7. **`_colored` argument order.** Every stateful `_colored` variant takes `&WidgetColors` *as the last argument* (e.g. `ui.list_colored(&mut state, &colors)`, `ui.table_colored(&mut state, &colors)`). Builder widgets take colors as a chained method instead: `ui.button("Save").colors(&colors)`, `ui.badge("ok").color(c)`.
 8. **`*State` must outlive the closure.** Create `TextInputState`, `ListState`, etc. **outside** `slt::run(...)` (or use hooks). Creating them fresh inside the closure throws away the state every frame.
 9. **`TextInputState` vs `TextareaState`.** Single-line vs multi-line. They are not interchangeable.
 10. **`consume_key` vs `key`.** `consume_key(c)` marks the event consumed so other widgets ignore it. Use this in custom widgets or global shortcuts that should not bubble.
 11. **Two animation layers.** `ui.animate_bool(id, on)` / `ui.animate_value(id, target, ticks)` are `Context` methods with built-in state (linear, CSS-transition-like). `Tween`, `Spring`, `Keyframes`, `Sequence`, `Stagger` are plain structs: construct outside the closure, mutate/sample inside using `ui.tick()`.
-12. **Button color overrides.** `button_with(label, ButtonVariant::Danger)` picks a theme-aware variant; `button_colored(label, &WidgetColors::new().accent(c))` is a literal override.
+12. **Button color overrides.** `ui.button(label).variant(ButtonVariant::Danger)` picks a theme-aware variant; `ui.button(label).colors(&WidgetColors::new().accent(c))` is a literal override; chaining both layers the colors on top of the variant.
 13. **Inline mode does not own the screen.** `run_inline(height, f)` reserves `height` rows below the cursor; other output still scrolls. No alt-screen, no F12 overlay in some terminals.
 14. **`cargo add superlighttui`** pulls in the `crossterm` default feature. Without it you lose `run()` / `run_inline()` / clipboard; keep `Backend`, `AppState`, `frame()`.
-15. **Feature-gated APIs.** `ui.qr_code(...)` needs `qrcode`. `run_async(...)` needs `async`. `code_block_lang(...)` tree-sitter highlighting needs `syntax` or the matching `syntax-*` flag.
+15. **Feature-gated APIs.** `ui.qr_code(...)` needs `qrcode`. `run_async(...)` needs `async`. `ui.code_block(code).lang(...)` tree-sitter highlighting needs `syntax` or the matching `syntax-*` flag.
 16. **`ui.screen` isolates hooks.** `use_state` inside one `screen(...)` does not share state with another. Use plain app state if you need cross-screen values.
 17. **Modal traps focus.** Tab and Shift+Tab cycle only within the current modal; outside widgets are not reachable while the modal is open.
 18. **Breakpoint method naming.** `xs_w`, `sm_w`, `md_w`, `lg_w`, `xl_w`, `w_at(bp, v)` — the breakpoint is a **prefix** on the base name (not `w_xs`).
 19. **Hover needs `MouseMode::Hover`.** The mouse is on by default (`MouseMode::Drag`, or `Click` over SSH/mosh), so clicks, wheel, and drags work with plain `slt::run`, but pointer moves without a button held are only reported in `MouseMode::Hover`: `hovered`, group hover, and tooltips stay inert until you opt in. Over SSH, drags need an explicit `Drag`. Native terminal selection: Shift-drag in most terminals, or `MouseMode::Off`.
 20. **Focused text fields own their keys.** While `text_input` / `textarea` / a form field / an open command palette has focus, `ui.key('q')`, `ui.key_code(..)` and `ui.shortcut(..)` skip the keys the field edits with, in any call order. Chords (Ctrl/Super/Meta), Esc, Tab and F-keys still reach shortcuts; `ui.raw_key(c)` sees every press.
+21. **Builder arguments cannot borrow `ui`.** `ui.badge("ok").color(ui.theme().success)` does not compile because the builder already holds `&mut ui`. Bind first: `let ok = ui.theme().success; ui.badge("ok").color(ok);`. Same for `Text`, `Button`, `Stat`, `Help`, `Separator`, `ProgressBar`, `Slider`, `LineChart`.
+22. **Storing a builder result.** `let r = ui.button("Save");` keeps `ui` borrowed until `r` is last used. If you call `ui.` again before reading `r`, write `let r = ui.button("Save").show();` (an owned, `Copy` `Response`). The same applies to `vec![ui.button("a").show(), ...]` and returning a response from a closure.
 
 ---
 
@@ -1120,7 +1120,11 @@ tb.render_with_events(
 
 These are the high-value names commonly used as `slt::X`. The generated
 docs.rs index and `src/lib.rs` are authoritative for the complete, feature-gated
-surface.
+surface. For an app, `use slt::prelude::*;` imports the run entry points,
+`Context`, `ContainerBuilder`, `Response`, `Text`, `Button`, `ButtonVariant`,
+`WidgetColors`, `State` / `StateHandle`, the style vocabulary, `KeyCode` /
+`KeyModifiers` and the common widget state structs in one line (it leaves out
+the `crossterm` re-export so it never shadows your own dependency).
 
 ```text
 // From test_utils
@@ -1143,7 +1147,10 @@ Candle, ChartBuilder, ChartConfig, Dataset, LegendPosition, Marker
 // From context (crate root)
 Anchor, Bar, BarChartConfig, BarDirection, BarGroup, Breadcrumb, CanvasContext,
 CodeBlock, ContainerBuilder, Context, Gauge, GutterOpts, LineGauge, Memo,
-Response, State, TreemapItem, Widget
+Response, State, StateHandle, TreemapItem, Widget
+// Widget builders: Badge, Button, Help, LineChart, ProgressBar, Separator,
+// Slider, Stat, Text
+
 
 // From event
 Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKey, MouseButton,
@@ -1297,7 +1304,7 @@ async fn main() -> std::io::Result<()> {
 
 - Quit: `ui.quit()` (Ctrl+C also quits).
 - Read a key: `ui.key('q')`, `ui.key_code(KeyCode::Enter)`, `ui.key_mod('s', KeyModifiers::CONTROL)`.
-- Read a cross-frame multi-key chord (vi `gg`, leader keys like `<space>ff`): `ui.key_chord("gg")`. Buffers partial input across frames; resets on a mismatching key or after a timeout. (`key_seq` is a deprecated alias.)
+- Read a cross-frame multi-key chord (vi `gg`, leader keys like `<space>ff`): `ui.key_chord("gg")`. Buffers partial input across frames; resets on a mismatching key or after a timeout.
 - Mouse click position: `ui.mouse_down()` / `ui.mouse_pos()`.
 - Scroll: `ui.scroll_up()` / `ui.scroll_down()`.
 - Paste: `ui.paste()`.
@@ -1564,7 +1571,7 @@ error: Option<String>
 fields: Vec<FormField>
 submitted: bool
 ```
-Builders: `FormState::new().field(FormField::new("Email").key("email").placeholder("..."))`; `FormField` also has `.masked(bool)` / `.password()` and `.validate(f)` (attaches a validator). Read values with `.get("email") -> Option<&str>` (by key, then label) and `.field_mut("email")`; positional `.value(i) -> &str` breaks when fields are reordered. `.validate_all() -> bool` runs every field's validators; `.validate(&[FormValidator])` is deprecated.
+Builders: `FormState::new().field(FormField::new("Email").key("email").placeholder("..."))`; `FormField` also has `.masked(bool)` / `.password()` and `.validate(f)` (attaches a validator). Read values with `.get("email") -> Option<&str>` (by key, then label) and `.field_mut("email")`; positional `.value(i) -> &str` breaks when fields are reordered. `.validate_all() -> bool` runs every field's validators; `.validate_with(|form| errors)` adds cross-field checks (the positional `.validate(&[FormValidator])` was removed in 0.26).
 
 ### ScreenState / ModeState
 ```text
@@ -1609,7 +1616,8 @@ max_entries: Option<usize>
 Methods: `.push(text, style)`, `.push_plain(text)`, `.push_segments(...)`, `.push_entry(...)`, `.entries()`, `.entry(index)`, `.clear()`.
 
 ### GridColumn
-Per-column spec for `ui.grid_with(&[GridColumn], |ui| { ... })` — fixed or fractional widths.
+Per-column spec for `ui.grid_columns(&[GridColumn], |ui| { ... })` — fixed or fractional widths.
+
 
 ### StaticOutput
 ```text

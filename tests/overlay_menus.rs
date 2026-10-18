@@ -94,7 +94,7 @@ fn popover_right_flips_left_and_above_flips_below() {
 #[test]
 fn popover_does_not_reflow_the_layout() {
     let scene = |ui: &mut Context, open: bool| {
-        let info = ui.button("Info");
+        let info = ui.button("Info").show();
         if open {
             let _ = ui.popover(info.rect, Placement::Below, |ui| {
                 ui.text("details");
@@ -170,7 +170,7 @@ struct MenuFrame {
 }
 
 fn menu_scene(ui: &mut Context, menu: &mut MenuState, out: &mut MenuFrame) {
-    let file = ui.button("notes.md");
+    let file = ui.button("notes.md").show();
     out.trigger_focused = file.focused;
     if let Some(id) = ui.context_menu(menu, &file) {
         out.activated = Some(id);

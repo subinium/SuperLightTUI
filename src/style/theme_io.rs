@@ -518,7 +518,7 @@ mod render_tests {
         // paints `theme.primary` as the label foreground when focused.
         tb.render_with_events(Vec::new(), 0, 1, move |ui| {
             ui.set_theme(tf.theme);
-            let _ = ui.button_with("Go", ButtonVariant::Default);
+            let _ = ui.button("Go").variant(ButtonVariant::Default);
         });
 
         // The widget rendered.

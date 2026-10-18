@@ -97,7 +97,7 @@ if show_sidebar {
 }
 ```
 
-If you genuinely need a hook inside an `if` or `match` arm, use `ui.use_state_named(id, init)` or `ui.use_state_named_default::<T>(id)`. They key by the supplied `&'static str`, so conditional placement is safe. The positional `use_state` rule still applies.
+If you genuinely need a hook inside an `if` or `match` arm, use `ui.use_state_keyed(id, init)` or `ui.use_state_keyed_default::<T>(id)`. They key by the supplied id (`&'static str` or `String`), so conditional placement is safe. The positional `use_state` rule still applies. (`use_state_named` is a deprecated alias of `use_state_keyed`.)
 
 ### 3. `Response.rect` is empty
 
@@ -277,7 +277,7 @@ Gotchas, all measured on the setup below:
 | New helper function or container called from `app` | Applied; state kept |
 | New `use_state` appended after existing hooks | Applied; new slot initialized, old slots kept |
 | `use_state` inserted before existing hooks | Panic: `use_state type mismatch at hook index N` |
-| `use_state` inserted before a `use_state_named` hook | Applied; named value kept |
+| `use_state` inserted before a `use_state_keyed` hook | Applied; keyed value kept |
 | Fields added to a struct stored in `use_state` | Panic: type mismatch (observed: its `TypeId` changed) |
 | Unrelated edit with a tip-crate struct in `use_state` | Applied; struct value kept |
 | Code in `main` or outside `app` (`RunConfig`, setup) | Not applied until restart |
@@ -290,7 +290,8 @@ crates (`dioxus-devtools` pulls `dioxus-core`, `dioxus-signals`,
 `tungstenite`). Default builds are unaffected because the dependencies are
 optional and the calls are behind `cfg`.
 
-To survive hook insertions, use `use_state_named(...)`, which keys by id rather
+To survive hook insertions, use `use_state_keyed(...)`, which keys by id rather
+
 than position. Measured on dioxus-cli 0.7.10, subsecond 0.7.10, Rust 1.98, and
 macOS 26.5 on arm64. Linux and Windows are listed as supported by Subsecond but
 were not tested here.

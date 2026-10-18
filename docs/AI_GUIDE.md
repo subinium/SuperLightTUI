@@ -43,13 +43,13 @@ Both are horizontal. `row()` is a full layout container returning `Response`. `l
 
 ### "How do I use _colored variants?"
 
-Pass `WidgetColors::new().fg(color).bg(color)` as the last argument. See `docs/THEMING.md`.
+Stateful widgets (`list_colored`, `table_colored`, `text_input_colored`, ...) take `WidgetColors::new().fg(color).bg(color)` as the last argument. Builder widgets take colors as a chained method: `ui.button("Save").colors(&c)`, `ui.badge("ok").color(c)`, `ui.stat(l, v).color(c)`. Bind theme colors before the call (`let c = ui.theme().success;`), because a builder argument cannot borrow `ui` again. See `docs/THEMING.md`.
 
 ### "Why does my hook panic?"
 
 `use_state()` and `use_memo()` must be called in the same order every frame. Never put them inside conditionals.
 
-Exception: `ui.use_state_named(id, init)` and `ui.use_state_named_default::<T>(id)` are id-keyed variants and are safe inside `if`/`match` branches.
+Exception: `ui.use_state_keyed(id, init)` and `ui.use_state_keyed_default::<T>(id)` are id-keyed variants and are safe inside `if`/`match` branches and loops (`id` is a `&'static str` or a runtime `String`). `use_state_named` is a deprecated alias that now shares the same slot.
 
 ```rust
 // Wrong: order-based hook inside a conditional drifts the call order.
@@ -59,15 +59,16 @@ if expanded {
 
 // Right: id-keyed variant is safe inside conditionals.
 if expanded {
-    let count = ui.use_state_named_default::<i32>("sidebar.count"); // OK
+    let count = ui.use_state_keyed_default::<i32>("sidebar.count"); // OK
 }
 ```
 
-The original `use_state` / `use_memo` order rule still holds — only the id-keyed `*_named` variants opt out of it.
+The original `use_state` / `use_memo` order rule still holds — only the id-keyed `use_state_keyed*` variants opt out of it.
 
 ### "How do I handle keyboard shortcuts?"
 
-Use `key(c)`, `key_code(code)`, or `key_mod(c, mods)`. For modal-aware shortcuts use the regular versions. For global shortcuts that bypass modals, use `raw_key_code()` or `raw_key_mod()`. Check global shortcuts **after** rendering widgets: `key*` only sees events no widget has consumed yet, so a `ui.key('q')` check placed before a focused `text_input` fires even while the user types `q` into the field. For multi-key chords that span frames (vi `gg`, leader keys like `<space>ff`) use `key_chord("gg")` — it buffers partial input across frames and times out on inactivity. (`key_seq` is a deprecated alias that now delegates to `key_chord`.)
+Use `key(c)`, `key_code(code)`, or `key_mod(c, mods)`. For modal-aware shortcuts use the regular versions. For global shortcuts that bypass modals, use `raw_key_code()` or `raw_key_mod()`. Check global shortcuts **after** rendering widgets: `key*` only sees events no widget has consumed yet, so a `ui.key('q')` check placed before a focused `text_input` fires even while the user types `q` into the field. For multi-key chords that span frames (vi `gg`, leader keys like `<space>ff`) use `key_chord("gg")` — it buffers partial input across frames and times out on inactivity.
+
 
 ### "Why doesn't hover (or a tooltip) do anything?"
 

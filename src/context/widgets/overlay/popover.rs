@@ -231,7 +231,7 @@ impl Context {
     /// let mut tb = TestBackend::new(40, 10);
     /// for _ in 0..2 {
     ///     tb.render(|ui| {
-    ///         let info = ui.button("Info");
+    ///         let info = ui.button("Info").show();
     ///         if info.clicked {
     ///             open = !open;
     ///         }

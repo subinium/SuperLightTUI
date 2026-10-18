@@ -67,8 +67,8 @@ fn render_modal_trap(ui: &mut Context, show: bool) {
         let _ = ui.modal_with(ModalOpts::new(), |ui| {
             let _ = ui.bordered(Border::Rounded).p(1).col(|ui| {
                 ui.text("Confirm").bold();
-                let _ = ui.button_with("Yes", ButtonVariant::Primary);
-                let _ = ui.button_with("No", ButtonVariant::Outline);
+                let _ = ui.button("Yes").variant(ButtonVariant::Primary);
+                let _ = ui.button("No").variant(ButtonVariant::Outline);
             });
         });
     }

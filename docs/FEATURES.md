@@ -110,7 +110,8 @@ When reading or generating code:
 - if you see `run()` / `run_inline()` / clipboard query usage, assume `crossterm` is needed
 - if you see `run_async()`, assume `async` is needed
 - if you see `ui.qr_code(...)`, assume `qrcode` is needed
-- if you see `code_block_lang(...)` with tree-sitter behavior, check `syntax` flags
+- if you see `ui.code_block(..).lang(...)` with tree-sitter behavior, check `syntax` flags
+
 
 ## Related docs
 

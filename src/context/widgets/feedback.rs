@@ -8,8 +8,12 @@
 use super::*;
 
 mod gauge;
+mod progress;
+mod slider;
 
 pub use gauge::{Gauge, LineGauge};
+pub use progress::ProgressBar;
+pub use slider::Slider;
 
 #[cfg(test)]
 mod tests;
@@ -82,74 +86,6 @@ impl Context {
         self.rollback.last_text_idx = None;
 
         self
-    }
-
-    /// Horizontal slider for numeric values.
-    ///
-    /// Step defaults to `span / 20.0`. Use [`Context::slider_with`] with
-    /// [`SliderOpts`](crate::widgets::SliderOpts) for an explicit step.
-    ///
-    /// # Examples
-    /// ```
-    /// # use slt::*;
-    /// # TestBackend::new(80, 24).render(|ui| {
-    /// let mut volume = 75.0_f64;
-    /// let r = ui.slider("Volume", &mut volume, 0.0..=100.0);
-    /// if r.changed { /* volume was adjusted */ }
-    /// # });
-    /// ```
-    pub fn slider(
-        &mut self,
-        label: &str,
-        value: &mut f64,
-        range: std::ops::RangeInclusive<f64>,
-    ) -> Response {
-        self.slider_with(value, crate::widgets::SliderOpts::new(label, range))
-    }
-
-    /// Horizontal slider with options for label, range, and explicit step.
-    ///
-    /// Each Left/Right (or `h`/`l`) advances `value` by `step`. Use this when
-    /// the default step (`span / 20`) is too coarse or too fine — for example
-    /// integer counters need `step = 1.0`, fine controls need `step = 0.1`.
-    ///
-    /// # Examples
-    /// ```
-    /// # use slt::*;
-    /// # TestBackend::new(80, 24).render(|ui| {
-    /// let mut volume = 50.0_f64;
-    /// use slt::widgets::SliderOpts;
-    /// ui.slider_with(&mut volume, SliderOpts::new("Volume", 0.0..=100.0).step(1.0));
-    /// # });
-    /// ```
-    pub fn slider_with(&mut self, value: &mut f64, opts: crate::widgets::SliderOpts) -> Response {
-        let (start, end) =
-            crate::widgets::normalize_numeric_range(*opts.range.start(), *opts.range.end());
-        let span = end - start;
-        let step = opts
-            .step
-            .unwrap_or_else(|| if span > 0.0 { span / 20.0 } else { 0.0 });
-        self.slider_inner(&opts.label, value, start..=end, step)
-    }
-
-    /// Horizontal slider with an explicit step size.
-    ///
-    /// Deprecated compatibility alias for [`Context::slider_with`].
-    #[deprecated(
-        since = "0.23.0",
-        note = "use slider_with(value, SliderOpts::new(label, range).step(step))"
-    )]
-    pub fn slider_with_step(
-        &mut self,
-        label: &str,
-        value: &mut f64,
-        range: std::ops::RangeInclusive<f64>,
-        step: f64,
-    ) -> Response {
-        self.slider_with(
-            value,
-            crate::widgets::SliderOpts::new(label, range).step(step),
-        )
     }
 
     fn slider_inner(
@@ -451,44 +387,6 @@ impl Context {
         response.focused = focused;
         response.clicked = clicked;
         response.changed = clicked;
-        response
-    }
-
-    /// Render a progress bar (20 chars wide). `ratio` is clamped to `0.0..=1.0`.
-    ///
-    /// Uses block characters (`█` filled, `░` empty). For a custom width use
-    /// [`Context::progress_bar`]. For an inline label use [`Context::gauge`].
-    ///
-    /// Returns a [`Response`] so callers can detect hover, attach a tooltip,
-    /// or implement click-to-set scrubbers. Prior to v0.20.0 this returned
-    /// `&mut Self`; `ui.progress(0.5);` stays a plain statement (since
-    /// v0.26 `Response` is not `#[must_use]` as a type).
-    pub fn progress(&mut self, ratio: f64) -> Response {
-        self.progress_bar(ratio, 20)
-    }
-
-    /// Render a progress bar with a custom character width.
-    ///
-    /// `ratio` is clamped to `0.0..=1.0`. `width` is the total number of
-    /// characters rendered.
-    pub fn progress_bar(&mut self, ratio: f64, width: u32) -> Response {
-        self.progress_bar_colored(ratio, width, self.theme.primary)
-    }
-
-    /// Render a progress bar with a custom fill color.
-    pub fn progress_bar_colored(&mut self, ratio: f64, width: u32, color: Color) -> Response {
-        let response = self.interaction();
-        let clamped = ratio.clamp(0.0, 1.0);
-        let filled = (clamped * width as f64).round() as u32;
-        let empty = width.saturating_sub(filled);
-        let mut bar = String::with_capacity(width as usize * 3);
-        for _ in 0..filled {
-            bar.push('█');
-        }
-        for _ in 0..empty {
-            bar.push('░');
-        }
-        self.styled(bar, Style::new().fg(color));
         response
     }
 }

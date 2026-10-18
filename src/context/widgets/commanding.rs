@@ -722,21 +722,6 @@ impl Context {
             false
         }
     }
-
-    /// Check if a sequence of character keys was pressed.
-    ///
-    /// Deprecated alias for [`key_chord`](Self::key_chord). The original
-    /// `key_seq` only matched when every key arrived in a single poll batch
-    /// (i.e. physically simultaneous keypresses), so vi `gg` / leader keys
-    /// were unreachable at any human typing speed. It now delegates to
-    /// [`key_chord`](Self::key_chord) and matches across frames.
-    #[deprecated(
-        since = "0.21.0",
-        note = "renamed to `key_chord`; now matches across frames"
-    )]
-    pub fn key_seq(&mut self, seq: &str) -> bool {
-        self.key_chord(seq)
-    }
 }
 
 /// Expand `<space>` / `<leader>` tokens in a chord spec into the characters

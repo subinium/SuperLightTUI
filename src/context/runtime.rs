@@ -1348,99 +1348,45 @@ impl Context {
         State::from_idx(idx)
     }
 
-    /// Component-local persistent state keyed by a stable id.
+    /// Deprecated alias for [`use_state_keyed`](Self::use_state_keyed).
     ///
-    /// Unlike [`use_state`](Self::use_state), this is **not order-dependent** —
-    /// the value is looked up by `id` instead of call position. Safe to call
-    /// inside conditional branches or reusable component functions.
-    ///
-    /// Returns a `State<T>` handle. Access with `state.get(ui)` /
-    /// `state.get_mut(ui)`. Persists across frames.
-    ///
-    /// # Scoping
-    ///
-    /// Keys are `&'static str` and live in a single global namespace per
-    /// `Context` (no automatic per-component scoping). Two calls with the same
-    /// `id` in the same frame share the same value, regardless of where they
-    /// occur in the tree. Pick unique ids — for example, prefix with a
-    /// component name (`"counter::value"`).
-    ///
-    /// # Naming
-    ///
-    /// The no-suffix form takes an `init` closure, matching
-    /// [`use_state`](Self::use_state)`(init)` and
-    /// [`use_state_keyed`](Self::use_state_keyed)`(id, init)`. Use
-    /// [`use_state_named_default`](Self::use_state_named_default) for the
-    /// `T: Default` shorthand.
-    ///
-    /// # Example
+    /// Since 0.26 named and keyed hooks share one map: `use_state_named("x",
+    /// ..)` and `use_state_keyed("x", ..)` return handles to the same slot,
+    /// and [`remove_state_keyed`](Self::remove_state_keyed) /
+    /// [`retain_state_keyed`](Self::retain_state_keyed) see named ids too.
+    /// The `&'static str` id is only copied into the map on first insert.
     ///
     /// ```no_run
     /// fn counter(ui: &mut slt::Context) {
-    ///     let count = ui.use_state_named("counter::value", || 0i32);
+    ///     // Old: ui.use_state_named("counter::value", || 0i32)
+    ///     let count = ui.use_state_keyed("counter::value", || 0i32);
     ///     ui.text(format!("Count: {}", count.get(ui)));
-    ///     if ui.button("+1").clicked {
-    ///         *count.get_mut(ui) += 1;
-    ///     }
     /// }
     /// ```
+    #[deprecated(
+        since = "0.26.0",
+        note = "use `use_state_keyed(id, init)`; named and keyed ids now share one slot map"
+    )]
     pub fn use_state_named<T: 'static>(
         &mut self,
         id: &'static str,
         init: impl FnOnce() -> T,
     ) -> State<T> {
-        self.named_states
-            .entry(id)
-            .or_insert_with(|| Box::new(init()));
+        if !self.keyed_states.contains_key(id) {
+            self.keyed_states.insert(id.to_owned(), Box::new(init()));
+        }
         State::from_named(id)
     }
 
-    /// Like [`use_state_named`](Self::use_state_named), but uses
-    /// [`Default::default()`] to initialize the value on first call.
-    ///
-    /// Mirrors [`use_state_keyed_default`](Self::use_state_keyed_default): the
-    /// `_default` suffix means "no init closure, `T: Default` required".
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # slt::run(|ui: &mut slt::Context| {
-    /// let value = ui.use_state_named_default::<i32>("counter::value");
-    /// ui.text(format!("{}", value.get(ui)));
-    /// # });
-    /// ```
-    pub fn use_state_named_default<T: 'static + Default>(&mut self, id: &'static str) -> State<T> {
-        self.use_state_named(id, T::default)
-    }
-
-    /// Deprecated alias for [`use_state_named`](Self::use_state_named).
-    ///
-    /// **Deprecated since 0.21.0**: the `_named` family now follows the
-    /// "no-suffix = init closure" convention so it matches
-    /// [`use_state`](Self::use_state) and
-    /// [`use_state_keyed`](Self::use_state_keyed). The init-closure form is now
-    /// spelled `use_state_named(id, init)`; the `T: Default` shorthand is
-    /// [`use_state_named_default`](Self::use_state_named_default).
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # slt::run(|ui: &mut slt::Context| {
-    /// // Old: ui.use_state_named_with("counter::value", || 0i32)
-    /// let count = ui.use_state_named("counter::value", || 0i32);
-    /// ui.text(format!("{}", count.get(ui)));
-    /// # });
-    /// ```
+    /// Deprecated alias for
+    /// [`use_state_keyed_default`](Self::use_state_keyed_default).
     #[deprecated(
-        since = "0.21.0",
-        note = "Renamed to `use_state_named` — the no-suffix form now takes the init closure, matching `use_state` / `use_state_keyed`."
+        since = "0.26.0",
+        note = "use `use_state_keyed_default(id)`; named and keyed ids now share one slot map"
     )]
-    pub fn use_state_named_with<T: 'static>(
-        &mut self,
-        id: &'static str,
-        init: impl FnOnce() -> T,
-    ) -> State<T> {
-        self.use_state_named(id, init)
+    pub fn use_state_named_default<T: 'static + Default>(&mut self, id: &'static str) -> State<T> {
+        #[allow(deprecated)]
+        self.use_state_named(id, T::default)
     }
 
     /// Smoothly animate between `0.0` and `1.0` driven by a boolean.
@@ -1452,10 +1398,11 @@ impl Context {
     /// ≈ 200 ms at 60 Hz). Use [`Context::animate_value`] for custom duration
     /// or non-binary targets.
     ///
-    /// State is stored in the per-context named-state map under `id`. The
-    /// id is `&'static str` (single global namespace per context), matching
-    /// [`Context::use_state_named`]. Pick a unique key per call site — two
-    /// `animate_bool` calls with the same id share state.
+    /// State is stored in an internal per-context map under `id`. The id is
+    /// `&'static str`, in one namespace shared by the `animate_*` hooks
+    /// (separate from [`use_state_keyed`](Self::use_state_keyed) ids). Pick a
+    /// unique key per call site — two `animate_bool` calls with the same id
+    /// share state.
     ///
     /// On the first call, the value snaps to the target with no visible
     /// transition (so widgets that mount in their final state don't pop).
@@ -1492,8 +1439,7 @@ impl Context {
     /// # Panics
     ///
     /// Panics if `id` is already bound in the named-state map to a value of a
-    /// different type (e.g. a [`use_state_named`](Self::use_state_named) call
-    /// reused the same id), since the stored entry then fails to downcast to
+    /// different type (e.g. another `animate_*` hook reused the same id), since the stored entry then fails to downcast to
     /// the internal animation state:
     ///
     /// ```text
@@ -1512,7 +1458,7 @@ impl Context {
     /// Use this shorthand when you want zero boilerplate and linear easing
     /// is acceptable. For custom easing, a non-static key, or
     /// non-tick-based control, construct a [`crate::Tween`] explicitly via
-    /// [`Context::use_state_named`](Self::use_state_named).
+    /// [`Context::use_state_keyed`](Self::use_state_keyed).
     ///
     /// # See also
     ///
@@ -1674,9 +1620,8 @@ impl Context {
     /// deadline is observed on the next frame after it elapses), so durations
     /// well below the frame cadence are not meaningful.
     ///
-    /// The id lives in the same per-context namespace as
-    /// [`use_state_named`](Self::use_state_named): pick a unique key per call
-    /// site.
+    /// The id lives in the per-context namespace shared by the `animate_*`
+    /// hooks: pick a unique key per call site.
     ///
     /// # Example
     /// ```no_run
@@ -2149,8 +2094,8 @@ impl Context {
     /// `.copied(ui)`.
     ///
     /// Before v0.21.0 this returned `&T`, a live borrow of `&mut Context` that
-    /// could not be held across subsequent `ui.*` mutations. That form is now
-    /// [`use_memo_ref`](Self::use_memo_ref) (deprecated). Migrate
+    /// could not be held across subsequent `ui.*` mutations. That form (later
+    /// `use_memo_ref`) was removed in 0.26. Migrate
     /// `let x = *ui.use_memo(&d, f);` to `let x = ui.use_memo(&d, f).copied(ui);`.
     ///
     /// [`use_state`]: Self::use_state
@@ -2230,85 +2175,6 @@ impl Context {
         Memo::from_idx(idx)
     }
 
-    /// Deprecated `&T`-returning form of [`use_memo`](Self::use_memo).
-    ///
-    /// **Deprecated since 0.21.0**: [`use_memo`](Self::use_memo) now returns a
-    /// [`Memo<T>`] handle that does not borrow `ui`, so it composes with later
-    /// `ui.*` calls. This alias preserves the original behaviour (returning a
-    /// `&T` borrow of `ui`) for callers that cannot migrate immediately; the
-    /// borrow keeps `ui` immutably borrowed until the reference is dropped.
-    ///
-    /// Migrate `let x = *ui.use_memo_ref(&d, f);` to
-    /// `let x = ui.use_memo(&d, f).copied(ui);` (or `.get(ui)` for a reference).
-    ///
-    /// # Panics
-    ///
-    /// Panics if the hook slot at this call position was previously used for a
-    /// different hook (a rules-of-hooks / call-order violation), since the
-    /// type-erased slot then fails to downcast to `(D, T)`:
-    ///
-    /// ```text
-    /// Hook type mismatch at index {idx}: expected {type}. Hooks must be called in the same order every frame.
-    /// ```
-    ///
-    /// # Example
-    /// ```no_run
-    /// # slt::run(|ui: &mut slt::Context| {
-    /// # #[allow(deprecated)]
-    /// let doubled = *ui.use_memo_ref(&21i32, |c| c * 2);
-    /// ui.text(format!("{doubled}"));
-    /// # });
-    /// ```
-    #[deprecated(
-        since = "0.21.0",
-        note = "use_memo now returns a Memo<T> handle; call `.get(ui)` / `.copied(ui)`"
-    )]
-    pub fn use_memo_ref<T: 'static, D: PartialEq + Clone + 'static>(
-        &mut self,
-        deps: &D,
-        compute: impl FnOnce(&D) -> T,
-    ) -> &T {
-        let idx = self.rollback.hook_cursor;
-        self.rollback.hook_cursor += 1;
-
-        // First call at this slot: allocate fresh state.
-        if idx >= self.hook_states.len() {
-            let value = compute(deps);
-            self.hook_states.push(Box::new((deps.clone(), value)));
-            return self.hook_states[idx]
-                .downcast_ref::<(D, T)>()
-                .map(|(_, v)| v)
-                .expect("freshly inserted slot must downcast to its own type");
-        }
-
-        // Slot already exists: it must be the same `(D, T)` shape we used last
-        // frame, or the caller broke the rules-of-hooks contract.
-        //
-        // Single downcast on the cache-hit path (closes #133): use
-        // `downcast_mut` to update deps/value in place when they change, and
-        // return `&stored.1` directly — eliminating the redundant second
-        // `downcast_ref` that ran on every call regardless of cache state.
-        match self.hook_states[idx].downcast_mut::<(D, T)>() {
-            Some(stored) => {
-                if stored.0 != *deps {
-                    // Keep the cache pair panic-atomic. Committing deps before
-                    // compute would make a caught panic look like a cache hit
-                    // on the retry while retaining the old value.
-                    let next_deps = deps.clone();
-                    let next_value = compute(deps);
-                    stored.0 = next_deps;
-                    stored.1 = next_value;
-                }
-                &stored.1
-            }
-            None => panic!(
-                "Hook type mismatch at index {}: expected {}. Hooks must be called in the same order every frame.",
-                idx,
-                std::any::type_name::<(D, T)>()
-            ),
-        }
-    }
-
     /// Returns `light` color if current theme is light mode, `dark` color if dark mode.
     pub fn light_dark(&self, light: Color, dark: Color) -> Color {
         if self.theme.is_dark { dark } else { light }
@@ -2378,7 +2244,7 @@ impl Context {
 
     /// Component-local persistent state keyed by a runtime string.
     ///
-    /// Unlike [`use_state_named`](Self::use_state_named), `id` can be a
+    /// `id` can be a `&'static str` or a
     /// runtime value such as `format!("row-{i}")`. The key is converted to
     /// `String` once per call. The hot path (key already present) performs
     /// **zero string allocations beyond the [`Into<String>`] conversion at

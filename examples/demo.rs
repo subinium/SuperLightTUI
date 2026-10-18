@@ -674,7 +674,7 @@ fn render_page_tabs(ui: &mut Context, page_tabs: &mut TabsState) {
             for (offset, label) in labels.iter().enumerate() {
                 let tab_idx = row_start + offset;
                 let clicked = if page_tabs.selected == tab_idx {
-                    ui.button_colored(label, &selected_colors).clicked
+                    ui.button(label).colors(&selected_colors).clicked
                 } else {
                     ui.button(label).clicked
                 };
@@ -1085,7 +1085,7 @@ fn render_v011(
     ui.row(|ui| {
         card(ui, |ui| {
             ui.text("Response Pattern").bold().fg(theme.primary);
-            let response = ui.button("Inspect Response");
+            let response = ui.button("Inspect Response").show();
             if response.clicked {
                 *button_clicks = (*button_clicks).saturating_add(1);
             }
@@ -2609,7 +2609,8 @@ fn render_v094(
             ui.stat_trend("Errors", "3", Trend::Down);
         });
         card(ui, |ui| {
-            ui.stat_colored("CPU", "72%", ui.theme().warning);
+            let warning = ui.theme().warning;
+            ui.stat("CPU", "72%").color(warning);
         });
         card(ui, |ui| {
             ui.stat("Uptime", "14d 3h");
@@ -2620,9 +2621,11 @@ fn render_v094(
     ui.line(|ui| {
         ui.badge("v0.9.4");
         ui.text(" ");
-        ui.badge_colored("Stable", ui.theme().success);
+        let success = ui.theme().success;
+        ui.badge("Stable").color(success);
         ui.text(" ");
-        ui.badge_colored("Rust", ui.theme().accent);
+        let accent = ui.theme().accent;
+        ui.badge("Rust").color(accent);
         ui.text("   ");
         ui.key_hint("Ctrl+S");
         ui.text(" save  ");

@@ -401,7 +401,8 @@ fn render_home(
         ui.text("");
         ui.row(|ui| {
             if ui
-                .button_with("Get Started", ButtonVariant::Primary)
+                .button("Get Started")
+                .variant(ButtonVariant::Primary)
                 .clicked
             {
                 *nav_target = Some(1);
@@ -524,7 +525,11 @@ fn render_home(
                         Err("Enter a valid email".into())
                     }
                 });
-                if ui.button_with("Subscribe", ButtonVariant::Primary).clicked {
+                if ui
+                    .button("Subscribe")
+                    .variant(ButtonVariant::Primary)
+                    .clicked
+                {
                     if !email.value.is_empty() {
                         *subscribed = true;
                         toasts.success("Subscribed!", tick);
@@ -926,7 +931,7 @@ fn render_blog(ui: &mut Context, blog_view: &mut Option<usize>) {
             if let Some(post) = BLOG_POSTS.get(idx) {
                 ui.row(|ui| {
                     if ui
-                        .button_with("<< Back to Blog", ButtonVariant::Outline)
+                        .button("<< Back to Blog").variant(ButtonVariant::Outline)
                         .clicked
                     {
                         *blog_view = None;
@@ -1609,14 +1614,14 @@ fn render_pricing(
                 ui.text("");
                 ui.row(|ui| {
                     if ui
-                        .button_with("Choose Sponsor", ButtonVariant::Primary)
+                        .button("Choose Sponsor").variant(ButtonVariant::Primary)
                         .clicked
                     {
                         *show_modal = true;
                         *selected_plan = "Sponsor".to_string();
                     }
                     if ui
-                        .button_with("Talk to Enterprise", ButtonVariant::Outline)
+                        .button("Talk to Enterprise").variant(ButtonVariant::Outline)
                         .clicked
                     {
                         *show_modal = true;
@@ -1647,7 +1652,7 @@ fn render_pricing(
                         ui.text("");
                         ui.row(|ui| {
                             if ui
-                                .button_with("  Subscribe  ", ButtonVariant::Primary)
+                                .button("  Subscribe  ").variant(ButtonVariant::Primary)
                                 .clicked
                             {
                                 toasts.success(
@@ -1658,7 +1663,7 @@ fn render_pricing(
                             }
                             ui.text("  ");
                             if ui
-                                .button_with("  Cancel  ", ButtonVariant::Outline)
+                                .button("  Cancel  ").variant(ButtonVariant::Outline)
                                 .clicked
                             {
                                 *show_modal = false;
@@ -1734,11 +1739,16 @@ fn render_contact(
         md_link(ui, "Discord Server", "https://discord.gg/slt");
         ui.text("");
         ui.row(|ui| {
-            if ui.button_with("View Docs", ButtonVariant::Primary).clicked {
+            if ui
+                .button("View Docs")
+                .variant(ButtonVariant::Primary)
+                .clicked
+            {
                 *nav_target = Some(1);
             }
             if ui
-                .button_with("View Pricing", ButtonVariant::Outline)
+                .button("View Pricing")
+                .variant(ButtonVariant::Outline)
                 .clicked
             {
                 *nav_target = Some(3);
@@ -1880,7 +1890,7 @@ fn price_card(
                 });
             }
             ui.text("");
-            if ui.button_with(cta_label, cta_variant).clicked {
+            if ui.button(cta_label).variant(cta_variant).clicked {
                 *show_modal = true;
                 *selected_plan = tier.to_string();
             }

@@ -28,6 +28,8 @@ SLT is **immediate-mode**. Your app is one closure: `slt::run(|ui: &mut Context|
 
 For larger apps write **components as functions**: `fn render_card(ui: &mut Context, data: &Card)`. Share read-mostly state with `ui.provide(value, |ui| ...)` + `ui.use_context::<T>()` instead of threading `&theme` through every helper.
 
+Imports: `use slt::prelude::*;` is the one-line app import (run entry points, `Context`, `Response`, `Button` / `ButtonVariant`, `WidgetColors`, `State` / `StateHandle`, style types, `KeyCode` / `KeyModifiers`, common widget states). It omits the `crossterm` re-export; import anything else by path.
+
 ## The API rules (predictability anchors)
 
 These are non-negotiable since v0.20. When generating new code, every public widget must match all of them. Known exceptions are listed in `docs/API_DESIGN.md`; do not copy them into new APIs.
@@ -61,13 +63,16 @@ These are non-negotiable since v0.20. When generating new code, every public wid
 
 6. **Return-type pattern.** Methods on `Context` return one of three shapes — picking the wrong one is the most common AI-generated compile error.
    - `Text<'_>` — *scoped builder for one text element* (v0.26). Returned by `text`, `link`, `styled`, `timer_display`. Chain: `bold`, `dim`, `italic`, `fg`, `bg`, `gradient`, `wrap`, `truncate`, `align`, `text_center`, `m`, `mx`, `w`, `h`, `grow`, `with_if`, `with`; `.show()` returns its `Response`. Only text options follow, so `ui.text("x").bold().button("y")` does not compile — start a new statement. The `Context`-level `ui.bold()` / `ui.fg(..)` "last text" modifiers are deprecated.
-   - `&mut Self` — `spacer`, `line`, `line_wrap`, `toast`, `form_field`.
-   - `Response` — *interaction result of an independently-rendered widget.* Use for every stateful interactive widget (`button`, `checkbox`, `toggle`, `table`, `tabs`, `select`, `radio`, `multi_select`, `text_input`, `list`, `tree`, `file_picker`, `slider`, `calendar`, `command_palette`, `rich_log`), plus `separator()`.
-   - Container helpers split: `col` / `row` / `modal` → `Response`. `line` / `line_wrap` → `&mut Self` (these continue an inline-text chain). `screen(name, &mut ScreenState, f)` returns `()`.
+   - `&mut Self` — `spacer`, `line_wrap`, `toast`, `form_field`.
+   - `Response` — *interaction result of an independently-rendered widget.* Use for every stateful interactive widget (`checkbox`, `toggle`, `table`, `tabs`, `select`, `radio`, `multi_select`, `text_input`, `list`, `tree`, `file_picker`, `calendar`, `command_palette`, `rich_log`).
+   - Response builder (v0.26) — `button` → `Button`, `badge` → `Badge`, `stat` → `Stat`, `help` → `Help`, `separator` → `Separator`, `progress` / `progress_bar` → `ProgressBar`, `slider` → `Slider`, `line_chart` / `area_chart` → `LineChart`. Options chain (`.variant(v)`, `.colors(&c)`, `.color(c)`, `.step(s)`, `.key_color(c)`), the builder derefs to `Response`, `.show()` returns an owned `Response`. Builder args cannot borrow `ui`: `let c = ui.theme().success;` first.
+   - Container helpers: `col` / `row` / `line` / `modal` → `Response`. `line_wrap` → `&mut Self`. `screen(name, &mut ScreenState, f)` returns `()`.
 
    ```rust
-   ui.button("Save").bold();           // ❌ Response has no .bold() — compile error
-   if ui.button("Save").clicked { … }  // ✅ Response field
+   ui.button("Save").bold();           // ❌ Button has no .bold() — compile error
+   if ui.button("Save").clicked { … }  // ✅ Response field via Deref
+   if ui.button("Delete").variant(ButtonVariant::Danger).colors(&c).clicked { … } // ✅ options compose
+   let save = ui.button("Save").show(); // ✅ owned Response; `ui` is free again
    ui.text("Saved").bold().fg(green);  // ✅ Text builder chain
    ```
 
@@ -114,10 +119,17 @@ ui.rich_log(&mut RichLogState);       ui.command_palette(&mut CommandPaletteStat
 ui.toast(&mut ToastState);            ui.spinner(&SpinnerState);              // toast returns &mut Self; spinner is &, not &mut
 
 // Trivial-value siblings — exception to Rule 4
-ui.button("Save");                    // Response
+let saved = ui.button("Save").clicked; // Button builder → Response
 ui.checkbox("Done", &mut done);       // Response
 ui.toggle("Enabled", &mut on);        // Response
-ui.slider("Vol", &mut value, 0.0..=100.0);  // Response
+ui.slider("Vol", &mut value, 0.0..=100.0).step(5.0);  // Slider builder → Response
+
+// Display builders — option methods instead of *_colored variants
+ui.badge("beta").color(c);  ui.stat("CPU", "42%").color(c);  ui.separator().color(c);
+ui.progress(0.4).color(c);  ui.line_chart(&data, 40, 8).color(c);
+ui.help(&[("q", "quit")]).key_color(c).text_color(dim);
+ui.code_block(src).lang("rust").numbered();         // renders on Drop
+ui.grid_columns(&[GridColumn::Fixed(8), GridColumn::Grow(1)], |ui| { ... });
 
 // Builder widgets — chain optional config, render on Drop
 ui.gauge(0.6).label("60%").width(24).color(Color::Cyan);
@@ -139,10 +151,8 @@ Hooks must be called in the same order every frame **unless** they are id-keyed.
 | Hook | Key | Safe in `if`/`match`? | Use when |
 |---|---|---|---|
 | `ui.use_state(\|\| init)` | call order | **No** | Top-level state, no conditional placement |
-| `ui.use_state_named("id", \|\| init)` | `&'static str` | **Yes** | Conditional/branching state with compile-time id and initializer |
-| `ui.use_state_named_default::<T>("id")` | `&'static str` | **Yes** | Same, using `T::default()` |
-| `ui.use_state_keyed("id-{i}", \|\| init)` | runtime `String` | **Yes** | Per-row state in a list (key from data) |
-| `ui.use_state_keyed_default("id-{i}")` | runtime `String` | **Yes** | Same, `T: Default` shortcut |
+| `ui.use_state_keyed("id", \|\| init)` | `&'static str` or `String` | **Yes** | Conditional/branching state, or per-row state with a key from data (`format!("row-{i}")`) |
+| `ui.use_state_keyed_default::<T>("id")` | `&'static str` or `String` | **Yes** | Same, using `T::default()` |
 | `ui.use_memo(&deps, \|d\| compute(d))` | call order + deps | **No** | Cached compute, deps change → recompute |
 | `ui.use_effect(\|d\| { ... }, &deps)` | call order + deps | **No** | Side effect on deps change |
 
@@ -151,7 +161,7 @@ Hooks must be called in the same order every frame **unless** they are id-keyed.
 if expanded { let count = ui.use_state(|| 0); }
 
 // RIGHT — id-keyed variant is safe inside conditionals
-if expanded { let count = ui.use_state_named_default::<i32>("sidebar.count"); }
+if expanded { let count = ui.use_state_keyed_default::<i32>("sidebar.count"); }
 
 // Per-list-item runtime keys
 for i in 0..items.len() {
@@ -281,7 +291,9 @@ Red flags that mean STOP: "Probably fine", "Just a docs change", "CI will catch 
 - **Calling `ui.interaction(rect)` or `available_key_presses()`.** `interaction()` takes no arguments; `available_key_presses` is crate-private. Use `key_presses_when(focused)` + `consume_event(i)`.
 - **Stale removed APIs.** `gauge_w`, `gauge_colored`, `line_gauge_with`, `breadcrumb_sep`, `LineGaugeOpts`, `HighlightRange::single`, `label_owned` are GONE in v0.20. Use the builder forms.
 - **`Response.rect` on frame 1.** Zero `Rect`. Guard with `ui.tick() > 0`.
-- **`use_state()` inside `if`/`match`/`for`.** Use `use_state_named` (`&'static str` id) or `use_state_keyed` (runtime `String`).
+- **`use_state()` inside `if`/`match`/`for`.** Use `use_state_keyed(id, init)` (`&'static str` or runtime `String` id). `use_state_named` is deprecated (same slot).
+- **Deprecated 0.26 forms.** Do not write `button_with` / `button_colored`, `badge_colored`, `stat_colored`, `separator_colored`, `progress_bar_colored`, `line_chart_colored`, `help_colored`, `slider_with`, `grid_with`, `use_state_named`; use the builder methods above. Removed outright: `.pad`, `.min_width`-style container setters, `ui.row_gap(n, f)` / `ui.col_gap(n, f)` (use `container().gap(n)`), `key_seq`, `code_block_lang` / `code_block_numbered*`, f32 color methods. See `docs/MIGRATION.md` (v0.25 → v0.26).
+- **Holding a builder across `ui` calls.** `let r = ui.button("x"); ui.text(".."); r.clicked` does not compile; write `ui.button("x").show()`.
 - **Forgetting `.show()` on builders that return a response.** Drop renders and discards the response. Capture with `let r = ui.gauge(...).show();`.
 - **`'static` on deferred raw draw.** Use `draw_with` for owned data, or `draw_precomputed` when the closure must borrow local data and fixed source dimensions are acceptable.
 - **Mixing crossterm raw events with `ui.*` helpers.** Prefer `ui.key()`, `ui.key_code()`, `ui.key_mod()`. For modal-aware shortcuts use `ui.raw_key_*`.
@@ -346,7 +358,8 @@ fn my_widget_renders() {
 #[test]
 fn click_triggers() {
     let mut tb = TestBackend::new(40, 10);
-    tb.render(|ui| { ui.button("Save"); });                            // warm frame
+    tb.render(|ui| { let _ = ui.button("Save"); });                    // warm frame
+
     tb.run_with_events(EventBuilder::new().click(2, 0).build(),        // event frame
         |ui| { if ui.button("Save").clicked { /* assert */ } });
 }

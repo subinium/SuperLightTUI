@@ -40,10 +40,10 @@ fn viz_widgets_return_outer_warm_frame_rects() {
     let mut chart_backend = crate::TestBackend::new(30, 10);
     let mut chart_response = Response::none();
     chart_backend.render(|ui| {
-        chart_response = ui.line_chart(&[1.0, 3.0, 2.0], 12, 4);
+        chart_response = ui.line_chart(&[1.0, 3.0, 2.0], 12, 4).show();
     });
     chart_backend.render(|ui| {
-        chart_response = ui.line_chart(&[1.0, 3.0, 2.0], 12, 4);
+        chart_response = ui.line_chart(&[1.0, 3.0, 2.0], 12, 4).show();
     });
     assert_eq!(chart_response.rect.width, 12);
     assert_eq!(chart_response.rect.height, 4);

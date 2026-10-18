@@ -11,7 +11,7 @@ use super::*;
 mod status;
 mod text;
 
-pub use status::Breadcrumb;
+pub use status::{Badge, Breadcrumb, Help, Stat};
 pub use text::Text;
 
 #[cfg(test)]

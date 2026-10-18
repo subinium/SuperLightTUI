@@ -144,12 +144,12 @@ fn buttons(ui: &mut Context, disable_b: bool, frame: &mut Frame) {
             frame.clicked.push(name);
         }
     };
-    let a = ui.button("A");
+    let a = ui.button("A").show();
     record("A", a, frame);
-    let b = ui.disabled(disable_b, |ui| ui.button("B"));
+    let b = ui.disabled(disable_b, |ui| ui.button("B").show());
     assert_eq!(b.disabled, disable_b);
     record("B", b, frame);
-    let c = ui.button("C");
+    let c = ui.button("C").show();
     record("C", c, frame);
     frame.focus_index = ui.focus_index();
 }
@@ -294,7 +294,7 @@ fn nested_enable_cannot_escape_a_disabled_scope() {
     let mut inner = slt::Response::none();
     tb.render(|ui| {
         ui.disabled(true, |ui| {
-            inner = ui.disabled(false, |ui| ui.button("Inner"));
+            inner = ui.disabled(false, |ui| ui.button("Inner").show());
             assert!(ui.is_disabled());
         });
         assert!(!ui.is_disabled());

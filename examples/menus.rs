@@ -114,7 +114,7 @@ impl App {
                 }
             }
 
-            let info = ui.button("Info");
+            let info = ui.button("Info").show();
             if info.clicked {
                 self.info_open = !self.info_open;
             }
@@ -138,7 +138,7 @@ impl App {
                 .col(|ui| {
                     ui.text_input(&mut self.name);
                     ui.select(&mut self.size);
-                    let submit = ui.disabled(!ready, |ui| ui.button("Submit"));
+                    let submit = ui.disabled(!ready, |ui| ui.button("Submit").show());
                     if submit.clicked {
                         self.log = format!(
                             "Ordered {} for {}",

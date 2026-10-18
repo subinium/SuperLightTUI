@@ -60,10 +60,10 @@ These shipped in v0.20 and are NOT in older docs. Every entry verified against `
 
 ### Hooks
 - `ui.use_state(\|\| init)` — order-based, see `src/context/runtime.rs`
-- `ui.use_state_named("id", \|\| init)` — `&'static str` + init fn (two args)
-- `ui.use_state_named_default::<T>("id")` — `&'static str`, `T: Default`
-- `ui.use_state_keyed("id-{i}", \|\| init)` — runtime `String`
-- `ui.use_state_keyed_default::<T>("id-{i}")` — runtime `String` + `T: Default`
+- `ui.use_state_keyed("id", \|\| init)` — `&'static str` or runtime `String` id, safe in `if`/loops
+- `ui.use_state_keyed_default::<T>("id")` — same, `T: Default`
+- `use_state_named*` — deprecated in 0.26; shares the keyed slot map
+- `StateHandle<T>` — alias of the `State<T>` hook handle; `use slt::prelude::*;` imports both
 - `ui.use_memo(&deps, \|d\| compute(d))` — cached compute
 - `ui.use_effect(\|d\| { ... }, &deps)` — side effect on deps change
 - `ui.provide(value, \|ui\| ...)` — typed scoped injection
@@ -139,7 +139,8 @@ These docs are maintained for the current release, but source and compile-tested
 - `docs/WIDGETS.md` — categorized widget and state reference.
 - `docs/STATE_APIS.md` — method-level state reference.
 - `docs/PREVIOUS_FRAME_GUIDE.md` — current. Read for `Response.rect` timing.
-- `docs/PATTERNS.md` — current. `provide`/`use_context`/`use_state_named`/`with_if` covered.
+- `docs/PATTERNS.md` — current. `provide`/`use_context`/`use_state_keyed`/`with_if` covered.
+
 - `docs/QUICK_START.md` — current.
 - `docs/COOKBOOK.md` — composition recipes; run through `cookbook_tour`.
 - `docs/THEMING.md` — current. `ThemeBuilder` `const fn` since v0.19.2.

@@ -193,24 +193,29 @@ src/
 │       ├── display.rs          # Display family facade
 │       ├── display/
 │       │   ├── text.rs         # text, link, timer_display, help_from_keymap, style chains, size/margin helpers
-│       │   ├── status.rs       # help, breadcrumb, accordion, definition_list, divider_text, badge, key_hint, stat, empty_state
+│       │   ├── status.rs       # breadcrumb, accordion, definition_list, divider_text, key_hint, stat_trend, empty_state
+│       │   ├── status/
+│       │   │   └── builders.rs # help, badge, stat (Help / Badge / Stat builders)
 │       │   └── tests.rs        # Display widget tests
-│       ├── layout.rs           # separator, col/row/line/line_wrap, group, container, scrollable, scrollbar, bordered
+│       ├── layout.rs           # col/row/line/line_wrap, group, container, scrollable, scrollbar, bordered
 │       ├── layout/
-│       │   ├── grid.rs         # grid / grid_with
+│       │   ├── separator.rs    # separator (Separator builder)
+│       │   ├── grid.rs         # grid / grid_columns
 │       │   ├── gutter.rs       # scrollable_with_gutter, GutterOpts
 │       │   ├── split.rs        # split_pane / vsplit_pane
 │       │   └── line_wrap_tests.rs
 │       ├── overlay.rs          # Anchor, modal*, overlay*, tooltip
 │       ├── overlay/
 │       │   └── tooltip_wrap.rs # tooltip word wrapping
-│       ├── commanding.rs       # screen stack, command_palette, key_chord / key_seq
+│       ├── commanding.rs       # screen stack, command_palette, key_chord
 │       ├── text_input.rs       # text_input, form / form_field / form_submit
 │       ├── text_input/
 │       │   ├── textarea.rs     # textarea
 │       │   ├── number_input.rs # number_input
 │       │   └── tests.rs        # Text-input family tests
-│       ├── selection.rs        # tabs, button, checkbox, toggle, select, radio, multi_select, color_picker
+│       ├── selection.rs        # tabs, checkbox, toggle, select, radio, multi_select, color_picker
+│       ├── selection/
+│       │   └── button.rs       # button (Button builder: variant / colors / show)
 │       ├── collections.rs      # Collections family facade
 │       ├── collections/
 │       │   ├── list.rs         # list, list_reorderable, virtual_list(_variable)
@@ -218,8 +223,10 @@ src/
 │       │   ├── tree.rs         # tree, directory_tree
 │       │   ├── calendar.rs     # calendar
 │       │   └── file_picker.rs  # file_picker
-│       ├── feedback.rs         # spinner, toast, slider, alert, confirm, progress / progress_bar
+│       ├── feedback.rs         # spinner, toast, alert, confirm
 │       ├── feedback/
+│       │   ├── slider.rs       # slider (Slider builder)
+│       │   ├── progress.rs     # progress / progress_bar (ProgressBar builder)
 │       │   ├── gauge.rs        # gauge / line_gauge builders
 │       │   └── tests.rs        # Feedback family tests
 │       ├── rich.rs             # Rich-content family facade
@@ -238,7 +245,9 @@ src/
 │       ├── viz.rs              # Viz family facade + shared viz-root helpers
 │       ├── viz/
 │       │   ├── bars.rs         # bar_chart, grouped and stacked bars
-│       │   ├── charts.rs       # sparkline, line/area, candlestick(_hd), chart, scatter, histogram
+│       │   ├── charts.rs       # sparkline, candlestick(_hd), chart, scatter, histogram
+│       │   ├── line_chart.rs   # line_chart / area_chart (LineChart builder)
+
 │       │   ├── heat_tree.rs    # heatmap, heatmap_halfblock, treemap, TreemapItem
 │       │   ├── canvas.rs       # canvas / try_canvas / canvas_with
 │       │   ├── qr.rs           # qr_code

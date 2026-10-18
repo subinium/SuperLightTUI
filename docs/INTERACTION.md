@@ -80,8 +80,10 @@ first line never scrolls it.
 
 Most widgets and every container return a `Response`. It is not `#[must_use]`
 (since v0.26), so layout and display calls are plain statements; only
-`button`, `button_colored` and `button_with` warn when their result is
-dropped:
+`button` warns when its result is dropped. `Response` is `Copy`. Builder
+widgets (`button`, `badge`, `stat`, `help`, `separator`, `progress`, `slider`,
+`line_chart`) deref to it; call `.show()` to keep an owned `Response` while you
+call `ui.` again:
 
 | Field | Meaning | Needs mouse? |
 |-------|---------|--------------|
@@ -243,7 +245,7 @@ theme's `text_dim` color, and report `Response::disabled`. Custom widgets on
 <!-- slt-check: {"name":"ix_disabled","features":[],"context":"ui"} -->
 ```rust
 let name_filled = false;
-let submit = ui.disabled(!name_filled, |ui| ui.button("Submit"));
+let submit = ui.disabled(!name_filled, |ui| ui.button("Submit").show());
 if submit.clicked {
     // never runs while the form is incomplete
 }
@@ -743,7 +745,8 @@ let mut menu = MenuState::new(vec![
     MenuItem::separator(),
     MenuItem::new("delete", "Delete").disabled(true),
 ]);
-let file = ui.button("notes.md");
+let file = ui.button("notes.md").show();
+
 if let Some(id) = ui.context_menu(&mut menu, &file) {
     ui.notify(&format!("chose {id}"), ToastLevel::Info);
 }

@@ -130,7 +130,7 @@ A "component" in SLT is not a framework concept. There is no `Component` trait, 
 This section walks the four building blocks that make components ergonomic:
 
 1. Functions for the shape itself
-2. `use_state_named` for state that survives across frames inside the component
+2. `use_state_keyed` for state that survives across frames inside the component
 3. `provide` / `use_context` for values that propagate through deep trees
 4. `.with` / `.with_if` for conditional styling
 
@@ -193,22 +193,22 @@ fn metric_card(ui: &mut Context, p: &MetricCardProps<'_>) {
 
 This is still "just a function." No ceremony.
 
-### Component-local State with `use_state_named`
+### Component-local State with `use_state_keyed`
 
 Sometimes a component needs state that must survive across frames but does not belong to the caller. A collapsible panel knows whether it is expanded. A pagination control knows the current page. Threading those values up through every call site pollutes the caller's API.
 
-`use_state_named` is the answer. It is `use_state`, but keyed by an explicit `&'static str` instead of by hook call order:
+`use_state_keyed` is the answer. It is `use_state`, but keyed by an explicit id (`&'static str` or a runtime `String`) instead of by hook call order:
 
 ```rust
 use slt::{Border, Context};
 
 fn expandable_card(
     ui: &mut Context,
-    id: &'static str,
+    id: &str,
     title: &str,
     body: impl FnOnce(&mut Context),
 ) {
-    let expanded = ui.use_state_named_default::<bool>(id);
+    let expanded = ui.use_state_keyed_default::<bool>(id);
     ui.bordered(Border::Single).col(|ui| {
         let label = if *expanded.get(ui) { "▼" } else { "▶" };
         if ui.button(label).clicked {
@@ -236,17 +236,18 @@ expandable_card(ui, "card.disks", "Disks", |ui| {
 });
 ```
 
-When you need a default different from `Default::default()`, pass an initializer to `use_state_named`:
+When you need a default different from `Default::default()`, pass an initializer to `use_state_keyed`:
 
 ```rust
-let page = ui.use_state_named("pager", || 1usize);
+let page = ui.use_state_keyed("pager", || 1usize);
 ```
 
 Rules of the road:
 
-- IDs are `&'static str`. Pick something descriptive — `"card.networking"`, `"pager.users"`, not `"x"`.
+- IDs are strings (`&'static str` literals or `format!`-built `String`s). Pick something descriptive — `"card.networking"`, `"pager.users"`, not `"x"`.
 - Two calls with the same id at the same scope share state. This is sometimes what you want (siblings agreeing on a value) and sometimes a bug (two unrelated cards collapsing together). When in doubt, suffix with the data key: `"card.disks"` vs `"card.networking"`.
-- Unlike positional `use_state`, named state does not depend on call order. You can branch around a named-state read without losing the value next frame.
+- Unlike positional `use_state`, keyed state does not depend on call order. You can branch around a keyed-state read without losing the value next frame.
+- `use_state_named` is a deprecated alias of `use_state_keyed`; both read and write the same slot for a given id.
 - For the full method surface on the returned `State<T>`, see `STATE_APIS.md`.
 
 ### Context Injection with `ui.provide` / `ui.use_context`
@@ -378,7 +379,7 @@ ui
 > `Context::disabled`.
 >
 > ```rust
-> let submit = ui.disabled(!form_valid, |ui| ui.button("Save"));
+> let submit = ui.disabled(!form_valid, |ui| ui.button("Save").show());
 > if submit.clicked {
 >     save(); // never runs while the form is invalid
 > }
@@ -389,7 +390,7 @@ ui
 | Pattern | Use when | Example scenarios |
 |---|---|---|
 | Function + explicit args | Small components, fewer than 3-4 params | `metric_card`, `header_row`, `kv_pair` |
-| `use_state_named` | Component has LOCAL state that should survive across frames | collapsible panel, pagination cursor, sort direction |
+| `use_state_keyed` | Component has LOCAL state that should survive across frames | collapsible panel, pagination cursor, sort direction |
 | `provide` / `use_context` | Values cross 3+ scope levels | theme, logged-in user, feature flags, request id |
 | `.with_if` | Styling depends on a runtime condition | selected row, error text, focused panel |
 | `.with` | Factor shared style blocks out of multiple call sites | "dim label", "code-style text", "subtle border" |
@@ -399,7 +400,8 @@ ui
 These look tempting but make code harder, not easier:
 
 - **Reaching for context when a parameter is clearer.** If a value is used in one helper, just pass it. Context is for values that propagate, not for "I do not feel like typing the parameter."
-- **Using `use_state_named` for app-level state.** Page-level state, selected tab, current user — these belong in your top-level `App` struct so that tests, persistence, and refactors stay sane. Named state is for state that is genuinely local to a component instance.
+- **Using `use_state_keyed` for app-level state.** Page-level state, selected tab, current user — these belong in your top-level `App` struct so that tests, persistence, and refactors stay sane. Keyed state is for state that is genuinely local to a component instance.
+
 - **Reusing the same id by accident.** `expandable_card(ui, "card", ...)` called five times shares one boolean across all five cards. Pick ids that name the *instance*, not the *kind*.
 - **Nesting `provide` purely to "override defaults."** If you find yourself wrapping every render helper in a fresh `provide`, the value should probably be a parameter or a method argument instead.
 

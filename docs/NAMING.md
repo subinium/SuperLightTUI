@@ -120,27 +120,48 @@ TabsState::new(vec!["Files", "Settings"]);
 |--------|---------|---------|
 | `_named` | name-keyed variant | `register_focusable_named` |
 | `_keyed` | runtime-key variant | `use_state_keyed` |
-| `_colored` | color-customized variant (canonical color-override for immediate widgets returning `Response`; blessed in [API_DESIGN.md](API_DESIGN.md) Rule 1) | `text_input_colored` |
-| `_lang` | language-aware variant (historical; `code_block_lang` is deprecated in favor of `code_block(c).lang(l)`) | `code_block_lang` |
+| `_colored` | the base call plus a trailing `&WidgetColors` (stateful widgets only; frozen set, no new names, see below) | `text_input_colored(&mut state, &colors)` |
 | `_styled` | explicit-`Style`/`Color` override variant | `sparkline_styled` |
 | `_hd` | high-density / braille-cell rendering variant | `candlestick_hd` |
 | `_halfblock` | half-block (▀ / ▄) pixel-doubling render variant | `heatmap_halfblock` |
 | `_pct` | percent variant | `w_pct(50)` |
 | `_ratio` | ratio variant | `w_ratio(1, 3)` |
 | `_minmax` | min/max bounds variant | `w_minmax(10, 30)` |
-| `_gap` | gap-supplied variant | `row_gap(g, ...)` |
-| `_with` | variant taking an extra closure or options value | `run_with(config, f)`, `error_boundary_with(f, fallback)`, `modal_with(opts, f)` |
+| `_gap` | gap value on a container builder | `ContainerBuilder::row_gap(g)` |
+| `_with` | the base call plus an extra **closure** parameter | `error_boundary_with(f, fallback)`, `table_with(state, cell)`, `bar_chart_with(.., configure)` |
 | `State` | Layer 4 state type | `TextInputState` |
 | `Response` | Layer 5 response type | `BreadcrumbResponse` |
 | `Opts` | options struct (4+ fields) | `GutterOpts` |
 | `Builder` | builder type (rare; usually anon `<Widget><Lifetime>`) | — |
 
-**Known `_with` inconsistencies** (existing API, not a pattern to copy): the
-suffix carries a non-callback value in `button_with(label, ButtonVariant)`,
-`slider_with(value, SliderOpts)`, `grid_with(&[GridColumn], f)` (columns) and
-`canvas_with(&mut CanvasContext, f)` (reused storage). `modal_with` takes an
-options struct plus the body closure. New APIs should prefer a builder or a
-descriptive suffix.
+**One meaning per suffix (v0.26, #460).** A value-shaped option (a variant, a
+color, a step, an options struct) is a builder method on the widget, never a
+suffix: `ui.button("Save").variant(ButtonVariant::Primary).colors(&c)`,
+`ui.slider("Vol", &mut v, 0.0..=100.0).step(1.0)`, `ui.badge("new").color(c)`,
+`ui.help(&keys).key_color(k).text_color(t)`. `scripts/api_audit.sh --strict`
+enforces the two suffixes: V8 fails a non-deprecated `pub fn *_with` without a
+`Fn` / `FnMut` / `FnOnce` parameter, V9 fails a `*_colored` that is new or does
+not take `&WidgetColors`.
+
+The 0.25 names that broke the rule are deprecated aliases for one release:
+`button_with` / `button_colored` → `button(..).variant(..)` / `.colors(..)`,
+`slider_with` → `slider(..).step(..)`, `grid_with` → `grid_columns`, and
+`separator_colored` / `badge_colored` / `stat_colored` / `progress_bar_colored`
+/ `line_chart_colored` / `area_chart_colored` / `help_colored` → `.color(..)` /
+`.key_color(..)` / `.text_color(..)` on the builder.
+
+**Known exceptions** (allowlisted in V8 / V9; not a pattern to copy):
+
+- `run_with` / `run_async_with` / `run_inline_with` / `run_static_with` take a
+  `RunConfig`, and `EventBuilder::key_with` / `click_with` take modifiers.
+- `modal_with(ModalOpts, f)` pairs an options value with the body closure
+  (naming tracked by the modal options issue).
+- The stateful widgets `text_input`, `list`, `list_reorderable`, `table`,
+  `tabs`, `paginator`, `checkbox`, `toggle`, `select`, `radio` and
+  `color_picker` keep `<widget>_colored(.., &WidgetColors)` until they get a
+  builder; `_colored` means exactly that shape.
+- `sparkline_styled` / `ContainerBuilder::title_styled` use `_styled` for an
+  explicit `Style` / per-point color list.
 
 ---
 
@@ -285,6 +306,10 @@ to read, how to configure, how to act."
 
 `<Widget>State`. Always `pub struct`.
 
+"State" means widget state your app owns (`ListState`, `TextInputState`, ...).
+The hook handle returned by `use_state` / `use_state_keyed` is a *handle*:
+write it as `StateHandle<T>` (an alias of `State<T>`, v0.26) in new code.
+
 ```rust
 pub struct TextInputState { /* ... */ }
 pub struct SplitPaneState { /* ... */ }
@@ -383,8 +408,8 @@ src/widgets/
 
 ## Rename History
 
-For AI assistants: do **not** search for these old names. They were
-removed in v0.20.
+For AI assistants: do **not** search for these old names. Rows without a
+version were removed in v0.20; later rows name their release.
 
 | Old | New | Reason |
 |-----|-----|--------|
@@ -392,6 +417,12 @@ removed in v0.20.
 | `gauge_colored(r, c)` | `gauge(r).color(c)` | Builder consolidation |
 | `line_gauge_with(r, opts)` | `line_gauge(r).<chain>` | Builder consolidation |
 | `breadcrumb_sep(b, s)` | `breadcrumb(b).separator(s)` | Builder consolidation |
+| `button_with(l, v)` / `button_colored(l, &c)` (v0.26, deprecated) | `button(l).variant(v).colors(&c)` | One mechanism per widget (#460) |
+| `slider_with(&mut v, SliderOpts)` (v0.26, deprecated) | `slider(l, &mut v, r).step(s)` | `_with` = closure (#460) |
+| `grid_with(cols, f)` (v0.26, deprecated) | `grid_columns(cols, f)` | `_with` = closure (#460) |
+| `badge_colored` / `stat_colored` / `separator_colored` / `progress_bar_colored` / `line_chart_colored` / `area_chart_colored` / `help_colored` (v0.26, deprecated) | `.color(c)` / `.key_color(k).text_color(t)` on the builder | `_colored` = `&WidgetColors` (#460) |
+| `use_state_named(id, init)` (v0.26, deprecated) | `use_state_keyed(id, init)` | One keyed map (#463) |
+| `code_block_lang` / `code_block_numbered*`, `key_seq`, `use_memo_ref`, `col_gap` / `row_gap` on `Context`, `ContainerBuilder::pad` / `min_width` / ... (removed in v0.26) | see docs/MIGRATION.md | Deprecated since 0.20-0.22 (#463) |
 | `LineGaugeOpts` | `LineGauge<'_>` builder | Builder consolidation |
 | `HighlightRange::single(...)` | `HighlightRange::line(...)` | Single-line was the only use |
 | `label_owned(s)` | `label(s)` | `impl Into<String>` accepts both |

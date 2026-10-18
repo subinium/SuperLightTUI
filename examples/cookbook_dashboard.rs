@@ -108,13 +108,15 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
         .col(|ui| {
             ui.container().gap(2).row(|ui| {
                 ui.bordered(Border::Single).p(1).grow(1).col(|ui| {
-                    ui.stat_colored("CPU", &format!("{:.1}%", m.cpu), Color::Cyan);
+                    ui.stat("CPU", &format!("{:.1}%", m.cpu)).color(Color::Cyan);
                 });
                 ui.bordered(Border::Single).p(1).grow(1).col(|ui| {
-                    ui.stat_colored("Memory", &format!("{:.1}%", m.mem), Color::Yellow);
+                    ui.stat("Memory", &format!("{:.1}%", m.mem))
+                        .color(Color::Yellow);
                 });
                 ui.bordered(Border::Single).p(1).grow(1).col(|ui| {
-                    ui.stat_colored("Req/s", &format!("{:.0}", m.req_per_s), Color::Green);
+                    ui.stat("Req/s", &format!("{:.0}", m.req_per_s))
+                        .color(Color::Green);
                 });
             });
 

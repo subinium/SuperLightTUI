@@ -840,21 +840,6 @@ impl FilePickerState {
         self.selected_file.as_ref()
     }
 
-    /// Return the currently selected file path.
-    ///
-    /// Deprecated alias for [`selected_file`](Self::selected_file). The
-    /// shorter name conflicts visually with the [`selected: usize`](Self::selected)
-    /// field — a getter returning a path alongside a public field returning
-    /// an index made call sites ambiguous. Migrate to `selected_file()` for
-    /// new code; this stub stays callable until v1.0.
-    #[deprecated(
-        since = "0.20.0",
-        note = "use selected_file() — disambiguates from the `selected: usize` field index"
-    )]
-    pub fn selected(&self) -> Option<&PathBuf> {
-        self.selected_file()
-    }
-
     /// Re-scan the current directory, retaining failures in [`scan_errors`](Self::scan_errors).
     ///
     /// This compatibility wrapper ignores the returned error. Use

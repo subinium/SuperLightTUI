@@ -71,7 +71,10 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                     .bold()
                     .fg(Color::Cyan);
                 ui.spacer();
-                if ui.button_with("Delete item", ButtonVariant::Danger).clicked
+                if ui
+                    .button("Delete item")
+                    .variant(ButtonVariant::Danger)
+                    .clicked
                     && state.items_left > 0
                 {
                     state.show_modal = true;
@@ -91,12 +94,12 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                 .col(|ui| {
                     ui.text("Delete this item? This cannot be undone.").bold();
                     ui.container().gap(2).row(|ui| {
-                        if ui.button_with("Yes", ButtonVariant::Danger).clicked {
+                        if ui.button("Yes").variant(ButtonVariant::Danger).clicked {
                             state.items_left = state.items_left.saturating_sub(1);
                             state.toasts.success("Deleted", tick);
                             state.show_modal = false;
                         }
-                        if ui.button_with("No", ButtonVariant::Outline).clicked {
+                        if ui.button("No").variant(ButtonVariant::Outline).clicked {
                             state.toasts.info("Cancelled", tick);
                             state.show_modal = false;
                         }

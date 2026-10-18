@@ -1,7 +1,35 @@
 //! Tests for `Context::use_state_named` /
 //! `Context::use_state_named_default` (Issue #71, naming unified in #240).
+//!
+//! Since 0.26 (#463) both are deprecated forwarders into the keyed-state map,
+//! so this file exercises them on purpose.
+#![allow(deprecated)]
 
 use slt::TestBackend;
+
+#[test]
+fn named_and_keyed_ids_share_one_slot() {
+    // #463: `use_state_named("x", ..)` and `use_state_keyed("x", ..)` are one
+    // slot, whichever is called first, and keyed bookkeeping sees named ids.
+    let mut backend = TestBackend::new(20, 2);
+    backend.render(|ui| {
+        let named = ui.use_state_named::<i32>("shared::slot", || 1);
+        let keyed = ui.use_state_keyed::<i32>("shared::slot", || 2);
+        assert_eq!(*keyed.get(ui), 1, "keyed must reuse the named slot");
+        *keyed.get_mut(ui) = 5;
+        assert_eq!(*named.get(ui), 5);
+
+        let keyed_first = ui.use_state_keyed::<i32>("shared::other", || 3);
+        let named_second = ui.use_state_named::<i32>("shared::other", || 4);
+        assert_eq!(*named_second.get(ui), 3, "named must reuse the keyed slot");
+        *named_second.get_mut(ui) = 8;
+        assert_eq!(*keyed_first.get(ui), 8);
+
+        assert_eq!(ui.keyed_state_count(), 2);
+        assert!(ui.remove_state_keyed("shared::slot"));
+        assert_eq!(ui.keyed_state_count(), 1);
+    });
+}
 
 #[test]
 fn named_state_persists_across_frames() {
@@ -110,28 +138,4 @@ fn safe_inside_conditional_unlike_use_state() {
     });
     let out = backend.to_string_trimmed();
     assert!(out.contains("v=42"), "expected v=42, got: {out:?}");
-}
-
-#[test]
-fn deprecated_use_state_named_with_alias_still_works() {
-    // `use_state_named_with` is a #[deprecated(since = "0.21.0")] alias for the
-    // new `use_state_named(id, init)`. It must remain functionally identical
-    // until removed in v1.0. `#[allow(deprecated)]` keeps `-D warnings` green.
-    #[allow(deprecated)]
-    {
-        let mut backend = TestBackend::new(40, 4);
-        backend.render(|ui| {
-            let v = ui.use_state_named_with::<i32>("alias::value", || 7);
-            assert_eq!(*v.get(ui), 7);
-            *v.get_mut(ui) = 11;
-        });
-        // Second frame: the alias shares the same `named_states` slot as the
-        // canonical method, so the init closure must not re-run.
-        backend.render(|ui| {
-            let v = ui.use_state_named::<i32>("alias::value", || 99);
-            assert_eq!(*v.get(ui), 11);
-            ui.text(format!("v={}", v.get(ui)));
-        });
-        assert!(backend.to_string_trimmed().contains("v=11"));
-    }
 }

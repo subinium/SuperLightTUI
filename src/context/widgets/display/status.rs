@@ -1,93 +1,10 @@
 use super::*;
 
+mod builders;
+
+pub use builders::{Badge, Help, Stat};
+
 impl Context {
-    /// Render a help bar showing keybinding hints.
-    ///
-    /// `bindings` is a slice of `(key, action)` pairs. Keys are rendered in the
-    /// theme's primary color; actions in the dim text color. Pairs are separated
-    /// by a `·` character.
-    pub fn help(&mut self, bindings: &[(&str, &str)]) -> Response {
-        if bindings.is_empty() {
-            return Response::none();
-        }
-
-        self.skip_interaction_slot();
-        let help_gap = self.theme.spacing.sm();
-        self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
-                direction: Direction::Row,
-                gap: help_gap as i32,
-                align: Align::Start,
-                align_self: None,
-                justify: Justify::Start,
-                border: None,
-                border_sides: BorderSides::all(),
-                border_style: Style::new().fg(self.theme.border),
-                bg_color: None,
-                padding: Padding::default(),
-                margin: Margin::default(),
-                constraints: Constraints::default(),
-                title: None,
-                grow: 0,
-                group_name: None,
-            })));
-        for (idx, (key, action)) in bindings.iter().enumerate() {
-            if idx > 0 {
-                self.styled("·", Style::new().fg(self.theme.text_dim));
-            }
-            self.styled(*key, Style::new().bold().fg(self.theme.primary));
-            self.styled(*action, Style::new().fg(self.theme.text_dim));
-        }
-        self.commands.push(Command::EndContainer);
-        self.rollback.last_text_idx = None;
-
-        Response::none()
-    }
-
-    /// Render a help bar with custom key/description colors.
-    pub fn help_colored(
-        &mut self,
-        bindings: &[(&str, &str)],
-        key_color: Color,
-        text_color: Color,
-    ) -> Response {
-        if bindings.is_empty() {
-            return Response::none();
-        }
-
-        self.skip_interaction_slot();
-        let help_gap = self.theme.spacing.sm();
-        self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
-                direction: Direction::Row,
-                gap: help_gap as i32,
-                align: Align::Start,
-                align_self: None,
-                justify: Justify::Start,
-                border: None,
-                border_sides: BorderSides::all(),
-                border_style: Style::new().fg(self.theme.border),
-                bg_color: None,
-                padding: Padding::default(),
-                margin: Margin::default(),
-                constraints: Constraints::default(),
-                title: None,
-                grow: 0,
-                group_name: None,
-            })));
-        for (idx, (key, action)) in bindings.iter().enumerate() {
-            if idx > 0 {
-                self.styled("·", Style::new().fg(text_color));
-            }
-            self.styled(*key, Style::new().bold().fg(key_color));
-            self.styled(*action, Style::new().fg(text_color));
-        }
-        self.commands.push(Command::EndContainer);
-        self.rollback.last_text_idx = None;
-
-        Response::none()
-    }
-
     /// Begin building a breadcrumb navigation bar with the default separator
     /// (` › `).
     ///
@@ -247,58 +164,6 @@ impl Context {
         Response::none()
     }
 
-    /// Render a badge with the theme's primary color.
-    ///
-    /// Returns a [`Response`] carrying real `hovered` / `right_clicked` state
-    /// for the badge's rect, so callers can attach `.on_hover(...)` tooltips.
-    /// Prior to v0.21.0 this always returned [`Response::none()`]; statement-form
-    /// callers (`ui.badge("NEW");`) compile unchanged.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # slt::run(|ui: &mut slt::Context| {
-    /// let r = ui.badge("NEW");
-    /// if r.hovered { /* attach a tooltip */ }
-    /// # });
-    /// ```
-    pub fn badge(&mut self, label: &str) -> Response {
-        let theme = self.theme;
-        self.badge_colored(label, theme.primary)
-    }
-
-    /// Render a badge with a custom background color.
-    ///
-    /// Foreground is auto-selected for contrast via [`Color::contrast_fg`].
-    ///
-    /// Returns a [`Response`] carrying real `hovered` / `right_clicked` state
-    /// for the badge's rect, so callers can attach `.on_hover(...)` tooltips.
-    /// Prior to v0.21.0 this always returned [`Response::none()`]; statement-form
-    /// callers compile unchanged.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use slt::Color;
-    /// # slt::run(|ui: &mut slt::Context| {
-    /// let r = ui.badge_colored("ALPHA", Color::Magenta);
-    /// if r.hovered { /* attach a tooltip */ }
-    /// # });
-    /// ```
-    pub fn badge_colored(&mut self, label: &str, color: Color) -> Response {
-        let fg = Color::contrast_fg(color);
-        let mut label_text = String::with_capacity(label.len() + 2);
-        label_text.push(' ');
-        label_text.push_str(label);
-        label_text.push(' ');
-        // Reserve the interaction slot *before* the text so the marker
-        // attaches to the badge's rect (same pattern as `spinner` / `gauge`).
-        let response = self.interaction();
-        self.text(label_text).fg(fg).bg(color);
-
-        response
-    }
-
     /// Render a keyboard shortcut hint with reversed styling.
     ///
     /// Returns a [`Response`] carrying real `hovered` / `right_clicked` state
@@ -329,57 +194,6 @@ impl Context {
         self.text(key_text).reversed().fg(theme.text_dim);
 
         response
-    }
-
-    /// Render a label-value stat pair.
-    ///
-    /// Renders as a column: a dim label above a bold value. Pair multiple
-    /// stats in a [`row`](Self::row) for a compact dashboard strip.
-    ///
-    /// Returns a [`Response`] carrying real `hovered` / `clicked` /
-    /// `right_clicked` state for the stat's column rect, so callers can attach
-    /// `.on_hover(...)` tooltips. Prior to v0.21.0 this always returned
-    /// [`Response::none()`]; statement-form callers compile unchanged.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # slt::run(|ui: &mut slt::Context| {
-    /// ui.row(|ui| {
-    ///     let r = ui.stat("Users", "1.2k");
-    ///     if r.hovered { /* attach a tooltip */ }
-    ///     ui.stat("Revenue", "$8,420");
-    /// });
-    /// # });
-    /// ```
-    pub fn stat(&mut self, label: &str, value: &str) -> Response {
-        self.col(|ui| {
-            ui.text(label).dim();
-            ui.text(value).bold();
-        })
-    }
-
-    /// Render a stat pair with a custom value color.
-    ///
-    /// Returns a [`Response`] carrying real `hovered` / `clicked` /
-    /// `right_clicked` state for the stat's column rect, so callers can attach
-    /// `.on_hover(...)` tooltips. Prior to v0.21.0 this always returned
-    /// [`Response::none()`]; statement-form callers compile unchanged.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use slt::Color;
-    /// # slt::run(|ui: &mut slt::Context| {
-    /// let r = ui.stat_colored("Errors", "0", Color::Green);
-    /// if r.hovered { /* attach a tooltip */ }
-    /// # });
-    /// ```
-    pub fn stat_colored(&mut self, label: &str, value: &str, color: Color) -> Response {
-        self.col(|ui| {
-            ui.text(label).dim();
-            ui.text(value).bold().fg(color);
-        })
     }
 
     /// Render a stat pair with an up/down trend arrow.

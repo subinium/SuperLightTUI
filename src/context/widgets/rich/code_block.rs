@@ -23,51 +23,6 @@ impl Context {
     pub fn code_block<'a>(&'a mut self, code: &'a str) -> CodeBlock<'a> {
         CodeBlock::new(self, code)
     }
-
-    /// Render a code block with language-aware syntax highlighting.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # slt::run(|ui: &mut slt::Context| {
-    /// ui.code_block("fn main() {}").lang("rust");
-    /// # });
-    /// ```
-    #[deprecated(since = "0.21.0", note = "use `code_block(code).lang(lang)`")]
-    pub fn code_block_lang(&mut self, code: &str, lang: &str) -> Response {
-        render_code_block(self, code, lang, false)
-    }
-
-    /// Render a code block with line numbers and keyword highlighting.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # slt::run(|ui: &mut slt::Context| {
-    /// ui.code_block("let first = 1;\nlet second = 2;").numbered();
-    /// # });
-    /// ```
-    #[deprecated(since = "0.21.0", note = "use `code_block(code).numbered()`")]
-    pub fn code_block_numbered(&mut self, code: &str) -> Response {
-        render_code_block(self, code, "", true)
-    }
-
-    /// Render a code block with line numbers and language-aware highlighting.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # slt::run(|ui: &mut slt::Context| {
-    /// ui.code_block("fn main() {}").lang("rust").numbered();
-    /// # });
-    /// ```
-    #[deprecated(
-        since = "0.21.0",
-        note = "use `code_block(code).lang(lang).numbered()`"
-    )]
-    pub fn code_block_numbered_lang(&mut self, code: &str, lang: &str) -> Response {
-        render_code_block(self, code, lang, true)
-    }
 }
 
 /// Syntax-highlighted code block builder. Auto-renders on `Drop`.
@@ -249,7 +204,7 @@ mod code_block_tests {
         let mut tb_alias = TestBackend::new(40, 8);
         tb_alias.render(|ui| {
             #[allow(deprecated)]
-            let _ = ui.code_block_numbered_lang(code, "rust");
+            let _ = ui.code_block(code).lang("rust").numbered();
         });
         assert_eq!(
             tb_builder.to_string(),

@@ -180,8 +180,8 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
   | `ui.text("a").text("b");` (chaining another Context call) | two statements: `ui.text("a"); ui.text("b");` |
   | `ui.text(s).with_if(c, \|t\| { t.bold(); });` | unchanged; `t` is a `Text` |
   | `fn dim(ui: &mut Context) { ui.dim(); }` used as `.with(dim)` | `fn dim(t: Text<'_>) { t.dim(); }` |
-  | `ui.text(s).gradient_stops(&[(0.0f32, c)])` | `.gradient_stops_f64(&[(0.0, c)])` (the `f32` forms stay only on `Context`, deprecated) |
-  | `ui.separator(); ui.fg(c);` | `ui.separator_colored(c);` |
+  | `ui.text(s).gradient_stops(&[(0.0f32, c)])` | `.gradient_stops_f64(&[(0.0, c)])` (the `f32` forms were removed in 0.26) |
+  | `ui.separator(); ui.fg(c);` | `ui.separator().color(c);` |
   | `ui.with_if(..)` / `ui.with(..)` / `ui.w(..)` / `ui.m(..)` / `ui.grow(..)` / `ui.align(..)` / `ui.wrap()` / `ui.truncate()` / `ui.text_center()` | same names on `Text` |
 
   Code that kept the `&mut Context` returned by `text()` (for example
@@ -193,6 +193,100 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
   `render_with_events(events, 0, 0, f)`. For new multi-step tests prefer
   `tb.step(events, &mut f).press(KeyCode::Tab, &mut f).type_text("x", &mut f)`,
   which drives one `FnMut` over plain state instead of `RefCell` + `sequence()`.
+- **Widget builders, one meaning per suffix (#460).** `button`, `badge`,
+  `stat`, `help`, `separator`, `progress`, `progress_bar`, `slider`,
+  `line_chart` and `area_chart` return builders (`Button`, `Badge`, `Stat`,
+  `Help`, `Separator`, `ProgressBar`, `Slider`, `LineChart`). Options chain
+  on the call and compose (`ui.button("Delete").variant(ButtonVariant::Danger)
+  .colors(&c)`, impossible before), and each builder dereferences to its
+  `Response`, so `if ui.button("x").clicked`, `ui.button("x").on_click(ui, ..)`
+  and `ui.badge("x").on_hover(ui, ..)` compile unchanged (`Response` is now
+  `Copy`). Call `.show()` where a `Response` *value* is needed:
+  `vec![ui.button("a").show(), ..]`, a function or closure that returns it,
+  or `let r = ui.button("x").show();` followed by other `ui.` calls before
+  `r` is read (the builder borrows `ui` until then; the compiler reports
+  E0499 / E0308). Builder arguments cannot borrow `ui` again, so
+  `ui.badge("x").color(ui.theme().success)` becomes
+  `let c = ui.theme().success; ui.badge("x").color(c);`. `slider` and the
+  charts are recorded when their response is first read, on `.show()`, or
+  at the end of the statement; the others are recorded immediately. In
+  both cases the widget renders exactly where it is written. Rendering of
+  every widget without options is unchanged. `_with` now always means "plus a
+  closure parameter" and `_colored` always means "plus `&WidgetColors`"; the
+  names that meant something else are deprecated (table below) and the
+  `scripts/api_audit.sh` checks V8 / V9 keep it that way.
+- **Removed items (#463).** Everything deprecated in 0.20, 0.21 and 0.22 is
+  gone (table below); each replacement was named in its deprecation note.
+  Items deprecated in 0.23 or later (`slider_with_step`, the 0.26 aliases)
+  still compile with a warning.
+- **`use_state_named` shares the keyed map (#463).** `use_state_named(id,
+  init)` / `use_state_named_default(id)` are deprecated aliases of
+  `use_state_keyed` / `use_state_keyed_default`, and both names now address
+  one slot map: a `named` and a `keyed` call with the same id return the same
+  value (before 0.26 they were separate), and `remove_state_keyed`,
+  `retain_state_keyed` and `keyed_state_count` include ids created through
+  `use_state_named`. Rename colliding ids if you relied on two independent
+  slots.
+- **`Context::line` returns `Response` (#463),** like
+  `ContainerBuilder::line`. `ui.line(..);` statements are unchanged; code that
+  chained a Context call after it (`ui.line(..).bold()`) splits into two
+  statements.
+- **`slt::prelude` (#463).** `use slt::prelude::*;` imports the run entry
+  points, `Context`, the builders, the style vocabulary, key types and the
+  common widget states, and nothing else. Prefer it over `use slt::*`: the
+  root glob also imports SLT's `crossterm` re-export, which shadows your own
+  `crossterm` dependency. `slt::crossterm` stays reachable by path.
+  `StateHandle<T>` is a new alias of `State<T>`, the hook handle; "state" in
+  the docs now means the widget state structs (`ListState`, ...).
+- **New on `ContainerBuilder` (#463):** `fg(color)` (same as `text_color`)
+  and `w_ratio(num, den)` / `h_ratio(num, den)` (same as `Constraints`).
+
+  Renamed (deprecated alias kept for one release, warns):
+
+  | 0.25 | 0.26 |
+  |---|---|
+  | `ui.button_with(label, variant)` | `ui.button(label).variant(variant)` |
+  | `ui.button_colored(label, &colors)` | `ui.button(label).colors(&colors)` |
+  | `ui.slider_with(&mut v, SliderOpts::new(label, range).step(s))` | `ui.slider(label, &mut v, range).step(s)` |
+  | `ui.slider_with_step(label, &mut v, range, s)` (deprecated since 0.23) | `ui.slider(label, &mut v, range).step(s)` |
+  | `ui.grid_with(&cols, f)` | `ui.grid_columns(&cols, f)` |
+  | `ui.separator_colored(c)` | `ui.separator().color(c)` (full intensity, like before) |
+  | `ui.badge_colored(label, c)` | `ui.badge(label).color(c)` |
+  | `ui.stat_colored(label, value, c)` | `ui.stat(label, value).color(c)` |
+  | `ui.progress_bar_colored(r, w, c)` | `ui.progress_bar(r, w).color(c)` |
+  | `ui.line_chart_colored(d, w, h, c)` | `ui.line_chart(d, w, h).color(c)` |
+  | `ui.area_chart_colored(d, w, h, c)` | `ui.area_chart(d, w, h).color(c)` |
+  | `ui.help_colored(b, key, text)` | `ui.help(b).key_color(key).text_color(text)` |
+  | `ui.use_state_named(id, init)` | `ui.use_state_keyed(id, init)` (same slot) |
+  | `ui.use_state_named_default(id)` | `ui.use_state_keyed_default(id)` (same slot) |
+
+  Removed (deprecated since 0.20-0.22; compile error now):
+
+  | Removed | Use |
+  |---|---|
+  | `ContainerBuilder::pad(n)` | `.p(n)` |
+  | `ContainerBuilder::min_width` / `max_width` / `min_height` / `max_height` | `.min_w` / `.max_w` / `.min_h` / `.max_h` (the `Constraints` getters of the same name stay) |
+  | `ui.col_gap(n, f)` / `ui.row_gap(n, f)` | `ui.container().gap(n).col(f)` / `.row(f)` |
+  | `FilePickerState::selected()` | `selected_file()` |
+  | `ScrollState::progress() -> f32` | `progress_ratio() -> f64` |
+  | `FormState::validate(&[FormValidator])` | `FormField::validate(..)` per field + `form.validate_all()` |
+  | `ui.key_seq("gg")` | `ui.key_chord("gg")` |
+  | `ui.code_block_lang(c, l)` | `ui.code_block(c).lang(l)` |
+  | `ui.code_block_numbered(c)` | `ui.code_block(c).numbered()` |
+  | `ui.code_block_numbered_lang(c, l)` | `ui.code_block(c).lang(l).numbered()` |
+  | `ui.use_state_named_with(id, init)` | `ui.use_state_keyed(id, init)` |
+  | `ui.use_memo_ref(&deps, f) -> &T` | `ui.use_memo(&deps, f)` -> `Memo<T>`; read with `.get(ui)` / `.copied(ui)` |
+  | `ui.gradient_stops(&[(f32, Color)])` / `ui.bg_gradient_stops(..)` | `ui.text(..).gradient_stops_f64(&[(f64, Color)])` / `.bg_gradient_stops_f64(..)` |
+  | `AppState::fps() -> f32` | `fps_f64()` |
+  | `Color::luminance` / `blend` / `lighten` / `darken` / `contrast_ratio` / `from_hsl` / `from_hsv` / `rotate_hue` (`f32`) | the `_f64` method of the same name (`blend_f64`, ...) |
+  | `Theme::overlay(color, f32)` | `overlay_f64(color, f64)` |
+
+  `<widget>_colored(state, &WidgetColors)` on the stateful widgets
+  (`text_input`, `list`, `list_reorderable`, `table`, `tabs`, `paginator`,
+  `checkbox`, `toggle`, `select`, `radio`, `color_picker`) is the remaining
+  `_colored` shape and is not deprecated. `bar_chart_with`, `histogram_with`,
+  `table_with`, `canvas_with`, `error_boundary_with` and `modal_with` keep
+  their names.
 
 ---
 

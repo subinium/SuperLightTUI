@@ -141,7 +141,9 @@ def check(args):
                 (source / (example.name + ".rs")).write_text(code, encoding="utf-8")
                 modules.append(f"mod {example.name};")
                 print(f"  {example.name}: {example.source}:{example.line}; features={list(features)}", flush=True)
-            (source / "lib.rs").write_text("#![allow(dead_code, unused_imports, unused_variables, unused_must_use)]\n" + "\n".join(modules), encoding="utf-8")
+            # #463: maintained recipes must use the current API, so a deprecated
+            # call fails the check instead of only warning.
+            (source / "lib.rs").write_text("#![allow(dead_code, unused_imports, unused_variables, unused_must_use)]\n#![deny(deprecated)]\n" + "\n".join(modules), encoding="utf-8")
             command = ["cargo", "+" + args.toolchain, "check", "--manifest-path", str(project / "Cargo.toml"), "--lib"]
             if args.release:
                 command.append("--release")

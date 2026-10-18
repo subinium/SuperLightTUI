@@ -782,7 +782,7 @@ fn state_and_memo_handle_traits_do_not_require_value_traits() {
         clone.get_mut(ui).0.set(2);
         assert_eq!(state.get(ui).0.get(), 2);
         assert_eq!(state, clone);
-        let named = ui.use_state_named("non-clone", || Value(std::cell::Cell::new(8)));
+        let named = ui.use_state_keyed("non-clone", || Value(std::cell::Cell::new(8)));
         let keyed = ui.use_state_keyed("dynamic", || Value(std::cell::Cell::new(9)));
         assert_eq!(named, named.clone());
         assert_eq!(keyed, keyed.clone());

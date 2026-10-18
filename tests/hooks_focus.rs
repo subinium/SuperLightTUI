@@ -67,19 +67,6 @@ fn use_state_keyed_default_uses_default_impl() {
 }
 
 #[test]
-fn use_state_keyed_independent_from_named_namespace() {
-    // Named (`&'static str`) and keyed (`String`) are independent maps —
-    // collisions in one don't affect the other.
-    let mut tb = TestBackend::new(40, 4);
-    tb.render(|ui| {
-        let n = ui.use_state_named::<i32>("collision", || 1);
-        let k = ui.use_state_keyed("collision", || 2);
-        *n.get_mut(ui) = 100;
-        assert_eq!(*k.get(ui), 2, "keyed must not see named writes");
-    });
-}
-
-#[test]
 fn use_state_keyed_safe_inside_conditional() {
     // Mirrors the `use_state_named` conditional safety test.
     let mut tb = TestBackend::new(40, 4);
@@ -480,8 +467,8 @@ fn gained_and_lost_focus_track_focus_transitions() {
     let g0r = &g0;
     let l0r = &l0;
     tb.render(|ui| {
-        let r1 = ui.button("first");
-        let r2 = ui.button("second");
+        let r1 = ui.button("first").show();
+        let r2 = ui.button("second").show();
         g0r.set(r1.gained_focus);
         l0r.set(r2.lost_focus);
     });
@@ -497,8 +484,8 @@ fn gained_and_lost_focus_track_focus_transitions() {
     let g1r = &g1;
     let l1r = &l1;
     tb.render(|ui| {
-        let r1 = ui.button("first");
-        let r2 = ui.button("second");
+        let r1 = ui.button("first").show();
+        let r2 = ui.button("second").show();
         g1r.set(r1.gained_focus);
         l1r.set(r2.lost_focus);
     });
@@ -512,8 +499,8 @@ fn gained_and_lost_focus_track_focus_transitions() {
     let gr = &gained2;
     tb.render(|ui| {
         ui.set_focus_index(1);
-        let r1 = ui.button("first");
-        let r2 = ui.button("second");
+        let r1 = ui.button("first").show();
+        let r2 = ui.button("second").show();
         lr.set(r1.lost_focus);
         gr.set(r2.gained_focus);
     });

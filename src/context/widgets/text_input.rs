@@ -820,6 +820,6 @@ impl Context {
     /// [`FormState::is_valid`](crate::widgets::FormState::is_valid) to gate
     /// submission on all fields being valid.
     pub fn form_submit(&mut self, label: impl Into<String>) -> Response {
-        self.button_with(label, ButtonVariant::Primary)
+        self.button(label).variant(ButtonVariant::Primary).show()
     }
 }

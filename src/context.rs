@@ -55,7 +55,8 @@ pub use widgets::ModalOptions;
 pub use widgets::ModalOpts;
 pub use widgets::Text;
 pub use widgets::{
-    Anchor, Breadcrumb, CodeBlock, DiffView, Gauge, GutterOpts, LineGauge, Placement, TreemapItem,
+    Anchor, Badge, Breadcrumb, Button, CodeBlock, DiffView, Gauge, GutterOpts, Help, LineChart,
+    LineGauge, Placement, ProgressBar, Separator, Slider, Stat, TreemapItem,
 };
 
 mod state;

@@ -28,13 +28,14 @@ mod selection;
 mod text_input;
 mod viz;
 
-pub use display::{Breadcrumb, Text};
-pub use feedback::{Gauge, LineGauge};
-pub use layout::GutterOpts;
+pub use display::{Badge, Breadcrumb, Help, Stat, Text};
+pub use feedback::{Gauge, LineGauge, ProgressBar, Slider};
+pub use layout::{GutterOpts, Separator};
 #[allow(deprecated)]
 pub use overlay::ModalOptions;
 pub(super) use overlay::wrap_tooltip_text;
 pub use overlay::{Anchor, ModalOpts, Placement};
 pub use rich::{CodeBlock, DiffView};
+pub use selection::Button;
 pub use text_input::CodeEditor;
-pub use viz::TreemapItem;
+pub use viz::{LineChart, TreemapItem};

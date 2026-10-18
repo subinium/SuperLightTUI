@@ -119,14 +119,16 @@ children only their natural minimum width. The bug was visible
 instantly on launch.
 
 **Stateful inputs in a row need a wrapping container too**: when you
-put a `text_input(&mut s)` inside a `row_gap(...)` next to a label, the
+put a `text_input(&mut s)` inside a gapped row
+(`container().gap(n).row(...)`) next to a label, the
 input's natural width is the placeholder length (often 1 cell). Wrap
 the input in `container().fill().col(|ui| ui.text_input(&mut s))` so it
 claims the row's remaining width.
 
 ```rust
 // good — input fills row's remaining width
-ui.row_gap(gap, |ui| {
+ui.container().gap(gap).row(|ui| {
+
     ui.text("Name: ");
     ui.register_focusable_named("name");
     let r = ui.container().fill().col(|ui| {

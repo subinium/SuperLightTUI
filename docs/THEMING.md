@@ -120,7 +120,7 @@ The `Spacing` struct provides a consistent spacing scale based on a configurable
 
 ```rust
 let sp = ui.spacing();
-ui.col_gap(sp.md(), |ui| {
+ui.container().gap(sp.md()).col(|ui| {
     ui.container().p(sp.sm()).col(|ui| {
         ui.text("Consistent spacing");
     });
@@ -218,7 +218,7 @@ slt::run(|ui| {
 
 ## WidgetColors
 
-Override individual widget colors without changing the global theme. Many widgets have a `_colored` variant that accepts `WidgetColors`.
+Override individual widget colors without changing the global theme. Stateful widgets have a `_colored` variant that takes `&WidgetColors` as the last argument; `button` takes it as a chained `.colors(&c)`.
 
 ```rust
 use slt::{Color, WidgetColors};
@@ -229,8 +229,8 @@ let custom = WidgetColors::new()
     .border(Color::Cyan)
     .accent(Color::Yellow);
 
-// Use the _colored variant
-ui.button_colored("Save", &custom);
+// Builder method on button, _colored variant on stateful widgets
+if ui.button("Save").colors(&custom).clicked { /* save */ }
 ui.list_colored(&mut list_state, &custom);
 ui.table_colored(&mut table_state, &custom);
 ```
@@ -269,13 +269,13 @@ slt::run_with(config, |ui| {
 })
 ```
 
-Per-callsite `_colored()` overrides still take precedence over `WidgetTheme` defaults.
+Per-callsite overrides (`_colored(..)` or `.colors(..)`) still take precedence over `WidgetTheme` defaults.
 
-### Widgets with `_colored` variants
+### Per-callsite color overrides
 
-| Widget | Colored variant |
+| Widget | Override |
 |--------|----------------|
-| `button` | `button_colored(label, &colors)` |
+| `button` | `button(label).colors(&colors)` (composes with `.variant(ButtonVariant::Danger)`) |
 | `list` | `list_colored(&mut state, &colors)` |
 | `table` | `table_colored(&mut state, &colors)` |
 | `tabs` | `tabs_colored(&mut state, &colors)` |
@@ -284,12 +284,20 @@ Per-callsite `_colored()` overrides still take precedence over `WidgetTheme` def
 | `radio` | `radio_colored(&mut state, &colors)` |
 | `checkbox` | `checkbox_colored(label, checked, &colors)` |
 | `toggle` | `toggle_colored(label, enabled, &colors)` |
-| `separator` | `separator_colored(color)` |
-| `badge` | `badge_colored(label, color)` |
-| `stat` | `stat_colored(label, value, color)` |
-| `progress_bar` | `progress_bar_colored(ratio, width, color)` |
-| `line_chart` | `line_chart_colored(data, w, h, color)` |
-| `area_chart` | `area_chart_colored(data, w, h, color)` |
+| `separator` | `separator().color(color)` |
+| `badge` | `badge(label).color(color)` |
+| `stat` | `stat(label, value).color(color)` |
+| `progress_bar` | `progress_bar(ratio, width).color(color)` |
+| `line_chart` | `line_chart(data, w, h).color(color)` |
+| `area_chart` | `area_chart(data, w, h).color(color)` |
+| `help` | `help(bindings).key_color(c).text_color(c)` |
+
+A builder argument cannot borrow `ui` again, so bind theme colors first:
+
+```rust
+let ok = ui.theme().success;
+ui.badge("healthy").color(ok);
+```
 
 ## Tailwind Palette
 
@@ -409,7 +417,8 @@ let lum = bg.luminance_f64(); // ~0.013 (sRGB-linearized, BT.709 weights)
 let fg = Color::contrast_fg(bg); // Rgb(255, 255, 255)
 ```
 
-> **Note (v0.19.1)**: `Color::luminance` now applies the sRGB inverse transfer function (gamma decoding) to each channel before applying BT.709 weights `0.2126·R + 0.7152·G + 0.0722·B`. This matches the WCAG 2.1 relative luminance definition. Numerical results differ from pre-v0.19.1 — most notably, mid-tone colors land at lower luminance values than the old naive linear average produced. If your code compares `luminance()` against a hardcoded threshold, re-check it against the new scale.
+> **Note (v0.19.1)**: luminance (now `Color::luminance_f64`) applies the sRGB inverse transfer function (gamma decoding) to each channel before applying BT.709 weights `0.2126·R + 0.7152·G + 0.0722·B`. This matches the WCAG 2.1 relative luminance definition. Numerical results differ from pre-v0.19.1 — most notably, mid-tone colors land at lower luminance values than the old naive linear average produced. If your code compares `luminance_f64()` against a hardcoded threshold, re-check it against the new scale.
+
 
 ### Downsampling for terminal compatibility
 

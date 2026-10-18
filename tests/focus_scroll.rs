@@ -218,24 +218,24 @@ fn focus_edges_use_the_rendered_slot_for_late_and_modulo_requests() {
     let mut responses = [Response::none(), Response::none()];
     for _ in 0..2 {
         app.frame(vec![], |ui| {
-            responses = [ui.button("A"), ui.button("B")];
+            responses = [ui.button("A").show(), ui.button("B").show()];
         });
     }
     app.frame(vec![], |ui| {
-        responses = [ui.button("A"), ui.button("B")];
+        responses = [ui.button("A").show(), ui.button("B").show()];
         ui.set_focus_index(3);
     });
     app.frame(vec![], |ui| {
-        responses = [ui.button("A"), ui.button("B")];
+        responses = [ui.button("A").show(), ui.button("B").show()];
     });
     assert!(responses[0].lost_focus && responses[1].gained_focus);
     app.frame(vec![], |ui| {
-        responses = [ui.button("A"), ui.button("B")];
+        responses = [ui.button("A").show(), ui.button("B").show()];
     });
     assert!(responses[1].focused && !responses[1].gained_focus);
     app.frame(vec![], |ui| {
         ui.set_focus_index(0);
-        responses = [ui.button("A"), ui.button("B")];
+        responses = [ui.button("A").show(), ui.button("B").show()];
     });
     assert!(responses[0].gained_focus && responses[1].lost_focus);
 }
@@ -467,31 +467,31 @@ fn screen_tab_and_mouse_focus_are_not_overwritten_by_saved_state() {
     for _ in 0..2 {
         app.frame(vec![], |ui| {
             ui.screen("main", &mut screens, |ui| {
-                responses = [ui.button("A"), ui.button("B")];
+                responses = [ui.button("A").show(), ui.button("B").show()];
             });
         });
     }
     app.frame(vec![Event::key(KeyCode::Tab)], |ui| {
         ui.screen("main", &mut screens, |ui| {
-            responses = [ui.button("A"), ui.button("B")];
+            responses = [ui.button("A").show(), ui.button("B").show()];
         });
     });
     app.frame(vec![], |ui| {
         ui.screen("main", &mut screens, |ui| {
-            responses = [ui.button("A"), ui.button("B")];
+            responses = [ui.button("A").show(), ui.button("B").show()];
         });
     });
     assert!(responses[0].lost_focus && responses[1].gained_focus);
     app.frame(vec![], |ui| {
         ui.screen("main", &mut screens, |ui| {
-            responses = [ui.button("A"), ui.button("B")];
+            responses = [ui.button("A").show(), ui.button("B").show()];
         });
     });
     assert!(responses[1].focused && !responses[1].gained_focus);
     let rect = responses[0].rect;
     app.frame(vec![Event::mouse_click(rect.x, rect.y)], |ui| {
         ui.screen("main", &mut screens, |ui| {
-            responses = [ui.button("A"), ui.button("B")];
+            responses = [ui.button("A").show(), ui.button("B").show()];
         });
     });
     assert!(responses[0].focused && responses[0].clicked);
@@ -506,7 +506,11 @@ fn returning_to_a_larger_screen_never_activates_the_wrong_saved_slot() {
         app.frame(vec![], |ui| {
             ui.screen("a", &mut screens, |ui| {
                 ui.set_focus_index(2);
-                responses = vec![ui.button("A0"), ui.button("A1"), ui.button("A2")];
+                responses = vec![
+                    ui.button("A0").show(),
+                    ui.button("A1").show(),
+                    ui.button("A2").show(),
+                ];
             });
         });
     }
@@ -519,7 +523,11 @@ fn returning_to_a_larger_screen_never_activates_the_wrong_saved_slot() {
     screens.pop();
     app.frame(vec![Event::key(KeyCode::Enter)], |ui| {
         ui.screen("a", &mut screens, |ui| {
-            responses = vec![ui.button("A0"), ui.button("A1"), ui.button("A2")];
+            responses = vec![
+                ui.button("A0").show(),
+                ui.button("A1").show(),
+                ui.button("A2").show(),
+            ];
         });
     });
     assert!(!responses[0].clicked && !responses[1].clicked);
@@ -536,13 +544,13 @@ fn screen_focus_survives_a_hidden_frame_and_clone_without_borrowed_pointers() {
     for _ in 0..2 {
         app.frame(vec![], |ui| {
             ui.screen("a", &mut screens, |ui| {
-                responses = vec![ui.button("A0"), ui.button("A1")];
+                responses = vec![ui.button("A0").show(), ui.button("A1").show()];
             });
         });
     }
     app.frame(vec![Event::key(KeyCode::Tab)], |ui| {
         ui.screen("a", &mut screens, |ui| {
-            responses = vec![ui.button("A0"), ui.button("A1")];
+            responses = vec![ui.button("A0").show(), ui.button("A1").show()];
         });
     });
     let mut cloned = screens.clone();
@@ -551,14 +559,14 @@ fn screen_focus_survives_a_hidden_frame_and_clone_without_borrowed_pointers() {
     });
     app.frame(vec![], |ui| {
         ui.screen("a", &mut screens, |ui| {
-            responses = vec![ui.button("A0"), ui.button("A1")];
+            responses = vec![ui.button("A0").show(), ui.button("A1").show()];
         });
     });
     assert!(responses[1].focused);
     let mut other = App::new(30, 8);
     other.frame(vec![], |ui| {
         ui.screen("a", &mut cloned, |ui| {
-            responses = vec![ui.button("A0"), ui.button("A1")];
+            responses = vec![ui.button("A0").show(), ui.button("A1").show()];
         });
     });
     assert!(responses[1].focused);
@@ -577,14 +585,14 @@ fn header_and_nested_independent_screen_states_share_unique_global_focus() {
             vec![]
         };
         app.frame(events, |ui| {
-            responses = vec![ui.button("header")];
+            responses = vec![ui.button("header").show()];
             ui.screen("same", &mut outer, |ui| {
-                responses.push(ui.button("outer"));
+                responses.push(ui.button("outer").show());
                 ui.screen("same", &mut inner, |ui| {
-                    responses.push(ui.button("inner"));
+                    responses.push(ui.button("inner").show());
                 });
             });
-            responses.push(ui.button("footer"));
+            responses.push(ui.button("footer").show());
         });
         assert_eq!(
             responses.iter().filter(|response| response.focused).count(),
@@ -609,7 +617,9 @@ fn modal_focus_does_not_jump_when_background_slots_are_suppressed() {
             let _ = ui.button("background B");
             if modal {
                 let _ = ui.modal_with(ModalOpts::new(), |ui| {
-                    responses = (0..4).map(|i| ui.button(format!("modal {i}"))).collect();
+                    responses = (0..4)
+                        .map(|i| ui.button(format!("modal {i}")).show())
+                        .collect();
                 });
             }
         });
@@ -631,7 +641,7 @@ fn adding_modal_widgets_never_duplicates_the_focused_slot() {
         app.frame(vec![], |ui| {
             let _ = ui.modal(|ui| {
                 responses = (0..count)
-                    .map(|i| ui.button(format!("modal {i}")))
+                    .map(|i| ui.button(format!("modal {i}")).show())
                     .collect();
             });
         });
@@ -787,13 +797,13 @@ fn closing_modal_restores_the_background_slot_and_only_top_modal_is_active() {
             if frame < 2 {
                 ui.set_focus_index(1);
             }
-            background = vec![ui.button("A"), ui.button("B")];
+            background = vec![ui.button("A").show(), ui.button("B").show()];
             if (2..6).contains(&frame) {
                 let _ = ui.modal(|ui| {
-                    lower = vec![ui.button("low0"), ui.button("low1")];
+                    lower = vec![ui.button("low0").show(), ui.button("low1").show()];
                 });
                 let _ = ui.modal(|ui| {
-                    upper = vec![ui.button("top0"), ui.button("top1")];
+                    upper = vec![ui.button("top0").show(), ui.button("top1").show()];
                 });
             }
         });
@@ -994,17 +1004,17 @@ fn nested_screen_prefix_change_rebases_the_original_slot_only_once() {
             }
             responses.clear();
             if frame >= 3 {
-                responses.push(ui.button("new header"));
+                responses.push(ui.button("new header").show());
             }
-            responses.push(ui.button("header"));
+            responses.push(ui.button("header").show());
             ui.screen("outer", &mut outer, |ui| {
-                responses.push(ui.button("outer"));
+                responses.push(ui.button("outer").show());
                 ui.screen("inner", &mut inner, |ui| {
-                    responses.push(ui.button("inner 0"));
-                    responses.push(ui.button("inner 1"));
+                    responses.push(ui.button("inner 0").show());
+                    responses.push(ui.button("inner 1").show());
                 });
             });
-            responses.push(ui.button("footer"));
+            responses.push(ui.button("footer").show());
         });
         let expected = if frame >= 3 { 3 } else { 2 };
         assert!(responses[expected].focused, "frame {frame}");
@@ -1028,9 +1038,9 @@ fn returning_to_a_shrunken_screen_does_not_activate_its_footer() {
         app.frame(vec![], |ui| {
             ui.screen("a", &mut screens, |ui| {
                 ui.set_focus_index(2);
-                responses = (0..3).map(|i| ui.button(format!("A{i}"))).collect();
+                responses = (0..3).map(|i| ui.button(format!("A{i}")).show()).collect();
             });
-            footer = ui.button("footer");
+            footer = ui.button("footer").show();
         });
     }
     screens.push("b");
@@ -1040,22 +1050,22 @@ fn returning_to_a_shrunken_screen_does_not_activate_its_footer() {
                 let _ = ui.button(format!("B{i}"));
             }
         });
-        footer = ui.button("footer");
+        footer = ui.button("footer").show();
     });
     screens.pop();
     app.frame(vec![Event::key(KeyCode::Enter)], |ui| {
         ui.screen("a", &mut screens, |ui| {
-            responses = (0..2).map(|i| ui.button(format!("A{i}"))).collect();
+            responses = (0..2).map(|i| ui.button(format!("A{i}")).show()).collect();
         });
-        footer = ui.button("footer");
+        footer = ui.button("footer").show();
     });
     assert!(!footer.clicked);
     assert!(responses.iter().all(|response| !response.clicked));
     app.frame(vec![], |ui| {
         ui.screen("a", &mut screens, |ui| {
-            responses = (0..2).map(|i| ui.button(format!("A{i}"))).collect();
+            responses = (0..2).map(|i| ui.button(format!("A{i}")).show()).collect();
         });
-        footer = ui.button("footer");
+        footer = ui.button("footer").show();
     });
     assert!(responses[1].focused && !footer.focused);
 }
@@ -1176,9 +1186,9 @@ fn a_new_screen_item_cannot_steal_footer_activation() {
             app.frame(vec![], |ui| {
                 ui.set_focus_index(2);
                 ui.screen("a", &mut screens, |ui| {
-                    buttons = (0..2).map(|i| ui.button(format!("A{i}"))).collect();
+                    buttons = (0..2).map(|i| ui.button(format!("A{i}")).show()).collect();
                 });
-                footer = ui.button("footer");
+                footer = ui.button("footer").show();
             });
         }
         let events = if mouse {
@@ -1188,9 +1198,9 @@ fn a_new_screen_item_cannot_steal_footer_activation() {
         };
         app.frame(events, |ui| {
             ui.screen("a", &mut screens, |ui| {
-                buttons = (0..3).map(|i| ui.button(format!("A{i}"))).collect();
+                buttons = (0..3).map(|i| ui.button(format!("A{i}")).show()).collect();
             });
-            footer = ui.button("footer");
+            footer = ui.button("footer").show();
         });
         assert!(buttons.iter().all(|button| !button.clicked));
         if !mouse {
@@ -1224,7 +1234,7 @@ fn nested_screen_prefix_removal_does_not_normalize_counts_twice() {
                 ui.screen("outer", &mut outer, |ui| {
                     let _ = ui.button("outer");
                     ui.screen("inner", &mut inner, |ui| {
-                        buttons = vec![ui.button("inner0"), ui.button("inner1")];
+                        buttons = vec![ui.button("inner0").show(), ui.button("inner1").show()];
                     });
                 });
                 let _ = ui.button("footer");

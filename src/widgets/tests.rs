@@ -766,24 +766,3 @@ fn form_state_validate_with_cross_field_rule() {
     assert_eq!(form.fields[1].error, None);
     assert!(form.errors().is_empty());
 }
-
-#[test]
-#[allow(deprecated)]
-fn form_state_deprecated_positional_validate_still_works() {
-    let mut form = FormState::new()
-        .field(FormField::new("A"))
-        .field(FormField::new("B"));
-    let validators: &[FormValidator] = &[
-        |v| {
-            if v.is_empty() {
-                Err("a empty".into())
-            } else {
-                Ok(())
-            }
-        },
-        |_| Ok(()),
-    ];
-    assert!(!form.validate(validators));
-    assert_eq!(form.fields[0].error.as_deref(), Some("a empty"));
-    assert_eq!(form.fields[1].error, None);
-}

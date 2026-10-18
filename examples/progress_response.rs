@@ -125,7 +125,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                 }
             });
 
-            let pr = ui.progress(state.ratio);
+            let pr = ui.progress(state.ratio).show();
             ui.text(format!(
                 "ratio = {:.0}%    {}",
                 state.ratio * 100.0,
