@@ -6,17 +6,14 @@
 //!
 //! # Cross-test isolation (#240)
 //!
-//! Cargo's test runner runs `#[test]` functions in parallel by default. The
-//! `MEASURING` flag and `ALLOC_COUNT` counter are global, so any other test
-//! thread that allocates while a measurement is in flight pollutes the count.
+//! The global allocator counts an allocation only when the thread making it
+//! is inside `measure_allocs()` (a const-initialised thread-local
+//! `MEASURING` flag). Allocations from any other thread (sibling tests, the
+//! test harness reporting results or spawning the next test) never reach
+//! `ALLOC_COUNT`, however loaded the machine is.
 //!
-//! A `measure_lock` mutex held only inside `measure_allocs()` would protect
-//! nothing — non-measuring siblings would still run concurrently and their
-//! `String::from(...)` / `Vec::new()` calls would leak into the counter,
-//! producing noisy budget breaches whose pattern depends on thread-cache
-//! timing.
-//!
-//! Instead, every `#[test]` in this file grabs `measure_lock` at the top of
+//! `ALLOC_COUNT` itself is shared, so two measurements must not overlap:
+//! every `#[test]` in this file grabs `measure_lock` at the top of
 //! the function body. That serialises the *whole* file at the test-function
 //! granularity (one binary = one mutex), so `cargo test --all-features` is
 //! reliable even without `--test-threads=1`. `measure_allocs()` itself uses
@@ -27,18 +24,28 @@
 #![allow(clippy::unwrap_used)]
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct CountingAllocator;
 
 static ALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
-static MEASURING: AtomicBool = AtomicBool::new(false);
+thread_local! {
+    // Const-initialised, so reading it never allocates (the allocator below
+    // reads it on every allocation).
+    static MEASURING: Cell<bool> = const { Cell::new(false) };
+}
+
+fn measuring() -> bool {
+    // `try_with` fails only during thread teardown, when nothing is measured.
+    MEASURING.try_with(Cell::get).unwrap_or(false)
+}
 
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         unsafe {
-            if MEASURING.load(Ordering::Relaxed) {
+            if measuring() {
                 ALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
             }
             System.alloc(layout)
@@ -78,9 +85,9 @@ fn measure_allocs<R>(label: &'static str, f: impl FnOnce() -> R) -> (R, usize) {
     // toggling `MEASURING` at once.
     let _maybe_guard = measure_lock().try_lock();
     ALLOC_COUNT.store(0, Ordering::Relaxed);
-    MEASURING.store(true, Ordering::Relaxed);
+    MEASURING.with(|m| m.set(true));
     let r = f();
-    MEASURING.store(false, Ordering::Relaxed);
+    MEASURING.with(|m| m.set(false));
     let count = ALLOC_COUNT.load(Ordering::Relaxed);
     eprintln!("[{}] allocations = {}", label, count);
     (r, count)
@@ -455,10 +462,8 @@ fn use_state_keyed_cache_hit_scales_one_per_call() {
     // warmed TestBackend. The marginal-cost model (large - small) cancels
     // render-internal one-off allocations that don't scale with call count.
     //
-    // Uses LARGE_N = 100 so the signal (~100 fix vs ~200 pre-fix) dominates
-    // any cross-test allocator-counter noise from concurrent test threads
-    // (the global `MEASURING` toggle leaks during periods where another
-    // test is in its measure_allocs critical section).
+    // Uses LARGE_N = 100 so the signal (~100 fix vs ~200 pre-fix) is well
+    // clear of render-internal one-off allocations.
     use slt::TestBackend;
 
     const SMALL_N: usize = 10;
