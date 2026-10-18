@@ -44,23 +44,24 @@ pub(crate) const fn is_printable_ascii_byte(byte: u8) -> bool {
 /// sanitization. Checks eight bytes per step (SWAR) without `unsafe`.
 #[inline]
 pub(crate) fn is_printable_ascii(s: &str) -> bool {
+    let (words, remainder) = s.as_bytes().as_chunks::<8>();
+    words.iter().all(|word| is_printable_ascii_word(*word))
+        && remainder.iter().all(|&byte| is_printable_ascii_byte(byte))
+}
+
+/// Whether all eight bytes are printable ASCII, as one word test (SWAR).
+#[inline]
+fn is_printable_ascii_word(word: [u8; 8]) -> bool {
     const ONES: u64 = u64::from_ne_bytes([0x01; 8]);
     const HIGHS: u64 = u64::from_ne_bytes([0x80; 8]);
-
-    let (words, remainder) = s.as_bytes().as_chunks::<8>();
-    for word in words {
-        let x = u64::from_ne_bytes(*word);
-        // Any byte < 0x20: the classic "has less than" test. Any byte > 0x7E
-        // (DEL or non-ASCII): adding 1 sets its high bit, or it already had
-        // one. Carries can only add false positives next to a true positive,
-        // which is fine for an "any byte" test.
-        let below = x.wrapping_sub(ONES.wrapping_mul(0x20)) & !x & HIGHS;
-        let above = (x.wrapping_add(ONES) | x) & HIGHS;
-        if below | above != 0 {
-            return false;
-        }
-    }
-    remainder.iter().all(|&byte| is_printable_ascii_byte(byte))
+    let x = u64::from_ne_bytes(word);
+    // Any byte < 0x20: the classic "has less than" test. Any byte > 0x7E
+    // (DEL or non-ASCII): adding 1 sets its high bit, or it already had
+    // one. Carries can only add false positives next to a true positive,
+    // which is fine for an "any byte" test.
+    let below = x.wrapping_sub(ONES.wrapping_mul(0x20)) & !x & HIGHS;
+    let above = (x.wrapping_add(ONES) | x) & HIGHS;
+    below | above == 0
 }
 
 #[cfg(test)]
@@ -140,6 +141,49 @@ fn mixed_display_width(s: &str) -> usize {
     if s.len() < SPLIT_MIN_BYTES {
         return crate::width::str_width(s);
     }
+    simple_text_width(s).unwrap_or_else(|| split_display_width(s))
+}
+
+/// Width of `s` when every scalar is printable ASCII or a
+/// [`standalone_scalar`] (which take part in no width sequence), as one
+/// pass; `None` as soon as another scalar shows up.
+#[inline]
+fn simple_text_width(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let mut width = 0usize;
+    let mut i = 0;
+    while i < bytes.len() {
+        if let Some(word) = bytes
+            .get(i..i + 8)
+            .and_then(|word| <[u8; 8]>::try_from(word).ok())
+            && is_printable_ascii_word(word)
+        {
+            width += 8;
+            i += 8;
+            continue;
+        }
+        let byte = bytes[i];
+        if is_printable_ascii_byte(byte) {
+            width += 1;
+            i += 1;
+            continue;
+        }
+        if byte.is_ascii() {
+            return None;
+        }
+        let ch = s[i..].chars().next()?;
+        if !standalone_scalar(ch) {
+            return None;
+        }
+        width += char_display_width(ch);
+        i += ch.len_utf8();
+    }
+    Some(width)
+}
+
+/// [`mixed_display_width`] for text with scalars outside the simple set:
+/// split at interior printable-ASCII bytes and measure the stretches.
+fn split_display_width(s: &str) -> usize {
     let bytes = s.as_bytes();
     let printable = |i: usize| is_printable_ascii_byte(bytes[i]);
     // A byte whose neighbours are printable ASCII too: splitting on both
