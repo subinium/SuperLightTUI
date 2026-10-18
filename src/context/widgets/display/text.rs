@@ -398,7 +398,7 @@ impl Context {
                     let last_start = graphemes
                         .iter()
                         .take(graphemes.len().saturating_sub(1))
-                        .map(|grapheme| UnicodeWidthStr::width(*grapheme))
+                        .map(|grapheme| crate::width::str_width(grapheme))
                         .sum::<usize>();
                     let denom = last_start.max(1) as f64;
                     let mut cell = 0usize;
@@ -412,7 +412,7 @@ impl Context {
                             } else {
                                 seg_style.fg = Some(color);
                             }
-                            cell = cell.saturating_add(UnicodeWidthStr::width(grapheme));
+                            cell = cell.saturating_add(crate::width::str_width(grapheme));
                             (grapheme.to_string(), seg_style)
                         })
                         .collect();

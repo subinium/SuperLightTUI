@@ -17,9 +17,50 @@
   `compact_str` 0.10. MSRV stays at 1.88; `tree-sitter-highlight` stays on 0.26
   because 0.27 requires Rust 1.90, and the MSRV CI job now checks
   `--all-features` (every `syntax-*` grammar) on 1.88.
+- Color depth auto-detection resolves a precedence chain (#447): `NO_COLOR` /
+  `TERM=dumb` (now `NoColor`), then `COLORTERM` or a probe-confirmed XTGETTCAP
+  `Tc`, then terminal identity (`TERM` `xterm-kitty` / `xterm-ghostty` /
+  `wezterm`, `TERM_PROGRAM` `iTerm.app` / `WezTerm` / `ghostty` / `vscode`),
+  then a VT-enabled Windows console, then `256color`. Many terminals now get
+  more colors; explicit `RunConfig::color_depth` still wins over everything.
+- `RunConfig::kitty_keyboard(true)` pushes the protocol only when the terminal
+  answers `CSI ? u` (sent with the DA1 sentinel, no extra timeout), or when
+  `SLT_FORCE_KITTY_KEYBOARD` is set; hosts where queries are skipped keep the
+  policy-only behavior (#448).
+- The window title is emitted through the backend flush, only when it
+  changes, and restored on exit via the XTWINOPS title stack (#468).
+- Clipboard writes go through the backend flush after the frame bytes; write
+  errors no longer `eprintln!` over the UI or abort the frame, and payloads
+  over `RunConfig::clipboard_max_bytes` (default 74,994 bytes) are not sent
+  (#446).
+- tmux is identified from `TMUX` even when `TERM` is `screen-256color`
+  (without GNU screen's `STY`) (#446).
 
 ### Added
 
+- `Context::set_title`, `set_progress`, `set_status`, and `set_cursor_shape`
+  with `Progress` (OSC 9;4), `ProgramState` / `ProgramStatus` (OSC 7501), and
+  `CursorShape` (DECSCUSR). Setters persist until changed, emit only on
+  change, are capability-gated (progress only on known hosts, status only on
+  direct terminals, nothing for `TERM=dumb`), and are undone on exit, suspend,
+  and panic cleanup. `terminal_title`, `terminal_progress`, `program_status`,
+  and `cursor_shape` expose the recorded state, including on `TestBackend`.
+  New `SLT_FORCE_PROGRESS` / `SLT_DISABLE_PROGRESS` and
+  `SLT_FORCE_PROGRAM_STATUS` / `SLT_DISABLE_PROGRAM_STATUS` flags (#468).
+- `Context::clipboard_status` and `ClipboardStatus` (`Sent`, `TooLarge`,
+  `WriteFailed`) report the previous frame's OSC 52 outcome.
+  `RunConfig::clipboard_passthrough(true)` wraps OSC 52 for tmux
+  (`ESC P tmux;` with doubled `ESC`) and GNU screen (DCS chunks);
+  `RunConfig::clipboard_max_bytes` caps the payload (#446).
+- `ColorDepth::resolve(&Capabilities)` applies the environment chain plus the
+  startup probe (#447).
+- `Capabilities::kitty_keyboard` is populated from the `CSI ? u` probe (#448).
+- `RunConfig::ambiguous_wide(true)` measures East Asian Ambiguous characters as
+  two columns in the buffer, layout, wrapping, and truncation;
+  `RunConfig::width_conservative` and the opt-in startup `RunConfig::width_probe`
+  (CPR measurement of VS16, ZWJ, skin-tone, and flag clusters on fullscreen
+  direct terminals) resolve the cluster-width policy. The flush-side cursor
+  reposition that consumes it lands with #441 (#449).
 - Opt-in `ratatui` feature (#470): `ContainerBuilder::ratatui(|area, buf| …)`
   and `ratatui_widget(widget)` render ratatui-core `Widget`s inside SLT
   containers, honouring scroll/clip geometry, wide graphemes and the parent

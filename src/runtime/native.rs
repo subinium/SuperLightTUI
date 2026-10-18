@@ -107,17 +107,6 @@ fn validate_inline_height(height: u32) -> io::Result<()> {
 }
 
 #[cfg(feature = "crossterm")]
-pub(super) fn set_terminal_title(title: &Option<String>) {
-    if let Some(title) = title {
-        use std::io::Write;
-        let title = sanitize_terminal_text(title);
-        let mut stdout = io::stdout();
-        let _ = write!(stdout, "\x1b]2;{title}\x07");
-        let _ = stdout.flush();
-    }
-}
-
-#[cfg(feature = "crossterm")]
 pub(crate) fn sanitize_terminal_text(input: &str) -> String {
     input
         .chars()
@@ -170,7 +159,7 @@ fn run_with_inner(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Res
         config.report_all_keys,
         color_depth,
     )?;
-    set_terminal_title(&config.title);
+    term.apply_run_config(&config);
     if config.theme.bg != Color::Reset {
         term.theme_bg = Some(config.theme.bg);
     }
@@ -347,7 +336,7 @@ fn run_inline_with_inner(
         config.report_all_keys,
         color_depth,
     )?;
-    set_terminal_title(&config.title);
+    term.apply_run_config(&config);
     if config.theme.bg != Color::Reset {
         term.theme_bg = Some(config.theme.bg);
     }
@@ -463,7 +452,7 @@ fn run_static_with_inner(
         color_depth,
     )?;
     term.write_scrollback(&output.drain_new())?;
-    set_terminal_title(&config.title);
+    term.apply_run_config(&config);
     if config.theme.bg != Color::Reset {
         term.theme_bg = Some(config.theme.bg);
     }

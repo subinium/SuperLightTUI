@@ -80,6 +80,12 @@ pub use async_tasks::{TaskHandle, TaskOutcome};
 mod helpers;
 pub(crate) use helpers::*;
 
+mod terminal_meta;
+pub use terminal_meta::{ClipboardStatus, CursorShape, ProgramState, ProgramStatus, Progress};
+#[cfg(feature = "crossterm")]
+pub(crate) use terminal_meta::{TerminalMeta, terminal_meta};
+pub(crate) use terminal_meta::store_clipboard_status;
+
 #[cfg(all(test, feature = "async"))]
 mod async_tasks_tests;
 

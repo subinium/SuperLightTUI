@@ -7,6 +7,8 @@ mod color;
 mod theme;
 #[cfg(feature = "serde")]
 mod theme_io;
+#[cfg(feature = "crossterm")]
+pub(crate) use color::effective_color_depth;
 pub use color::{Color, ColorDepth, ColorParseError};
 pub use theme::{Spacing, SyntaxPalette, Theme, ThemeBuilder, ThemeColor};
 #[cfg(feature = "theme-watch")]
