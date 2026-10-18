@@ -53,10 +53,13 @@ pub(super) fn flush_buffer_diff_rows(
     width_policy: WidthPolicy,
 ) -> io::Result<()> {
     // Run-coalescing: consecutive changed cells in the same row that share
-    // `Style` + `hyperlink` + contiguous x-coordinates are emitted as a single
-    // `Print(run)` after one cursor move and one style delta. This cuts the
-    // number of `queue!` calls on a full redraw from O(cells) to
-    // O(style-change boundaries), which is the dominant stdout write cost.
+    // `Style` + `hyperlink` + contiguous x-coordinates are emitted as one text
+    // run after one cursor move and one style delta, so a full redraw costs
+    // O(style-change boundaries) escape sequences rather than O(cells).
+    //
+    // The whole frame is assembled in `run_buf` (caller-owned and reused
+    // across frames, issue #269) and written with a single `write_all`
+    // (#495).
     //
     // A run is broken whenever:
     //   * style, hyperlink, or row changes,
@@ -74,9 +77,8 @@ pub(super) fn flush_buffer_diff_rows(
 
     // Active run state. `run_next_col` is the column the next cell must
     // occupy to extend the run; `run_open` guards the rest of the fields.
-    // `run_buf` is hoisted to a caller-owned, reused buffer (issue #269): its
-    // backing allocation persists across frames so the hot flush loop performs
-    // no per-frame `String` allocation. Start clean but keep capacity.
+    // `run_buf` keeps its capacity across frames, so the hot flush loop
+    // performs no per-frame allocation. Start clean but keep capacity.
     run_buf.clear();
     let mut run_abs_y: u32 = 0;
     let mut run_style: Style = Style::new();
@@ -84,16 +86,13 @@ pub(super) fn flush_buffer_diff_rows(
     let mut run_next_col: u32 = 0;
     let mut run_open = false;
 
-    // Helper: flush the currently open run, if any. Emits a single `Print`
-    // for the entire accumulated buffer; positioning, style, and OSC 8 were
-    // already written when the run opened. Updates `last_cursor` to reflect
-    // where the cursor ends up after the Print.
+    // Helper: close the currently open run, if any. Its text already follows
+    // the positioning, style and OSC 8 header in `run_buf`; record where the
+    // cursor ends up after it.
     macro_rules! flush_run {
         ($stdout:expr) => {
             if run_open {
-                queue!($stdout, Print(&run_buf))?;
                 last_cursor = Some((run_next_col, run_abs_y));
-                run_buf.clear();
                 run_open = false;
             }
         };
@@ -202,34 +201,30 @@ pub(super) fn flush_buffer_diff_rows(
                 let start_x = if uncertain { x.saturating_add(1) } else { x };
                 let need_move = last_cursor.is_none_or(|(lx, ly)| lx != start_x || ly != abs_y);
                 if need_move {
-                    queue!(stdout, cursor::MoveTo(sat_u16(start_x), sat_u16(abs_y)))?;
+                    push_move_to(run_buf, start_x, abs_y);
                 }
 
                 if cell.style != last_style {
                     if first_style {
-                        // One SGR reset (#489): crossterm's `ResetColor` and
-                        // `SetAttribute(Reset)` both encode `CSI 0m`, and only
-                        // `ResetColor` acts on the legacy WinAPI console.
-                        queue!(stdout, ResetColor)?;
-                        apply_style(stdout, &cell.style, color_depth)?;
+                        // One SGR reset (#489).
+                        run_buf.push_str("\x1b[0m");
+                        push_style(run_buf, &cell.style, color_depth);
                         first_style = false;
                     } else {
-                        apply_style_delta(stdout, &last_style, &cell.style, color_depth)?;
+                        push_style_delta(run_buf, &last_style, &cell.style, color_depth);
                     }
                     last_style = cell.style;
                 }
 
                 if cell_link != active_link {
                     if let Some(url) = cell_link {
-                        // Emit the OSC 8 open in three borrowed `Print`s instead
-                        // of `format!`ing a throwaway `String` per link-state
-                        // change (issue #269). The byte stream is identical to
-                        // `"\x1b]8;;{url}\x07"`.
-                        queue!(stdout, Print("\x1b]8;;"))?;
-                        queue!(stdout, Print(url))?;
-                        queue!(stdout, Print("\x07"))?;
+                        // `"\x1b]8;;{url}\x07"` without a per-change `format!`
+                        // (issue #269).
+                        run_buf.push_str("\x1b]8;;");
+                        run_buf.push_str(url);
+                        run_buf.push('\x07');
                     } else {
-                        queue!(stdout, Print("\x1b]8;;\x07"))?;
+                        run_buf.push_str("\x1b]8;;\x07");
                     }
                     active_link = cell_link;
                 }
@@ -240,13 +235,10 @@ pub(super) fn flush_buffer_diff_rows(
                     // two-column terminal overwrites the blanks, a one-column
                     // terminal keeps one as fill; neither leaves a stale glyph.
                     for _ in 1..char_width {
-                        queue!(stdout, Print(" "))?;
+                        run_buf.push(' ');
                     }
-                    queue!(
-                        stdout,
-                        cursor::MoveTo(sat_u16(x), sat_u16(abs_y)),
-                        Print(&*symbol)
-                    )?;
+                    push_move_to(run_buf, x, abs_y);
+                    run_buf.push_str(&symbol);
                     // The real cursor column is unknown: position the next cell
                     // explicitly.
                     last_cursor = None;
@@ -279,12 +271,15 @@ pub(super) fn flush_buffer_diff_rows(
 
     if has_updates {
         if active_link.is_some() {
-            queue!(stdout, Print("\x1b]8;;\x07"))?;
+            run_buf.push_str("\x1b]8;;\x07");
         }
         // Single end-of-frame SGR reset (#489).
-        queue!(stdout, ResetColor)?;
+        run_buf.push_str("\x1b[0m");
     }
 
+    if !run_buf.is_empty() {
+        stdout.write_all(run_buf.as_bytes())?;
+    }
     Ok(())
 }
 
@@ -320,90 +315,194 @@ pub(super) fn flush_cursor(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Hand-rolled escape writer (#495)
+//
+// The flush builds the whole frame into one reused `String` and hands it to
+// the sink with a single `write_all`. Cursor moves and SGR sequences are
+// formatted here with a small integer writer instead of crossterm `queue!`
+// commands, whose `Attribute::sgr` allocates a `String` per call and whose
+// `fmt` plumbing dominated full-redraw frames. The bytes are identical to
+// the crossterm encodings (`CSI {row+1};{col+1}H`, `CSI {sgr}m`); an oracle
+// test keeps the previous writer for comparison. Every legacy-console path
+// already received raw SGR colour bytes, so nothing relied on crossterm's
+// WinAPI fallback for these sequences.
+// ---------------------------------------------------------------------------
+
+/// SGR parameter codes, as crossterm's `Attribute::sgr` encodes them.
+mod sgr {
+    pub(super) const BOLD: u32 = 1;
+    pub(super) const DIM: u32 = 2;
+    pub(super) const ITALIC: u32 = 3;
+    pub(super) const UNDERLINED: u32 = 4;
+    pub(super) const SLOW_BLINK: u32 = 5;
+    pub(super) const REVERSE: u32 = 7;
+    pub(super) const CROSSED_OUT: u32 = 9;
+    pub(super) const NORMAL_INTENSITY: u32 = 22;
+    pub(super) const NO_ITALIC: u32 = 23;
+    pub(super) const NO_UNDERLINE: u32 = 24;
+    pub(super) const NO_BLINK: u32 = 25;
+    pub(super) const NO_REVERSE: u32 = 27;
+    pub(super) const NOT_CROSSED_OUT: u32 = 29;
+    pub(super) const OVER_LINED: u32 = 53;
+    pub(super) const NOT_OVER_LINED: u32 = 55;
+}
+
+/// Append the decimal digits of `value`.
+#[inline]
+fn push_uint(out: &mut String, mut value: u32) {
+    let mut digits = [0u8; 10];
+    let mut start = digits.len();
+    loop {
+        start -= 1;
+        digits[start] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    for &digit in &digits[start..] {
+        out.push(char::from(digit));
+    }
+}
+
+/// Append `CSI {row};{col}H` for 0-based `(x, y)`, clamped to the `u16`
+/// coordinates crossterm's `MoveTo` takes.
+#[inline]
+pub(super) fn push_move_to(out: &mut String, x: u32, y: u32) {
+    out.push_str("\x1b[");
+    push_uint(out, u32::from(sat_u16(y)) + 1);
+    out.push(';');
+    push_uint(out, u32::from(sat_u16(x)) + 1);
+    out.push('H');
+}
+
+/// Append `CSI {code}m`.
+#[inline]
+fn push_sgr(out: &mut String, code: u32) {
+    out.push_str("\x1b[");
+    push_uint(out, code);
+    out.push('m');
+}
+
+/// Append the SGR transition from `old` to `new`.
+pub(super) fn push_style_delta(out: &mut String, old: &Style, new: &Style, depth: ColorDepth) {
+    if old.fg != new.fg {
+        match new.fg {
+            Some(fg) => push_sgr_color(out, fg, depth, true),
+            None => out.push_str("\x1b[39m"),
+        }
+    }
+    if old.bg != new.bg {
+        match new.bg {
+            Some(bg) => push_sgr_color(out, bg, depth, false),
+            None => out.push_str("\x1b[49m"),
+        }
+    }
+    let removed = Modifiers(old.modifiers.0 & !new.modifiers.0);
+    let added = Modifiers(new.modifiers.0 & !old.modifiers.0);
+    if removed.contains(Modifiers::BOLD) || removed.contains(Modifiers::DIM) {
+        push_sgr(out, sgr::NORMAL_INTENSITY);
+        if new.modifiers.contains(Modifiers::BOLD) {
+            push_sgr(out, sgr::BOLD);
+        }
+        if new.modifiers.contains(Modifiers::DIM) {
+            push_sgr(out, sgr::DIM);
+        }
+    } else {
+        if added.contains(Modifiers::BOLD) {
+            push_sgr(out, sgr::BOLD);
+        }
+        if added.contains(Modifiers::DIM) {
+            push_sgr(out, sgr::DIM);
+        }
+    }
+    let toggles = [
+        (Modifiers::ITALIC, sgr::NO_ITALIC, sgr::ITALIC),
+        (Modifiers::UNDERLINE, sgr::NO_UNDERLINE, sgr::UNDERLINED),
+        (Modifiers::REVERSED, sgr::NO_REVERSE, sgr::REVERSE),
+        (
+            Modifiers::STRIKETHROUGH,
+            sgr::NOT_CROSSED_OUT,
+            sgr::CROSSED_OUT,
+        ),
+        (Modifiers::BLINK, sgr::NO_BLINK, sgr::SLOW_BLINK),
+        (Modifiers::OVERLINE, sgr::NOT_OVER_LINED, sgr::OVER_LINED),
+    ];
+    for (modifier, off, on) in toggles {
+        if removed.contains(modifier) {
+            push_sgr(out, off);
+        }
+        if added.contains(modifier) {
+            push_sgr(out, on);
+        }
+    }
+    // Underline style and color use raw escapes: crossterm cannot express
+    // the `CSI 4:Nm` subparameters or the `SGR 58`/`59` underline color
+    // reliably (its discriminants collide on these terminals).
+    if new.modifiers.contains(Modifiers::UNDERLINE)
+        && (old.underline_style != new.underline_style || added.contains(Modifiers::UNDERLINE))
+    {
+        push_underline_style(out, new.underline_style);
+    }
+    if old.underline_color != new.underline_color {
+        push_underline_color(out, new.underline_color, depth);
+    }
+}
+
+/// Append the full SGR sequence for `style` from a reset state.
+pub(super) fn push_style(out: &mut String, style: &Style, depth: ColorDepth) {
+    if let Some(fg) = style.fg {
+        push_sgr_color(out, fg, depth, true);
+    }
+    if let Some(bg) = style.bg {
+        push_sgr_color(out, bg, depth, false);
+    }
+    let m = style.modifiers;
+    let attributes = [
+        (Modifiers::BOLD, sgr::BOLD),
+        (Modifiers::DIM, sgr::DIM),
+        (Modifiers::ITALIC, sgr::ITALIC),
+        (Modifiers::UNDERLINE, sgr::UNDERLINED),
+        (Modifiers::REVERSED, sgr::REVERSE),
+        (Modifiers::STRIKETHROUGH, sgr::CROSSED_OUT),
+        (Modifiers::BLINK, sgr::SLOW_BLINK),
+        (Modifiers::OVERLINE, sgr::OVER_LINED),
+    ];
+    for (modifier, code) in attributes {
+        if m.contains(modifier) {
+            push_sgr(out, code);
+        }
+    }
+    if style.modifiers.contains(Modifiers::UNDERLINE)
+        && style.underline_style != UnderlineStyle::Straight
+    {
+        push_underline_style(out, style.underline_style);
+    }
+    if style.underline_color.is_some() {
+        push_underline_color(out, style.underline_color, depth);
+    }
+}
+
+/// Write the SGR transition from `old` to `new` to `w`.
+#[cfg(test)]
 pub(super) fn apply_style_delta(
     w: &mut impl Write,
     old: &Style,
     new: &Style,
     depth: ColorDepth,
 ) -> io::Result<()> {
-    if old.fg != new.fg {
-        match new.fg {
-            Some(fg) => emit_fg_color(w, fg, depth)?,
-            None => write!(w, "\x1b[39m")?,
-        }
-    }
-    if old.bg != new.bg {
-        match new.bg {
-            Some(bg) => emit_bg_color(w, bg, depth)?,
-            None => write!(w, "\x1b[49m")?,
-        }
-    }
-    let removed = Modifiers(old.modifiers.0 & !new.modifiers.0);
-    let added = Modifiers(new.modifiers.0 & !old.modifiers.0);
-    if removed.contains(Modifiers::BOLD) || removed.contains(Modifiers::DIM) {
-        queue!(w, SetAttribute(Attribute::NormalIntensity))?;
-        if new.modifiers.contains(Modifiers::BOLD) {
-            queue!(w, SetAttribute(Attribute::Bold))?;
-        }
-        if new.modifiers.contains(Modifiers::DIM) {
-            queue!(w, SetAttribute(Attribute::Dim))?;
-        }
-    } else {
-        if added.contains(Modifiers::BOLD) {
-            queue!(w, SetAttribute(Attribute::Bold))?;
-        }
-        if added.contains(Modifiers::DIM) {
-            queue!(w, SetAttribute(Attribute::Dim))?;
-        }
-    }
-    if removed.contains(Modifiers::ITALIC) {
-        queue!(w, SetAttribute(Attribute::NoItalic))?;
-    }
-    if added.contains(Modifiers::ITALIC) {
-        queue!(w, SetAttribute(Attribute::Italic))?;
-    }
-    if removed.contains(Modifiers::UNDERLINE) {
-        queue!(w, SetAttribute(Attribute::NoUnderline))?;
-    }
-    if added.contains(Modifiers::UNDERLINE) {
-        queue!(w, SetAttribute(Attribute::Underlined))?;
-    }
-    if removed.contains(Modifiers::REVERSED) {
-        queue!(w, SetAttribute(Attribute::NoReverse))?;
-    }
-    if added.contains(Modifiers::REVERSED) {
-        queue!(w, SetAttribute(Attribute::Reverse))?;
-    }
-    if removed.contains(Modifiers::STRIKETHROUGH) {
-        queue!(w, SetAttribute(Attribute::NotCrossedOut))?;
-    }
-    if added.contains(Modifiers::STRIKETHROUGH) {
-        queue!(w, SetAttribute(Attribute::CrossedOut))?;
-    }
-    if removed.contains(Modifiers::BLINK) {
-        queue!(w, SetAttribute(Attribute::NoBlink))?;
-    }
-    if added.contains(Modifiers::BLINK) {
-        queue!(w, SetAttribute(Attribute::SlowBlink))?;
-    }
-    if removed.contains(Modifiers::OVERLINE) {
-        queue!(w, SetAttribute(Attribute::NotOverLined))?;
-    }
-    if added.contains(Modifiers::OVERLINE) {
-        queue!(w, SetAttribute(Attribute::OverLined))?;
-    }
-    // Underline style and color use raw escapes: crossterm 0.29 cannot
-    // express the `CSI 4:Nm` subparameters or the `SGR 58`/`59` underline
-    // color reliably (its discriminants collide on these terminals).
-    if new.modifiers.contains(Modifiers::UNDERLINE)
-        && (old.underline_style != new.underline_style || added.contains(Modifiers::UNDERLINE))
-    {
-        write!(w, "\x1b[4:{}m", underline_style_param(new.underline_style))?;
-    }
-    if old.underline_color != new.underline_color {
-        emit_underline_color(w, new.underline_color, depth)?;
-    }
-    Ok(())
+    let mut out = String::new();
+    push_style_delta(&mut out, old, new, depth);
+    w.write_all(out.as_bytes())
+}
+
+/// Write the full SGR sequence for `style` to `w`.
+#[cfg(test)]
+pub(super) fn apply_style(w: &mut impl Write, style: &Style, depth: ColorDepth) -> io::Result<()> {
+    let mut out = String::new();
+    push_style(&mut out, style, depth);
+    w.write_all(out.as_bytes())
 }
 
 /// Map an [`UnderlineStyle`] to its `CSI 4:Nm` subparameter value.
@@ -417,114 +516,76 @@ pub(super) fn underline_style_param(style: UnderlineStyle) -> u8 {
     }
 }
 
-/// Emit the raw `SGR 58` underline-color sequence (or `SGR 59` to reset).
+/// Append `CSI 4:{n}m` for `style`.
+fn push_underline_style(out: &mut String, style: UnderlineStyle) {
+    out.push_str("\x1b[4:");
+    push_uint(out, u32::from(underline_style_param(style)));
+    out.push('m');
+}
+
+/// Append the raw `SGR 58` underline-color sequence (or `SGR 59` to reset).
 ///
 /// `None` resets the underline color to the foreground (`\x1b[59m`). Otherwise
 /// the color is downsampled to the terminal's depth: true-color emits
 /// `\x1b[58:2::r:g:bm`, while indexed/named colors emit `\x1b[58:5:im`.
-fn emit_underline_color(
-    w: &mut impl Write,
-    color: Option<Color>,
-    depth: ColorDepth,
-) -> io::Result<()> {
+fn push_underline_color(out: &mut String, color: Option<Color>, depth: ColorDepth) {
+    let rgb = |out: &mut String, (r, g, b): (u8, u8, u8)| {
+        out.push_str("\x1b[58:2::");
+        push_uint(out, u32::from(r));
+        out.push(':');
+        push_uint(out, u32::from(g));
+        out.push(':');
+        push_uint(out, u32::from(b));
+        out.push('m');
+    };
     match color {
-        None => write!(w, "\x1b[59m"),
+        None => out.push_str("\x1b[59m"),
         Some(c) => match c.downsampled(depth) {
-            Color::Reset => write!(w, "\x1b[59m"),
-            Color::Rgb(r, g, b) => write!(w, "\x1b[58:2::{r}:{g}:{b}m"),
-            Color::Indexed(i) => write!(w, "\x1b[58:5:{i}m"),
+            Color::Reset => out.push_str("\x1b[59m"),
+            Color::Rgb(r, g, b) => rgb(out, (r, g, b)),
+            Color::Indexed(i) => {
+                out.push_str("\x1b[58:5:");
+                push_uint(out, u32::from(i));
+                out.push('m');
+            }
             // Named colors have no direct SGR-58 form; resolve them to their
             // RGB equivalent and emit a true-color underline sequence.
-            named => {
-                let (r, g, b) = named.to_rgb();
-                write!(w, "\x1b[58:2::{r}:{g}:{b}m")
-            }
+            named => rgb(out, named.to_rgb()),
         },
     }
 }
 
-pub(super) fn apply_style(w: &mut impl Write, style: &Style, depth: ColorDepth) -> io::Result<()> {
-    if let Some(fg) = style.fg {
-        emit_fg_color(w, fg, depth)?;
-    }
-    if let Some(bg) = style.bg {
-        emit_bg_color(w, bg, depth)?;
-    }
-    let m = style.modifiers;
-    if m.contains(Modifiers::BOLD) {
-        queue!(w, SetAttribute(Attribute::Bold))?;
-    }
-    if m.contains(Modifiers::DIM) {
-        queue!(w, SetAttribute(Attribute::Dim))?;
-    }
-    if m.contains(Modifiers::ITALIC) {
-        queue!(w, SetAttribute(Attribute::Italic))?;
-    }
-    if m.contains(Modifiers::UNDERLINE) {
-        queue!(w, SetAttribute(Attribute::Underlined))?;
-    }
-    if m.contains(Modifiers::REVERSED) {
-        queue!(w, SetAttribute(Attribute::Reverse))?;
-    }
-    if m.contains(Modifiers::STRIKETHROUGH) {
-        queue!(w, SetAttribute(Attribute::CrossedOut))?;
-    }
-    if m.contains(Modifiers::BLINK) {
-        queue!(w, SetAttribute(Attribute::SlowBlink))?;
-    }
-    if m.contains(Modifiers::OVERLINE) {
-        queue!(w, SetAttribute(Attribute::OverLined))?;
-    }
-    if style.modifiers.contains(Modifiers::UNDERLINE)
-        && style.underline_style != UnderlineStyle::Straight
-    {
-        write!(
-            w,
-            "\x1b[4:{}m",
-            underline_style_param(style.underline_style)
-        )?;
-    }
-    if style.underline_color.is_some() {
-        emit_underline_color(w, style.underline_color, depth)?;
-    }
-    Ok(())
-}
-
-fn emit_fg_color(w: &mut impl Write, color: Color, depth: ColorDepth) -> io::Result<()> {
-    emit_sgr_color(w, color, depth, true)
-}
-
-fn emit_bg_color(w: &mut impl Write, color: Color, depth: ColorDepth) -> io::Result<()> {
-    emit_sgr_color(w, color, depth, false)
-}
-
-fn emit_sgr_color(
-    w: &mut impl Write,
-    color: Color,
-    depth: ColorDepth,
-    foreground: bool,
-) -> io::Result<()> {
+/// Append the SGR sequence selecting `color` as foreground or background.
+fn push_sgr_color(out: &mut String, color: Color, depth: ColorDepth, foreground: bool) {
     match color.downsampled(depth) {
-        Color::Reset => {
-            let reset = if foreground { 39 } else { 49 };
-            write!(w, "\x1b[{reset}m")
-        }
+        Color::Reset => push_sgr(out, if foreground { 39 } else { 49 }),
         Color::Rgb(r, g, b) => {
-            let channel = if foreground { 38 } else { 48 };
-            write!(w, "\x1b[{channel};2;{r};{g};{b}m")
+            out.push_str(if foreground {
+                "\x1b[38;2;"
+            } else {
+                "\x1b[48;2;"
+            });
+            push_uint(out, u32::from(r));
+            out.push(';');
+            push_uint(out, u32::from(g));
+            out.push(';');
+            push_uint(out, u32::from(b));
+            out.push('m');
         }
         Color::Indexed(i) => {
-            let channel = if foreground { 38 } else { 48 };
-            write!(w, "\x1b[{channel};5;{i}m")
+            out.push_str(if foreground {
+                "\x1b[38;5;"
+            } else {
+                "\x1b[48;5;"
+            });
+            push_uint(out, u32::from(i));
+            out.push('m');
         }
-        named => {
-            let code = named_sgr_code(named, foreground);
-            write!(w, "\x1b[{code}m")
-        }
+        named => push_sgr(out, u32::from(named_sgr_code(named, foreground))),
     }
 }
 
-fn named_sgr_code(color: Color, foreground: bool) -> u8 {
+pub(super) fn named_sgr_code(color: Color, foreground: bool) -> u8 {
     let dark_base = if foreground { 30 } else { 40 };
     let bright_base = if foreground { 90 } else { 100 };
     match color {

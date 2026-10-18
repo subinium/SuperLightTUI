@@ -4,11 +4,217 @@
 
 use super::*;
 
+/// The SGR writer before #495, built on crossterm `queue!` commands and
+/// `write!` formatting. `push_style` / `push_style_delta` and the flush must
+/// stay byte-identical to it.
+mod old_writer {
+    use super::*;
+
+    pub(super) fn apply_style_delta(
+        w: &mut impl Write,
+        old: &Style,
+        new: &Style,
+        depth: ColorDepth,
+    ) -> io::Result<()> {
+        if old.fg != new.fg {
+            match new.fg {
+                Some(fg) => emit_fg_color(w, fg, depth)?,
+                None => write!(w, "\x1b[39m")?,
+            }
+        }
+        if old.bg != new.bg {
+            match new.bg {
+                Some(bg) => emit_bg_color(w, bg, depth)?,
+                None => write!(w, "\x1b[49m")?,
+            }
+        }
+        let removed = Modifiers(old.modifiers.0 & !new.modifiers.0);
+        let added = Modifiers(new.modifiers.0 & !old.modifiers.0);
+        if removed.contains(Modifiers::BOLD) || removed.contains(Modifiers::DIM) {
+            queue!(w, SetAttribute(Attribute::NormalIntensity))?;
+            if new.modifiers.contains(Modifiers::BOLD) {
+                queue!(w, SetAttribute(Attribute::Bold))?;
+            }
+            if new.modifiers.contains(Modifiers::DIM) {
+                queue!(w, SetAttribute(Attribute::Dim))?;
+            }
+        } else {
+            if added.contains(Modifiers::BOLD) {
+                queue!(w, SetAttribute(Attribute::Bold))?;
+            }
+            if added.contains(Modifiers::DIM) {
+                queue!(w, SetAttribute(Attribute::Dim))?;
+            }
+        }
+        if removed.contains(Modifiers::ITALIC) {
+            queue!(w, SetAttribute(Attribute::NoItalic))?;
+        }
+        if added.contains(Modifiers::ITALIC) {
+            queue!(w, SetAttribute(Attribute::Italic))?;
+        }
+        if removed.contains(Modifiers::UNDERLINE) {
+            queue!(w, SetAttribute(Attribute::NoUnderline))?;
+        }
+        if added.contains(Modifiers::UNDERLINE) {
+            queue!(w, SetAttribute(Attribute::Underlined))?;
+        }
+        if removed.contains(Modifiers::REVERSED) {
+            queue!(w, SetAttribute(Attribute::NoReverse))?;
+        }
+        if added.contains(Modifiers::REVERSED) {
+            queue!(w, SetAttribute(Attribute::Reverse))?;
+        }
+        if removed.contains(Modifiers::STRIKETHROUGH) {
+            queue!(w, SetAttribute(Attribute::NotCrossedOut))?;
+        }
+        if added.contains(Modifiers::STRIKETHROUGH) {
+            queue!(w, SetAttribute(Attribute::CrossedOut))?;
+        }
+        if removed.contains(Modifiers::BLINK) {
+            queue!(w, SetAttribute(Attribute::NoBlink))?;
+        }
+        if added.contains(Modifiers::BLINK) {
+            queue!(w, SetAttribute(Attribute::SlowBlink))?;
+        }
+        if removed.contains(Modifiers::OVERLINE) {
+            queue!(w, SetAttribute(Attribute::NotOverLined))?;
+        }
+        if added.contains(Modifiers::OVERLINE) {
+            queue!(w, SetAttribute(Attribute::OverLined))?;
+        }
+        // Underline style and color use raw escapes: crossterm 0.29 cannot
+        // express the `CSI 4:Nm` subparameters or the `SGR 58`/`59` underline
+        // color reliably (its discriminants collide on these terminals).
+        if new.modifiers.contains(Modifiers::UNDERLINE)
+            && (old.underline_style != new.underline_style || added.contains(Modifiers::UNDERLINE))
+        {
+            write!(w, "\x1b[4:{}m", underline_style_param(new.underline_style))?;
+        }
+        if old.underline_color != new.underline_color {
+            emit_underline_color(w, new.underline_color, depth)?;
+        }
+        Ok(())
+    }
+
+    /// Emit the raw `SGR 58` underline-color sequence (or `SGR 59` to reset).
+    ///
+    /// `None` resets the underline color to the foreground (`\x1b[59m`). Otherwise
+    /// the color is downsampled to the terminal's depth: true-color emits
+    /// `\x1b[58:2::r:g:bm`, while indexed/named colors emit `\x1b[58:5:im`.
+    fn emit_underline_color(
+        w: &mut impl Write,
+        color: Option<Color>,
+        depth: ColorDepth,
+    ) -> io::Result<()> {
+        match color {
+            None => write!(w, "\x1b[59m"),
+            Some(c) => match c.downsampled(depth) {
+                Color::Reset => write!(w, "\x1b[59m"),
+                Color::Rgb(r, g, b) => write!(w, "\x1b[58:2::{r}:{g}:{b}m"),
+                Color::Indexed(i) => write!(w, "\x1b[58:5:{i}m"),
+                // Named colors have no direct SGR-58 form; resolve them to their
+                // RGB equivalent and emit a true-color underline sequence.
+                named => {
+                    let (r, g, b) = named.to_rgb();
+                    write!(w, "\x1b[58:2::{r}:{g}:{b}m")
+                }
+            },
+        }
+    }
+
+    pub(super) fn apply_style(
+        w: &mut impl Write,
+        style: &Style,
+        depth: ColorDepth,
+    ) -> io::Result<()> {
+        if let Some(fg) = style.fg {
+            emit_fg_color(w, fg, depth)?;
+        }
+        if let Some(bg) = style.bg {
+            emit_bg_color(w, bg, depth)?;
+        }
+        let m = style.modifiers;
+        if m.contains(Modifiers::BOLD) {
+            queue!(w, SetAttribute(Attribute::Bold))?;
+        }
+        if m.contains(Modifiers::DIM) {
+            queue!(w, SetAttribute(Attribute::Dim))?;
+        }
+        if m.contains(Modifiers::ITALIC) {
+            queue!(w, SetAttribute(Attribute::Italic))?;
+        }
+        if m.contains(Modifiers::UNDERLINE) {
+            queue!(w, SetAttribute(Attribute::Underlined))?;
+        }
+        if m.contains(Modifiers::REVERSED) {
+            queue!(w, SetAttribute(Attribute::Reverse))?;
+        }
+        if m.contains(Modifiers::STRIKETHROUGH) {
+            queue!(w, SetAttribute(Attribute::CrossedOut))?;
+        }
+        if m.contains(Modifiers::BLINK) {
+            queue!(w, SetAttribute(Attribute::SlowBlink))?;
+        }
+        if m.contains(Modifiers::OVERLINE) {
+            queue!(w, SetAttribute(Attribute::OverLined))?;
+        }
+        if style.modifiers.contains(Modifiers::UNDERLINE)
+            && style.underline_style != UnderlineStyle::Straight
+        {
+            write!(
+                w,
+                "\x1b[4:{}m",
+                underline_style_param(style.underline_style)
+            )?;
+        }
+        if style.underline_color.is_some() {
+            emit_underline_color(w, style.underline_color, depth)?;
+        }
+        Ok(())
+    }
+
+    fn emit_fg_color(w: &mut impl Write, color: Color, depth: ColorDepth) -> io::Result<()> {
+        emit_sgr_color(w, color, depth, true)
+    }
+
+    fn emit_bg_color(w: &mut impl Write, color: Color, depth: ColorDepth) -> io::Result<()> {
+        emit_sgr_color(w, color, depth, false)
+    }
+
+    fn emit_sgr_color(
+        w: &mut impl Write,
+        color: Color,
+        depth: ColorDepth,
+        foreground: bool,
+    ) -> io::Result<()> {
+        match color.downsampled(depth) {
+            Color::Reset => {
+                let reset = if foreground { 39 } else { 49 };
+                write!(w, "\x1b[{reset}m")
+            }
+            Color::Rgb(r, g, b) => {
+                let channel = if foreground { 38 } else { 48 };
+                write!(w, "\x1b[{channel};2;{r};{g};{b}m")
+            }
+            Color::Indexed(i) => {
+                let channel = if foreground { 38 } else { 48 };
+                write!(w, "\x1b[{channel};5;{i}m")
+            }
+            named => {
+                let code = named_sgr_code(named, foreground);
+                write!(w, "\x1b[{code}m")
+            }
+        }
+    }
+}
+
 /// Reference copy of `flush_buffer_diff_rows` before #486, minus its row
 /// hash skip: every cell of every row is compared and normalized. It shares
 /// one rule added with #486: a leading cell whose continuation cells changed
 /// is redrawn, the single SGR reset per frame site from #489, and the #441
-/// emoji-cluster repositioning plus #449 conservative repositioning.
+/// emoji-cluster repositioning plus #449 conservative repositioning. It still
+/// writes through crossterm `queue!` and the [`old_writer`] SGR encoder, so the
+/// differential test also proves the #495 hand-rolled writer byte-identical.
 #[allow(unused_assignments)]
 fn reference_flush_rows(
     stdout: &mut impl Write,
@@ -126,10 +332,15 @@ fn reference_flush_rows(
                 if cell.style != last_style {
                     if first_style {
                         queue!(stdout, ResetColor)?;
-                        apply_style(stdout, &cell.style, color_depth)?;
+                        old_writer::apply_style(stdout, &cell.style, color_depth)?;
                         first_style = false;
                     } else {
-                        apply_style_delta(stdout, &last_style, &cell.style, color_depth)?;
+                        old_writer::apply_style_delta(
+                            stdout,
+                            &last_style,
+                            &cell.style,
+                            color_depth,
+                        )?;
                     }
                     last_style = cell.style;
                 }
@@ -411,5 +622,108 @@ mod differential {
         .unwrap();
         let text = String::from_utf8_lossy(&forced);
         assert!(text.contains("abc") && !text.contains("link"), "{text:?}");
+    }
+}
+
+mod writer_equivalence {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn color() -> impl Strategy<Value = Color> {
+        prop_oneof![
+            Just(Color::Reset),
+            prop::sample::select(vec![
+                Color::Black,
+                Color::Red,
+                Color::Green,
+                Color::Yellow,
+                Color::Blue,
+                Color::Magenta,
+                Color::Cyan,
+                Color::White,
+                Color::DarkGray,
+                Color::LightRed,
+                Color::LightGreen,
+                Color::LightYellow,
+                Color::LightBlue,
+                Color::LightMagenta,
+                Color::LightCyan,
+                Color::LightWhite,
+            ]),
+            (any::<u8>(), any::<u8>(), any::<u8>()).prop_map(|(r, g, b)| Color::Rgb(r, g, b)),
+            any::<u8>().prop_map(Color::Indexed),
+        ]
+    }
+
+    fn style() -> impl Strategy<Value = Style> {
+        (
+            prop::option::of(color()),
+            prop::option::of(color()),
+            any::<u8>(),
+            prop::option::of(color()),
+            prop::sample::select(vec![
+                UnderlineStyle::Straight,
+                UnderlineStyle::Double,
+                UnderlineStyle::Curly,
+                UnderlineStyle::Dotted,
+                UnderlineStyle::Dashed,
+            ]),
+        )
+            .prop_map(
+                |(fg, bg, modifiers, underline_color, underline_style)| Style {
+                    fg,
+                    bg,
+                    modifiers: Modifiers(modifiers),
+                    underline_color,
+                    underline_style,
+                },
+            )
+    }
+
+    fn depth() -> impl Strategy<Value = ColorDepth> {
+        prop::sample::select(vec![
+            ColorDepth::TrueColor,
+            ColorDepth::EightBit,
+            ColorDepth::Basic,
+            ColorDepth::NoColor,
+        ])
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(4096))]
+
+        #[test]
+        fn style_writer_matches_crossterm_writer(old in style(), new in style(), depth in depth()) {
+            let mut expected = Vec::new();
+            old_writer::apply_style(&mut expected, &new, depth).unwrap();
+            let mut actual = String::new();
+            push_style(&mut actual, &new, depth);
+            prop_assert_eq!(actual.as_bytes(), expected.as_slice());
+
+            let mut expected = Vec::new();
+            old_writer::apply_style_delta(&mut expected, &old, &new, depth).unwrap();
+            let mut actual = String::new();
+            push_style_delta(&mut actual, &old, &new, depth);
+            prop_assert_eq!(actual.as_bytes(), expected.as_slice());
+        }
+
+        #[test]
+        fn move_to_matches_crossterm(x in 0u32..70_000, y in 0u32..70_000) {
+            // crossterm adds one in u16 arithmetic, so its encoding is only
+            // defined below u16::MAX; both clamp the input with `sat_u16`.
+            prop_assume!(x < u32::from(u16::MAX) && y < u32::from(u16::MAX));
+            let mut expected = Vec::new();
+            queue!(expected, cursor::MoveTo(sat_u16(x), sat_u16(y))).unwrap();
+            let mut actual = String::new();
+            push_move_to(&mut actual, x, y);
+            prop_assert_eq!(actual.as_bytes(), expected.as_slice());
+        }
+    }
+
+    #[test]
+    fn move_to_clamps_at_the_u16_edge() {
+        let mut out = String::new();
+        push_move_to(&mut out, u32::MAX, 0);
+        assert_eq!(out, "\x1b[1;65536H");
     }
 }

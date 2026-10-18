@@ -259,6 +259,7 @@ impl Cell {
     /// returned as-is; anything else is defensively re-normalized because
     /// `symbol` is a public field. Equal to [`Cell::normalized_symbol`].
     #[inline]
+    #[cfg_attr(not(feature = "crossterm"), allow(dead_code))]
     pub(crate) fn emit_symbol(&self) -> std::borrow::Cow<'_, str> {
         let symbol = self.symbol.as_str();
         let bytes = symbol.as_bytes();
