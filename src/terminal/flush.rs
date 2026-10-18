@@ -246,7 +246,7 @@ pub(super) fn flush_buffer_diff_rows(
                         run_buf.push(' ');
                     }
                     push_move_to(run_buf, x, abs_y);
-                    run_buf.push_str(&symbol);
+                    push_symbol(run_buf, &symbol, width_policy.text_presentation);
                     // The real cursor column is unknown: position the next cell
                     // explicitly.
                     last_cursor = None;
@@ -262,7 +262,7 @@ pub(super) fn flush_buffer_diff_rows(
             // Append the cell's grapheme cluster (possibly multi-char when it
             // carries combining marks). Wide chars advance by their column
             // width so subsequent cells line up.
-            run_buf.push_str(&symbol);
+            push_symbol(run_buf, &symbol, width_policy.text_presentation);
             run_next_col = x + char_width;
             // #449 conservative mode: after any width-uncertain cluster the
             // next cell is positioned explicitly instead of trusting the
@@ -289,6 +289,22 @@ pub(super) fn flush_buffer_diff_rows(
         stdout.write_all(run_buf.as_bytes())?;
     }
     Ok(has_updates)
+}
+
+/// Append `symbol`, without U+FE0F under the tmux < 3.5 VS16 fallback
+/// ([`WidthPolicy::text_presentation`]). A cluster that is nothing but
+/// selectors still paints its cell, so the cursor advance stays one column.
+#[inline]
+fn push_symbol(run_buf: &mut String, symbol: &str, text_presentation: bool) {
+    if text_presentation && symbol.contains('\u{FE0F}') {
+        let start = run_buf.len();
+        run_buf.extend(symbol.chars().filter(|&ch| ch != '\u{FE0F}'));
+        if run_buf.len() == start {
+            run_buf.push(' ');
+        }
+    } else {
+        run_buf.push_str(symbol);
+    }
 }
 
 pub(super) fn flush_cursor(

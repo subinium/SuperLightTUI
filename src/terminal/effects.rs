@@ -423,6 +423,12 @@ pub(crate) struct WidthPolicy {
     pub(crate) conservative: bool,
     /// Classes the startup width probe measured differently from SLT.
     pub(crate) mismatched: ClusterClasses,
+    /// Emit clusters without U+FE0F (text presentation). tmux before 3.5
+    /// widens a VS16 cluster but marks the padding cell one column too far
+    /// right (fixed upstream by tmux 89c1c43 "Write padding character into
+    /// the right position"), so the pane keeps a stray cell after the emoji
+    /// and every redraw shifts the rest of the row (#441).
+    pub(crate) text_presentation: bool,
 }
 
 impl WidthPolicy {
@@ -438,7 +444,15 @@ impl WidthPolicy {
         Self {
             conservative,
             mismatched,
+            text_presentation: false,
         }
+    }
+
+    /// Turn on the tmux < 3.5 VS16 fallback when conservative mode is on
+    /// and the innermost multiplexer is `affected`.
+    pub(super) fn with_tmux_vs16_fallback(mut self, affected: bool) -> Self {
+        self.text_presentation = self.conservative && affected;
+        self
     }
 
     /// Whether the flush must position the cursor explicitly for the cell
@@ -570,7 +584,8 @@ impl TerminalEffects {
             meta: MetaEmitter::new(true),
             policy: detect_meta_policy(),
             multiplexer,
-            width: WidthPolicy::resolve(None, multiplexer, None),
+            width: WidthPolicy::resolve(None, multiplexer, None)
+                .with_tmux_vs16_fallback(tmux_vs16_padding_bug(multiplexer)),
         }
     }
 
@@ -600,7 +615,8 @@ impl TerminalEffects {
             .then(run_width_probe)
             .flatten();
         self.width =
-            WidthPolicy::resolve(config.width_conservative, self.multiplexer, probe.as_ref());
+            WidthPolicy::resolve(config.width_conservative, self.multiplexer, probe.as_ref())
+                .with_tmux_vs16_fallback(tmux_vs16_padding_bug(self.multiplexer));
     }
 
     /// Take the staged frame effects and emit metadata into `w`. Returns the

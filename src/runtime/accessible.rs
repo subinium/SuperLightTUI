@@ -19,10 +19,8 @@
 //! - focus then moves to the next answerable widget, so a form is completed
 //!   field by field.
 //!
-//! The visual runtimes never set [`FrameState::accessible`], so widgets pay a
-//! single `bool` check per call there. Widgets record nodes in every build;
-//! the linearizer and prompt session that consume them are compiled only with
-//! the `crossterm` runtime (and in tests).
+//! The visual runtimes never set [`FrameState::accessible`](super::FrameState::accessible), so widgets pay a
+//! single `bool` check per call there.
 
 #[cfg(any(feature = "crossterm", test))]
 use std::io;
@@ -79,8 +77,8 @@ pub(crate) enum A11yRole {
     Button,
 }
 
+#[cfg(any(feature = "crossterm", test))]
 impl A11yRole {
-    #[cfg(any(feature = "crossterm", test))]
     fn name(self) -> &'static str {
         match self {
             Self::TextField => "text field",
@@ -98,14 +96,14 @@ impl A11yRole {
 }
 
 /// An answer read from a prompt, applied by the widget on the next frame.
-#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(
     not(any(feature = "crossterm", test)),
     expect(
         dead_code,
-        reason = "read only by the accessible session, which needs the crossterm runtime"
+        reason = "only the native accessible session constructs answers"
     )
 )]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum A11yAnswer {
     /// Replace a text value and submit it.
     Text(String),
@@ -122,14 +120,14 @@ pub(crate) enum A11yAnswer {
 }
 
 /// What a widget reports about itself.
-#[derive(Debug, Clone, Default)]
 #[cfg_attr(
     not(any(feature = "crossterm", test)),
     expect(
         dead_code,
-        reason = "read only by the accessible session, which needs the crossterm runtime"
+        reason = "widgets record this everywhere; only the native accessible session reads it"
     )
 )]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct A11yInfo {
     /// Widget-intrinsic name (checkbox / button label, confirm question).
     pub label: Option<String>,
@@ -144,14 +142,14 @@ pub(crate) struct A11yInfo {
 }
 
 /// One interactive widget recorded during a frame.
-#[derive(Debug, Clone)]
 #[cfg_attr(
     not(any(feature = "crossterm", test)),
     expect(
         dead_code,
-        reason = "read only by the accessible session, which needs the crossterm runtime"
+        reason = "widgets record this everywhere; only the native accessible session reads it"
     )
 )]
+#[derive(Debug, Clone)]
 pub(crate) struct A11yNode {
     pub role: A11yRole,
     /// Focus slot, `None` when focus is suppressed (outside an open modal).
