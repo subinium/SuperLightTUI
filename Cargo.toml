@@ -1,6 +1,8 @@
 [workspace]
 members = [".", "crates/slt-wasm"]
 default-members = [".", "crates/slt-wasm"]
+# Standalone comparison benchmark with its own lockfile (issue #482).
+exclude = ["bench/ratatui-compare"]
 
 # Shared lint configuration applied to every workspace member via
 # `[lints] workspace = true`. NOTE: `[lints]` is package-scoped, so these
