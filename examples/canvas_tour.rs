@@ -878,7 +878,6 @@ fn main() -> std::io::Result<()> {
     let mut state = TourState::default();
     slt::run_with(
         RunConfig::default()
-            .mouse(true)
             .tick_rate(Duration::from_millis(33))
             .max_fps(60),
         move |ui: &mut Context| {

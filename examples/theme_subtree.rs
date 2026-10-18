@@ -37,7 +37,7 @@ pub fn theme_bench() -> [(&'static str, Theme); 4] {
 }
 
 fn main() -> std::io::Result<()> {
-    slt::run_with(RunConfig::default().mouse(true), render)
+    slt::run_with(RunConfig::default(), render)
 }
 
 /// Render one frame of the theme-subtree demo.

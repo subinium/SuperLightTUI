@@ -12,7 +12,6 @@ fn main() -> std::io::Result<()> {
 
     let config = RunConfig::default()
         .tick_rate(Duration::from_millis(33))
-        .mouse(true)
         .kitty_keyboard(kitty)
         .max_fps(30);
 

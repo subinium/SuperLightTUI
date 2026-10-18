@@ -101,7 +101,7 @@ impl Default for TourState {
 
 fn main() -> std::io::Result<()> {
     let mut state = TourState::default();
-    slt::run_with(RunConfig::default().mouse(true), move |ui: &mut Context| {
+    slt::run_with(RunConfig::default(), move |ui: &mut Context| {
         // Tour-level quit: Ctrl-Q always at the top of the frame. We do
         // NOT consume Esc here so embedded demos can use it for their
         // own escape paths (e.g. `demo_website` clears `blog_view` on
