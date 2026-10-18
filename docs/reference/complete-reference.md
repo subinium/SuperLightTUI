@@ -4,19 +4,14 @@
 
 ### Example classification
 
-Named `slt-check` fences below are maintained compile contracts. Run
-`python3 scripts/check_doc_examples.py --toolchain 1.98.1` to compile their
-actual Markdown source with the declared features and imports. The checker
-does not execute terminal runtimes. `context: ui` supplies `&mut Context`;
-`context: module` checks a complete program as a module.
-
-Other Rust fences are **illustrative fragments**, not independently compiled
-programs: they may omit application state, imports, helper implementations,
-or surrounding control flow. API tables and text diagrams are not executable.
-The checker reports this classification instead of treating every Markdown
-fence as a standalone crate. New maintained recipes must have a unique marker.
-
-<!-- slt-check-default: illustrative fragments require application context -->
+Every Rust fence below is a maintained `slt-check` compile contract. Run
+`python3 scripts/check_doc_examples.py docs/reference/complete-reference.md`
+to compile the actual Markdown source with the declared features, with warnings
+denied. The checker does not execute terminal runtimes. `context: ui` supplies
+`&mut Context` (plus any short `setup` the marker declares for app variables);
+`context: module` checks a complete program or helper items as a module.
+API tables and text diagrams are not executable. New recipes need a unique
+marker name.
 
 ---
 
@@ -80,18 +75,23 @@ Rules you will use every file:
 
 `RunConfig` (builder, all setters consume `self`):
 
+<!-- slt-check: {"name": "run_config_builder", "features": [], "context": "module"} -->
 ```rust
-slt::RunConfig::default()
-    .tick_rate(Duration::from_millis(16))
-    .mouse_mode(MouseMode::Hover) // default None = Drag locally, Click over SSH
-    .kitty_keyboard(true)
-    .theme(Theme::dracula())
-    .color_depth(ColorDepth::TrueColor)
-    .max_fps(60)
-    .no_fps_cap()             // disable the FPS limit (sets max_fps = None)
-    .scroll_speed(3)
-    .title("My App")
-    .widget_theme(WidgetTheme::new().button(WidgetColors::new().accent(Color::Cyan)))
+use std::time::Duration;
+
+fn config() -> slt::RunConfig {
+    slt::RunConfig::default()
+        .tick_rate(Duration::from_millis(16))
+        .mouse_mode(MouseMode::Hover) // default None = Drag locally, Click over SSH
+        .kitty_keyboard(true)
+        .theme(Theme::dracula())
+        .color_depth(ColorDepth::TrueColor)
+        .max_fps(60)
+        .no_fps_cap()             // disable the FPS limit (sets max_fps = None)
+        .scroll_speed(3)
+        .title("My App")
+        .widget_theme(WidgetTheme::new().button(WidgetColors::new().accent(Color::Cyan)))
+}
 ```
 
 `Backend` trait (for non-terminal targets): implement `fn size(&self) -> (u32, u32)`, `fn buffer_mut(&mut self) -> &mut Buffer`, `fn flush(&mut self) -> io::Result<()>`. Drive with `slt::frame`.
@@ -256,6 +256,7 @@ family:
 ## 6. Common patterns (compressed)
 
 ### 6.1 App state in plain Rust
+<!-- slt-check: {"name": "app_state_plain_rust", "features": ["crossterm"], "context": "module"} -->
 ```rust
 struct App { count: i32, dark: bool, tabs: TabsState, list: ListState }
 fn main() -> std::io::Result<()> {
@@ -284,14 +285,18 @@ if ui.button("+1").clicked { *count.get_mut(ui) += 1; }
 Hook calls must run in the same order every frame. Do not put them inside `if`/`match` branches.
 
 ### 6.3 Derived state
+<!-- slt-check: {"name": "derived_state_memo", "features": [], "context": "ui", "setup": "let query = String::from(\"ru\"); let items = vec![String::from(\"rust\"), String::from(\"go\")];"} -->
 ```rust
 let filtered = ui.use_memo(&(query.clone(), items.len()), |(q, _)| {
-    items.iter().filter(|i| i.contains(q)).cloned().collect::<Vec<_>>()
+    items.iter().filter(|i| i.contains(q.as_str())).cloned().collect::<Vec<_>>()
 });
+let count = filtered.get(ui).len();
+ui.text(format!("{count} matches"));
 ```
 
 ### 6.4 Helper extraction
 When a builder chain repeats, extract a helper:
+<!-- slt-check: {"name": "helper_extraction", "features": [], "context": "module"} -->
 ```rust
 fn panel(ui: &mut Context, title: &str, f: impl FnOnce(&mut Context)) {
     ui.bordered(Border::Rounded).title(title).p(1).grow(1).col(f);
@@ -299,16 +304,19 @@ fn panel(ui: &mut Context, title: &str, f: impl FnOnce(&mut Context)) {
 ```
 
 ### 6.5 Screen navigation
+<!-- slt-check: {"name": "screen_navigation", "features": ["crossterm"], "context": "module"} -->
 ```rust
-let mut screens = ScreenState::new("home");
-slt::run(|ui| {
-    ui.screen("home", &mut screens, |ui| {
-        if ui.button("Settings").clicked { ui.push_screen("settings"); }
-    });
-    ui.screen("settings", &mut screens, |ui| {
-        if ui.button("Back").clicked { ui.pop_screen(); }
-    });
-});
+fn main() -> std::io::Result<()> {
+    let mut screens = ScreenState::new("home");
+    slt::run(|ui| {
+        ui.screen("home", &mut screens, |ui| {
+            if ui.button("Settings").clicked { ui.push_screen("settings"); }
+        });
+        ui.screen("settings", &mut screens, |ui| {
+            if ui.button("Back").clicked { ui.pop_screen(); }
+        });
+    })
+}
 ```
 Each `screen(...)` call isolates hook state and focus.
 
@@ -325,16 +333,19 @@ starts on the next frame, preventing both views from being composed into one
 terminal buffer.
 
 ### 6.6 Multi-mode app
+<!-- slt-check: {"name": "multi_mode_app", "features": ["crossterm"], "context": "module"} -->
 ```rust
-let mut modes = ModeState::new("app", "home");
-modes.add_mode("settings", "general");
-slt::run(|ui| {
-    if ui.key('1') { modes.try_switch_mode("app"); }
-    if ui.key('2') { modes.try_switch_mode("settings"); }
-    let screens = modes.screens_mut();
-    ui.screen("home", screens, |ui| { ui.text("Home"); });
-    ui.screen("general", screens, |ui| { ui.text("Settings/General"); });
-});
+fn main() -> std::io::Result<()> {
+    let mut modes = ModeState::new("app", "home");
+    modes.add_mode("settings", "general");
+    slt::run(|ui| {
+        if ui.key('1') { modes.try_switch_mode("app"); }
+        if ui.key('2') { modes.try_switch_mode("settings"); }
+        let screens = modes.screens_mut();
+        ui.screen("home", screens, |ui| { ui.text("Home"); });
+        ui.screen("general", screens, |ui| { ui.text("Settings/General"); });
+    })
+}
 ```
 
 ### 6.7 Form with validation
@@ -370,26 +381,30 @@ fn scrollable_form() -> std::io::Result<()> {
 Full layout queries (`focused_layout_rect`, `measured_layout_rect`) are separate
 from clipped `Response.rect`. Timing and coordinates: [the previous-frame rule](../guide/02-state.md#the-previous-frame-rule).
 
+<!-- slt-check: {"name": "form_validation", "features": ["crossterm"], "context": "module"} -->
 ```rust
-let mut form = FormState::new()
-    .field(FormField::new("Email").placeholder("you@example.com").validate(|v| {
-        if v.contains('@') { Ok(()) } else { Err("Invalid email".into()) }
-    }))
-    .field(FormField::new("Password").validate(|v| {
-        if v.len() >= 8 { Ok(()) } else { Err("Too short".into()) }
-    }));
+fn main() -> std::io::Result<()> {
+    let mut form = FormState::new()
+        .field(FormField::new("Email").placeholder("you@example.com").validate(|v| {
+            if v.contains('@') { Ok(()) } else { Err("Invalid email".into()) }
+        }))
+        .field(FormField::new("Password").validate(|v| {
+            if v.len() >= 8 { Ok(()) } else { Err("Too short".into()) }
+        }));
 
-slt::run(move |ui| {
-    ui.form(&mut form, |ui, form| {
-        for field in &mut form.fields { ui.form_field(field); }
-        if ui.form_submit("Submit").clicked && form.validate_all() {
-            form.submitted = true;
-        }
-    });
-});
+    slt::run(move |ui| {
+        ui.form(&mut form, |ui, form| {
+            for field in &mut form.fields { ui.form_field(field); }
+            if ui.form_submit("Submit").clicked && form.validate_all() {
+                form.submitted = true;
+            }
+        });
+    })
+}
 ```
 
 For single inputs without `FormState`:
+<!-- slt-check: {"name": "single_input_validation", "features": [], "context": "ui"} -->
 ```rust
 let mut email = TextInputState::with_placeholder("you@example.com");
 ui.text_input(&mut email);
@@ -398,6 +413,7 @@ if let Some(err) = &email.validation_error { ui.alert(err, AlertLevel::Error); }
 ```
 
 ### 6.8 Modal confirmation
+<!-- slt-check: {"name": "modal_confirmation", "features": [], "context": "ui"} -->
 ```rust
 let show_confirm = ui.use_state(|| false);
 if *show_confirm.get(ui) {
@@ -417,41 +433,50 @@ if *show_confirm.get(ui) {
 ```
 
 ### 6.9 Toast + fire-and-forget notify
+<!-- slt-check: {"name": "toast_notify", "features": ["crossterm"], "context": "module"} -->
 ```rust
-let mut toasts = ToastState::new();
-slt::run(move |ui| {
-    if ui.button("Save").clicked { toasts.success("Saved!", ui.tick()); }
-    // OR, without owning a ToastState:
-    if ui.button("Ping").clicked { ui.notify("ping!", ToastLevel::Info); }
-    ui.toast(&mut toasts);
-});
+fn main() -> std::io::Result<()> {
+    let mut toasts = ToastState::new();
+    slt::run(move |ui| {
+        if ui.button("Save").clicked { toasts.success("Saved!", ui.tick()); }
+        // OR, without owning a ToastState:
+        if ui.button("Ping").clicked { ui.notify("ping!", ToastLevel::Info); }
+        ui.toast(&mut toasts);
+    })
+}
 ```
 
 ### 6.10 Command palette
+<!-- slt-check: {"name": "command_palette", "features": ["crossterm"], "context": "module"} -->
 ```rust
-let mut palette = CommandPaletteState::new(vec![
-    PaletteCommand::new("New File", "Create a new file"),
-    PaletteCommand::new("Open", "Open a file"),
-    PaletteCommand::new("Save", "Write changes"),
-]);
-slt::run(move |ui| {
-    if ui.key_mod('p', KeyModifiers::CONTROL) { palette.toggle(); }
-    let r = ui.command_palette(&mut palette);
-    if r.changed {
-        if let Some(i) = palette.last_selected { /* run command i */ }
-    }
-});
+fn main() -> std::io::Result<()> {
+    let mut palette = CommandPaletteState::new(vec![
+        PaletteCommand::new("New File", "Create a new file"),
+        PaletteCommand::new("Open", "Open a file"),
+        PaletteCommand::new("Save", "Write changes"),
+    ]);
+    slt::run(move |ui| {
+        if ui.key_mod('p', KeyModifiers::CONTROL) { palette.toggle(); }
+        let r = ui.command_palette(&mut palette);
+        if r.changed {
+            if let Some(i) = palette.last_selected { ui.text(format!("ran command {i}")); }
+        }
+    })
+}
 ```
 
 ### 6.11 Real-time updates with tick
+<!-- slt-check: {"name": "tick_updates", "features": ["crossterm"], "context": "module"} -->
 ```rust
-let start = std::time::Instant::now();
-slt::run(move |ui| {
-    let elapsed = start.elapsed();
-    ui.text(format!("uptime: {}s", elapsed.as_secs()));
-    // tick counter is monotonic frame index, not wall-clock
-    ui.progress((ui.tick() % 60) as f64 / 60.0);
-});
+fn main() -> std::io::Result<()> {
+    let start = std::time::Instant::now();
+    slt::run(move |ui| {
+        let elapsed = start.elapsed();
+        ui.text(format!("uptime: {}s", elapsed.as_secs()));
+        // tick counter is monotonic frame index, not wall-clock
+        ui.progress((ui.tick() % 60) as f64 / 60.0);
+    })
+}
 ```
 
 ### 6.12 Async messages
@@ -492,6 +517,7 @@ ui.container().gap(1).row(|ui| {
 ```
 
 ### 6.14 File picker dialog
+<!-- slt-check: {"name": "file_picker_dialog", "features": [], "context": "ui"} -->
 ```rust
 let mut picker = FilePickerState::new(".").show_hidden(false).extensions(&["rs", "toml"]);
 if ui.file_picker(&mut picker).clicked {
@@ -500,6 +526,7 @@ if ui.file_picker(&mut picker).clicked {
 ```
 
 ### 6.15 Custom Widget
+<!-- slt-check: {"name": "custom_widget", "features": [], "context": "module"} -->
 ```rust
 struct Rating { value: u8, max: u8 }
 impl Widget for Rating {
@@ -517,22 +544,24 @@ impl Widget for Rating {
     }
 }
 // usage
-let mut rating = Rating { value: 3, max: 5 };
-ui.widget(&mut rating);
+fn rating_row(ui: &mut Context, rating: &mut Rating) {
+    if ui.widget(rating) { ui.text(format!("rated {}", rating.value)); }
+}
 ```
 
 ### 6.16 Responsive layout
+<!-- slt-check: {"name": "responsive_layout", "features": [], "context": "ui"} -->
 ```rust
 match ui.breakpoint() {
     Breakpoint::Xs | Breakpoint::Sm => {
-        ui.col(|ui| { /* stacked */ });
+        ui.col(|ui| { ui.text("stacked"); });
     }
     _ => {
-        ui.row(|ui| { /* side by side */ });
+        ui.row(|ui| { ui.text("side by side"); });
     }
 }
 // Or per-breakpoint style:
-ui.container().w(20).md_w(40).lg_w(60).col(|ui| { /* ... */ });
+ui.container().w(20).md_w(40).lg_w(60).col(|ui| { ui.text("sized"); });
 ```
 
 ### 6.17 Animation
@@ -566,6 +595,7 @@ fn main() -> std::io::Result<()> {
 ```
 
 ### 6.18 Raw draw (direct buffer access)
+<!-- slt-check: {"name": "raw_draw", "features": [], "context": "ui", "setup": "fn compute_points() -> Vec<(u32, u32)> { vec![(1, 1), (3, 2)] }"} -->
 ```rust
 // Fire-and-forget draw
 ui.container().w(40).h(10).draw(|buf, rect| {
@@ -590,6 +620,7 @@ if r.clicked { /* ... */ }
 ```
 
 ### 6.19 Error boundary
+<!-- slt-check: {"name": "error_boundary", "features": [], "context": "ui", "setup": "fn risky_render(ui: &mut Context) { ui.text(\"risky\"); }"} -->
 ```rust
 ui.error_boundary(|ui| {
     risky_render(ui);
@@ -602,57 +633,59 @@ ui.error_boundary_with(
 ```
 
 ### 6.19b Tables with sort / filter / paginate
+<!-- slt-check: {"name": "table_sort_paginate", "features": ["crossterm"], "context": "module"} -->
 ```rust
-let mut table = TableState::new(
-    vec!["ID", "Name", "Status"],
-    vec![
-        vec!["001", "Alice", "Active"],
-        vec!["002", "Bob", "Paused"],
-        vec!["003", "Carol", "Active"],
-    ],
-);
-table.page_size = 10;       // 0 disables pagination
-table.zebra = true;
+fn main() -> std::io::Result<()> {
+    let mut table = TableState::new(
+        vec!["ID", "Name", "Status"],
+        vec![
+            vec!["001", "Alice", "Active"],
+            vec!["002", "Bob", "Paused"],
+            vec!["003", "Carol", "Active"],
+        ],
+    );
+    table.page_size = 10;       // 0 disables pagination
+    table.zebra = true;
 
-slt::run(move |ui| {
-    if ui.key_mod('f', KeyModifiers::CONTROL) {
-        // naive "focus filter box" — use your own text_input separately:
-    }
-    if ui.key('s') { table.toggle_sort(1); }  // toggle sort on Name column
-    if ui.key_code(KeyCode::Right) { table.next_page(); }
-    if ui.key_code(KeyCode::Left)  { table.prev_page(); }
+    slt::run(move |ui| {
+        if ui.key('s') { table.toggle_sort(1); }  // toggle sort on Name column
+        if ui.key_code(KeyCode::Right) { table.next_page(); }
+        if ui.key_code(KeyCode::Left)  { table.prev_page(); }
 
-    let r = ui.table(&mut table);
-    if r.changed {
-        if let Some(row) = table.selected_row() {
-            // row: &[String]
+        let r = ui.table(&mut table);
+        if r.changed {
+            if let Some(row) = table.selected_row() {
+                ui.text(row.join(" | ")); // row: &[String]
+            }
         }
-    }
-});
+    })
+}
 ```
 
 ### 6.19c Tree view from filesystem paths
+<!-- slt-check: {"name": "directory_tree_paths", "features": [], "context": "ui"} -->
 ```rust
 let mut tree = DirectoryTreeState::from_paths(&[
     "src/lib.rs", "src/context/runtime.rs", "docs/guide/01-quick-start.md",
 ]);
 let r = ui.directory_tree(&mut tree);
 if r.changed {
-    let label = tree.selected_label();
+    if let Some(label) = tree.selected_label() { ui.text(format!("selected {label}")); }
 }
 ```
 
 ### 6.19d Virtualized list for 100k rows
+<!-- slt-check: {"name": "virtual_list_rows", "features": [], "context": "ui"} -->
 ```rust
-let mut list = ListState::new((0..100_000).map(|i| format!("row {i}")).collect::<Vec<_>>());
+let rows: Vec<String> = (0..100_000).map(|i| format!("row {i}")).collect();
+let mut list = ListState::new(rows.clone());
 ui.virtual_list(&mut list, 20, |ui, idx| {
-    if let Some(item) = list.item(idx) {
-        ui.text(item).dim();
-    }
+    ui.text(&rows[idx]).dim(); // idx is a data index into the items
 });
 ```
 
 ### 6.19e Typing with autocomplete
+<!-- slt-check: {"name": "autocomplete_input", "features": [], "context": "ui"} -->
 ```rust
 let mut input = TextInputState::with_placeholder("type a language");
 input.set_suggestions(vec![
@@ -665,6 +698,7 @@ for s in input.matched_suggestions() {
 ```
 
 ### 6.19f Streaming LLM output
+<!-- slt-check: {"name": "streaming_markdown", "features": [], "context": "ui"} -->
 ```rust
 let mut s = StreamingMarkdownState::new();
 // In whatever loop feeds new tokens:
@@ -675,36 +709,42 @@ ui.streaming_markdown(&mut s);
 ```
 
 ### 6.19g Canvas — animated shape
+<!-- slt-check: {"name": "canvas_animation", "features": ["crossterm"], "context": "module"} -->
 ```rust
-let mut angle = 0.0_f64;
-slt::run(move |ui| {
-    angle += 0.05;
-    ui.canvas(40, 12, |cv| {
-        cv.set_color(Color::Cyan);
-        let cx = 40; let cy = 24;
-        let (sx, sy) = (cx + (angle.cos() * 20.0) as i32, cy + (angle.sin() * 20.0) as i32);
-        cv.line(cx as _, cy as _, sx as _, sy as _);
-        cv.circle(cx as _, cy as _, 22);
-    });
-});
+fn main() -> std::io::Result<()> {
+    let mut angle = 0.0_f64;
+    slt::run(move |ui| {
+        angle += 0.05;
+        ui.canvas(40, 12, |cv| {
+            cv.set_color(Color::Cyan);
+            let cx = 40; let cy = 24;
+            let (sx, sy) = (cx + (angle.cos() * 20.0) as i32, cy + (angle.sin() * 20.0) as i32);
+            cv.line(cx as _, cy as _, sx as _, sy as _);
+            cv.circle(cx as _, cy as _, 22);
+        });
+    })
+}
 ```
 
 ### 6.20 Keyboard shortcuts with KeyMap + help bar
 
 `KeyMap` is a declarative registry that also drives the help bar. Check the actual key press yourself (`ui.key(...)`, `ui.key_mod(...)`) — `KeyMap` owns labels and descriptions, not input consumption.
 
+<!-- slt-check: {"name": "keymap_help_bar", "features": ["crossterm"], "context": "module"} -->
 ```rust
-let km = KeyMap::new()
-    .bind('q', "Quit")
-    .bind_code(KeyCode::Up, "Move up")
-    .bind_mod('s', KeyModifiers::CONTROL, "Save")
-    .bind_hidden('?', "Toggle help");
+fn main() -> std::io::Result<()> {
+    let km = KeyMap::new()
+        .bind('q', "Quit")
+        .bind_code(KeyCode::Up, "Move up")
+        .bind_mod('s', KeyModifiers::CONTROL, "Save")
+        .bind_hidden('?', "Toggle help");
 
-slt::run(move |ui| {
-    if ui.key('q') { ui.quit(); }
-    if ui.key_mod('s', KeyModifiers::CONTROL) { /* save */ }
-    ui.help_from_keymap(&km);  // renders the help bar from the map
-});
+    slt::run(move |ui| {
+        if ui.key('q') { ui.quit(); }
+        if ui.key_mod('s', KeyModifiers::CONTROL) { /* save */ }
+        ui.help_from_keymap(&km);  // renders the help bar from the map
+    })
+}
 ```
 
 `Binding` has fields: `{ key: KeyCode, modifiers: Option<KeyModifiers>, display: String, description: String, visible: bool }`.
@@ -724,14 +764,20 @@ last completed frame, so they are zero on a widget's first frame. Details:
 Presets: `Theme::dark()` (default), `light()`, `dracula()`, `catppuccin()`, `nord()`, `solarized_dark()`, `solarized_light()`, `tokyo_night()`, `gruvbox_dark()`, `one_dark()`.
 
 Custom:
+<!-- slt-check: {"name": "custom_theme", "features": ["crossterm"], "context": "module"} -->
 ```rust
-let theme = Theme::builder()
-    .primary(INDIGO.c500).secondary(TEAL.c500).accent(PINK.c500)
-    .text(SLATE.c50).text_dim(SLATE.c400).border(SLATE.c700)
-    .bg(SLATE.c950).success(EMERALD.c500).warning(AMBER.c500).error(RED.c500)
-    .surface(SLATE.c800).surface_hover(SLATE.c700).surface_text(SLATE.c300)
-    .is_dark(true).build();
-slt::run_with(RunConfig::default().theme(theme), |ui| { /* ... */ });
+use slt::palette::tailwind::*;
+use slt::{RunConfig, Theme};
+
+fn main() -> std::io::Result<()> {
+    let theme = Theme::builder()
+        .primary(INDIGO.c500).secondary(TEAL.c500).accent(PINK.c500)
+        .text(SLATE.c50).text_dim(SLATE.c400).border(SLATE.c700)
+        .bg(SLATE.c950).success(EMERALD.c500).warning(AMBER.c500).error(RED.c500)
+        .surface(SLATE.c800).surface_hover(SLATE.c700).surface_text(SLATE.c300)
+        .is_dark(true).build();
+    slt::run_with(RunConfig::default().theme(theme), |ui| { ui.text("themed"); })
+}
 ```
 
 Semantic tokens (`ThemeColor`): use `ui.color(ThemeColor::Primary)` or `WidgetColors::new().theme_bg(ThemeColor::Surface)`.
@@ -739,6 +785,7 @@ Semantic tokens (`ThemeColor`): use `ui.color(ThemeColor::Primary)` or `WidgetCo
 Runtime switch: `ui.set_theme(Theme::nord())`, `ui.set_dark_mode(true)`, `ui.light_dark(light, dark)`.
 
 Const-buildable recipes:
+<!-- slt-check: {"name": "const_container_style", "features": [], "context": "ui"} -->
 ```rust
 const CARD: ContainerStyle = ContainerStyle::new()
     .border(Border::Rounded).p(1).theme_bg(ThemeColor::Surface);
@@ -750,12 +797,16 @@ ui.container().apply(&CARD).col(|ui| { ui.text("card"); });
 ## 8b. Theming deep dive
 
 ### Color constructors
+<!-- slt-check: {"name": "color_constructors", "features": [], "context": "ui"} -->
 ```rust
-Color::Rgb(255, 127, 80)             // true color
-Color::Indexed(240)                  // xterm 256 palette index
-Color::Red                           // named ANSI
-Color::LightCyan                     // bright variant
-Color::Reset                         // terminal default
+let colors = [
+    Color::Rgb(255, 127, 80),        // true color
+    Color::Indexed(240),             // xterm 256 palette index
+    Color::Red,                      // named ANSI
+    Color::LightCyan,                // bright variant
+    Color::Reset,                    // terminal default
+];
+for c in colors { ui.text("■").fg(c); }
 ```
 
 ### Tailwind palettes (via `slt::palette::tailwind::*`)
@@ -765,11 +816,15 @@ Colors: `RED`, `ORANGE`, `AMBER`, `YELLOW`, `LIME`, `GREEN`, `EMERALD`, `TEAL`, 
 
 Shades (const fields on each palette): `.c50`, `.c100`, `.c200`, `.c300`, `.c400`, `.c500`, `.c600`, `.c700`, `.c800`, `.c900`, `.c950`.
 
+<!-- slt-check: {"name": "tailwind_palette", "features": [], "context": "ui"} -->
 ```rust
 use slt::palette::tailwind::{BLUE, ROSE, SLATE};
 let primary = BLUE.c500;
 let danger  = ROSE.c600;
 let muted   = SLATE.c400;
+ui.text("Save").fg(primary);
+ui.text("Delete").fg(danger);
+ui.text("hint").fg(muted);
 ```
 
 ### `ThemeColor` semantic token cheat sheet
@@ -795,6 +850,7 @@ Resolve: `ui.color(ThemeColor::Primary)`, `ui.theme().resolve(ThemeColor::Surfac
 
 Resolution order per field: `theme_*` > literal field > theme default.
 
+<!-- slt-check: {"name": "widget_colors_precedence", "features": [], "context": "ui", "setup": "let mut tbl = TableState::new(vec![\"Name\"], vec![vec![\"Alice\"]]);"} -->
 ```rust
 let c = WidgetColors::new()
     .theme_bg(ThemeColor::Surface)     // takes precedence over bg below
@@ -806,14 +862,18 @@ ui.table_colored(&mut tbl, &c);
 
 ### Style chain
 
+<!-- slt-check: {"name": "style_chain", "features": [], "context": "ui"} -->
 ```rust
-Style::new().fg(Color::Cyan).bg(Color::Reset).bold().italic().dim().underline().reversed().strikethrough()
+let style = Style::new().fg(Color::Cyan).bg(Color::Reset).bold().italic().dim().underline().reversed().strikethrough();
+ui.styled("styled", style);
 ```
 
 Modifiers can be built as flags and assigned:
+<!-- slt-check: {"name": "modifier_flags", "features": [], "context": "ui"} -->
 ```rust
 let mut s = Style::new().fg(Color::Cyan);
 s.modifiers = Modifiers::BOLD | Modifiers::UNDERLINE;
+ui.styled("bold + underline", s);
 ```
 (`Style::new()`, `.fg(...)`, `.bg(...)` are `const`, usable in `const` recipes.)
 
@@ -821,28 +881,31 @@ s.modifiers = Modifiers::BOLD | Modifiers::UNDERLINE;
 
 ## 9. Testing
 
-<!-- slt-check: {"name":"headless_testing", "features":[], "context":"ui"} -->
+<!-- slt-check: {"name":"headless_testing", "features":[], "context":"module"} -->
 ```rust
-use slt::{TestBackend, EventBuilder, KeyCode};
+use slt::{Border, Color, EventBuilder, TestBackend};
 
-// Snapshot
-let mut tb = TestBackend::new(40, 8);
-tb.render(|ui| {
-    ui.bordered(Border::Rounded).p(1).col(|ui| {
-        ui.text("Hello").bold().fg(Color::Cyan);
+fn headless_snapshot_and_click() {
+    // Snapshot
+    let mut tb = TestBackend::new(40, 8);
+    tb.render(|ui| {
+        ui.bordered(Border::Rounded).p(1).col(|ui| {
+            ui.text("Hello").bold().fg(Color::Cyan);
+        });
     });
-});
-tb.assert_contains("Hello");
-assert!(tb.line(1).contains("Hello"));
+    tb.assert_contains("Hello");
+    assert!(tb.line(2).contains("Hello"));
 
-// Interaction (multi-frame: session state persists across render calls)
-let mut count = 0;
-tb.render(|ui| { if ui.button("+1").clicked { count += 1; } });
-tb.render_with_events(
-    EventBuilder::new().click(2, 0).build(),
-    /*focus_index=*/0, /*prev_focus_count=*/1,
-    |ui| { if ui.button("+1").clicked { count += 1; } },
-);
+    // Interaction (multi-frame: session state persists across render calls)
+    let mut count = 0;
+    tb.render(|ui| { if ui.button("+1").clicked { count += 1; } });
+    tb.render_with_events(
+        EventBuilder::new().click(2, 0).build(),
+        /*focus_index=*/0, /*prev_focus_count=*/1,
+        |ui| { if ui.button("+1").clicked { count += 1; } },
+    );
+    assert_eq!(count, 1);
+}
 ```
 
 `tb.to_string_trimmed()` returns the whole buffer as a `\n`-joined string for `insta::assert_snapshot!`.

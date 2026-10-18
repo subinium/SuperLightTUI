@@ -50,19 +50,30 @@ Every widget method on `Context` follows one of these return patterns:
 
 **`Response` fields:**
 
+<!-- slt-check-skip: struct field excerpt copied from src/context/state.rs -->
 ```rust
 pub struct Response {
     pub clicked: bool,
+    pub clicked_any: bool,
     pub right_clicked: bool,
+    pub middle_clicked: bool,
+    pub double_clicked: bool,
     pub hovered: bool,
+    pub hovered_top: bool,
+    pub pressed: bool,
+    pub released: bool,
+    pub drag_started: bool,
+    pub dragging: bool,
+    pub drag_delta: (i32, i32),
+    pub modifiers: KeyModifiers,
     pub changed: bool,
     pub focused: bool,
     pub gained_focus: bool,
     pub lost_focus: bool,
-    pub double_clicked: bool,
     pub submitted: bool,
     pub scroll_delta: i32,
     pub rect: Rect,
+    pub disabled: bool,
 }
 ```
 
@@ -72,6 +83,7 @@ Why: see [the previous-frame rule](../guide/02-state.md#the-previous-frame-rule)
 Instead of reading fields you can chain callbacks, since `Response` does not
 borrow `ui`:
 
+<!-- slt-check: {"name":"widgets_response_callbacks","features":[],"context":"ui","setup":"let save = || {};"} -->
 ```rust
 ui
     .button("Save")
@@ -86,6 +98,7 @@ Response builders hold `&mut ui` until their last use. Reading a field on the
 same line (`ui.button("Save").clicked`) is fine; to keep the result while you
 call `ui.` again, store an owned copy with `.show()`:
 
+<!-- slt-check: {"name":"widgets_owned_response","features":[],"context":"ui"} -->
 ```rust
 let save = ui.button("Save").show();
 ui.text("unsaved changes");
@@ -119,6 +132,7 @@ its chain options style that element only, and `.show()` returns a `Response`.
 | `code_block(code)` | Fenced code block builder (renders on Drop). Chain `.lang(lang)` for highlighting, `.numbered()` for line numbers; `.show()` returns `Response` |
 | `big_text(s)` | 8x8 bitmap text rendered as half-block pixels (4 rows tall) |
 
+<!-- slt-check: {"name":"widgets_text_usage","features":[],"context":"ui"} -->
 ```rust
 // Typical text usage
 ui.text("Hello").bold().fg(Color::Cyan);
@@ -193,6 +207,7 @@ scroll-local ones. They return `None` before the first measurement and after a
 resize. For their timing, see
 [the previous-frame rule](../guide/02-state.md#the-previous-frame-rule).
 
+<!-- slt-check: {"name":"widgets_layout_composition","features":[],"context":"ui"} -->
 ```rust
 // Layout composition
 ui.row(|ui| {
@@ -245,6 +260,7 @@ below a long list, give the list a sized parent: `ui.container().grow(1).col(...
 `.h(n)` or `.max_h(n)`. Inside a `scrollable` they size to that viewport and
 scroll themselves; the outer scroller does not see every row.
 
+<!-- slt-check: {"name":"widgets_tabs_response","features":[],"context":"ui"} -->
 ```rust
 // Interactive widget with Response
 let mut tabs = TabsState::new(vec!["Overview", "Details", "Settings"]);
@@ -296,6 +312,7 @@ Chart data types: `Bar::new(label, value).color(c).text_value(s)`;
 `.bar_width(n)`, `.bar_gap(n)`, `.group_gap(n)`, `.max_value(v)`. `Candle` is
 `{ open, high, low, close: f64 }`. `TreemapItem::new(label, value, color)`.
 
+<!-- slt-check: {"name":"widgets_chart_canvas","features":[],"context":"ui","setup":"let data1 = vec![(0.0, 1.0), (1.0, 3.0)]; let data2 = vec![(0.0, 2.0), (1.0, 1.0)];"} -->
 ```rust
 // Multi-series chart with builder
 ui.chart(|c| {

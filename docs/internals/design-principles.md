@@ -1,5 +1,7 @@
 # SLT Design Principles
 
+<!-- slt-check-default: illustrative fragments require application context -->
+
 These principles guide every design decision in SLT. Read this before
 contributing code. If a decision conflicts with these principles, raise
 it in the PR.

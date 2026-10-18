@@ -15,6 +15,7 @@ SLT has three kinds of state:
 
 ## Application state lives in normal Rust
 
+<!-- slt-check: {"name": "state_app_struct", "features": ["crossterm"], "context": "module"} -->
 ```rust
 use slt::{Context, KeyCode};
 
@@ -51,6 +52,7 @@ Use plain structs when the state belongs to your app, your domain, or your scree
 
 ## Local persistent state with hooks
 
+<!-- slt-check: {"name": "state_hooks", "features": [], "context": "ui"} -->
 ```rust
 let count = ui.use_state(|| 0i32);
 ui.text(format!("{}", count.get(ui)));
@@ -86,6 +88,7 @@ The mistake is using hooks for everything until the screen becomes impossible to
 
 ## Derived state with `use_memo`
 
+<!-- slt-check: {"name": "state_use_memo", "features": [], "context": "ui", "setup": "let query = String::from(\"ap\"); let items = vec![String::from(\"apple\"), String::from(\"banana\")];"} -->
 ```rust
 let filtered = ui.use_memo(&(query.clone(), items.len()), |(query, _)| {
     items
@@ -94,6 +97,7 @@ let filtered = ui.use_memo(&(query.clone(), items.len()), |(query, _)| {
         .cloned()
         .collect::<Vec<_>>()
 });
+ui.text(format!("{} matches", filtered.get(ui).len()));
 ```
 
 Use `use_memo` when the computation is deterministic and should only rerun when the dependency tuple changes.
@@ -171,23 +175,27 @@ Use `ui.tick()` (the public helper on `Context`) to branch. The tick
 counter is a `u64` that starts at 0 and increments by one per rendered
 frame.
 
+<!-- slt-check: {"name": "state_rect_guard", "features": ["crossterm"], "context": "module"} -->
 ```rust
-slt::run(|ui: &mut slt::Context| {
-    // `.show()` returns an owned `Response`, so `ui` is free again below.
-    let r = ui.button("Save").show();
+fn main() -> std::io::Result<()> {
+    let mut anim_target = slt::Rect::default();
+    slt::run(|ui: &mut slt::Context| {
+        // `.show()` returns an owned `Response`, so `ui` is free again below.
+        let r = ui.button("Save").show();
 
-    if ui.tick() > 0 && r.rect.width > 0 {
-
-        // Safe to use the visible r.rect for anim targets
-        // or tooltip anchors. The rect reflects last frame's layout.
-        anim_target = r.rect;
-    }
-});
+        if ui.tick() > 0 && r.rect.width > 0 {
+            // Safe to use the visible r.rect for anim targets
+            // or tooltip anchors. The rect reflects last frame's layout.
+            anim_target = r.rect;
+        }
+        ui.text(format!("anchor x = {}", anim_target.x));
+    })
+}
 ```
 
 `Response.rect` is clipped to ancestor viewports: it can be zero even after
 many frames when the widget is offscreen. Do not reconstruct document positions
-by adding a scroll offset to this rectangle. In v0.25, use
+by adding a scroll offset to this rectangle. Since v0.25, use
 `ui.focused_layout_rect()` or `ui.measured_layout_rect(group_name)` for a full
 border box before scrolling/clipping. These are previous-frame root/overlay
 logical coordinates, including border and padding, not local scroll coordinates.
@@ -200,6 +208,7 @@ frames override the pending state update. No UI closure is executed twice.
 
 Equivalent guards that also work:
 
+<!-- slt-check: {"name": "state_rect_guards", "features": [], "context": "ui", "setup": "let r = ui.button(\"Save\").show();"} -->
 ```rust
 if r.rect.area() > 0 { /* rect has real dimensions */ }
 if !r.rect.is_empty() { /* same idea */ }
@@ -213,6 +222,7 @@ skip the widget regardless of why the rect is empty.
 
 #### Pitfall 1: first-frame flicker from premature measuring
 
+<!-- slt-check-skip: anti-pattern shown for contrast; BROKEN on purpose, reads r.rect before the first layout -->
 ```rust
 // BROKEN: on frame 0 this reads zero, so you get a one-frame flash
 let r = ui.container().col(|ui| { ui.text(long_label); });
@@ -223,6 +233,7 @@ ui.text(format!("centered under width {inset}"));
 Fix: branch on `tick()`, or smooth with a `use_state` cache that only
 updates when width is non-zero.
 
+<!-- slt-check: {"name": "state_cached_width", "features": [], "context": "ui", "setup": "let long_label = \"a long status label\";"} -->
 ```rust
 let cached = ui.use_state(|| 0u32);
 let r = ui.container().col(|ui| { ui.text(long_label); });
@@ -230,6 +241,7 @@ if r.rect.width > 0 {
     *cached.get_mut(ui) = r.rect.width;
 }
 let inset = *cached.get(ui) / 2;
+ui.text(format!("centered under width {inset}"));
 ```
 
 #### Pitfall 2: focus lost because the hit map was empty
@@ -254,6 +266,7 @@ animation target is another widget's rect, thread the previous-frame rect
 through `use_state` so the animation keeps a stable target across
 re-layouts:
 
+<!-- slt-check: {"name": "state_anim_target", "features": [], "context": "ui", "setup": "let mut tween = Tween::new(0.0, 1.0, 30);"} -->
 ```rust
 let target = ui.use_state(|| Rect::default());
 let row = ui.row(|ui| { ui.text("follow me"); });
@@ -264,7 +277,8 @@ if row.rect.width > 0 {
 let t = tween.value(ui.tick());
 let dest = *target.get(ui);
 let x = (dest.x as f64) * t;
-// ... place a marker at x using ui.draw_with or absolute positioning
+// Place a marker at x using ui.draw_with or absolute positioning.
+ui.text(format!("marker x = {x:.0}"));
 ```
 
 See `examples/anim.rs` for the canonical pattern: start the animation with

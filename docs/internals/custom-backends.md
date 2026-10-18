@@ -1,5 +1,7 @@
 # Custom Backends
 
+<!-- slt-check-default: illustrative fragments require application context -->
+
 The low-level path: custom render targets and external event loops built on
 `Backend` + `AppState` + `frame()`. For picking a built-in run loop
 (`run`, `run_inline`, `run_static`) and configuring it, see
@@ -50,6 +52,7 @@ These are not just documentation promises. They are explicitly locked by backend
 
 ## Driving `frame()` yourself
 
+<!-- slt-check: {"name": "custom_backend_frame_loop", "features": [], "context": "module"} -->
 ```rust
 use slt::{AppState, Backend, Buffer, Context, Event, Rect, RunConfig};
 

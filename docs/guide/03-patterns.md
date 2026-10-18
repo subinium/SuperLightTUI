@@ -27,6 +27,7 @@ Large SLT screens start to look noisy when the same builder chain repeats everyw
 The fix is usually not a new framework.
 It is a helper function.
 
+<!-- slt-check: {"name": "pat_panel_helper", "features": [], "context": "module"} -->
 ```rust
 use slt::{Border, Context};
 
@@ -59,6 +60,7 @@ The order matters. Reach for the simpler tool first.
 
 The simplest reusable component is a free function that takes `&mut Context` and any explicit state it needs. No framework magic, no registration step.
 
+<!-- slt-check: {"name": "pat_metric_card", "features": [], "context": "module"} -->
 ```rust
 use slt::{Border, Context, Trend};
 
@@ -79,6 +81,7 @@ fn metric_card(ui: &mut Context, label: &str, value: f64, trend: Trend) {
 
 Usage from a screen:
 
+<!-- slt-check: {"name": "pat_metric_card_usage", "features": [], "context": "module", "setup": "struct App { revenue: f64, p99_ms: f64, users: f64 } fn metric_card(_: &mut Context, _: &str, _: f64, _: Trend) {}"} -->
 ```rust
 fn render_dashboard(ui: &mut Context, app: &App) {
     ui.row(|ui| {
@@ -97,6 +100,7 @@ Trade-offs:
 
 The cost is parameter count. When a component grows past four or five arguments, group related values into a small struct and pass `&Props` instead of repeating five-arg signatures across the codebase.
 
+<!-- slt-check: {"name": "pat_metric_card_props", "features": [], "context": "module"} -->
 ```rust
 struct MetricCardProps<'a> {
     label: &'a str,
@@ -106,7 +110,8 @@ struct MetricCardProps<'a> {
 }
 
 fn metric_card(ui: &mut Context, p: &MetricCardProps<'_>) {
-    // ...
+    ui.text(p.label).fg(p.accent);
+    // ... value and trend render as in the function above
 }
 ```
 
@@ -118,6 +123,7 @@ Sometimes a component needs state that must survive across frames but does not b
 
 `use_state_keyed` is the answer. It is `use_state`, but keyed by an explicit id (`&'static str` or a runtime `String`) instead of by hook call order:
 
+<!-- slt-check: {"name": "pat_expandable_card", "features": [], "context": "module"} -->
 ```rust
 use slt::{Border, Context};
 
@@ -144,6 +150,7 @@ fn expandable_card(
 
 Usage:
 
+<!-- slt-check: {"name": "pat_expandable_card_usage", "features": [], "context": "ui", "setup": "fn expandable_card(ui: &mut Context, _: &str, _: &str, body: impl FnOnce(&mut Context)) { body(ui); }"} -->
 ```rust
 expandable_card(ui, "card.networking", "Networking", |ui| {
     ui.text("eth0  192.168.1.42");
@@ -157,8 +164,10 @@ expandable_card(ui, "card.disks", "Disks", |ui| {
 
 When you need a default different from `Default::default()`, pass an initializer to `use_state_keyed`:
 
+<!-- slt-check: {"name": "pat_keyed_state_init", "features": [], "context": "ui"} -->
 ```rust
 let page = ui.use_state_keyed("pager", || 1usize);
+ui.text(format!("page {}", page.get(ui)));
 ```
 
 Rules of the road:
@@ -175,8 +184,9 @@ Some values want to propagate through a deep tree without being passed to every 
 
 `provide` makes a value available inside a closure. Anything inside that closure can read it via `use_context`:
 
+<!-- slt-check: {"name": "pat_provide_context", "features": ["crossterm"], "context": "module"} -->
 ```rust
-use slt::{Color, Context};
+use slt::Context;
 
 #[derive(Clone)]
 struct AppContext {
@@ -216,6 +226,7 @@ How it behaves:
   only the fields a component needs before the next `ui.*` call; do not hold
   `&T` across calls that mutably borrow `ui`.
 
+<!-- slt-check: {"name": "pat_try_use_context", "features": [], "context": "module", "setup": "#[derive(Clone)] struct AppContext { username: String }"} -->
 ```rust
 fn render_footer(ui: &mut Context) {
     if let Some(app) = ui.try_use_context::<AppContext>().cloned() {
@@ -237,18 +248,20 @@ A good heuristic: reach for `provide` when the same value is needed by three or 
 
 Conditional styling is everywhere — a row that highlights when selected, a label that turns red when invalid, a panel that highlights when focused. Without help, this clutters the call site:
 
+<!-- slt-check: {"name": "pat_style_without_with_if", "features": [], "context": "ui", "setup": "let is_error = true; let is_selected = false;"} -->
 ```rust
 let mut t = ui.text("Status");
 if is_error {
     t = t.bold().fg(Color::Red);
 }
 if is_selected {
-    t = t.bg(Color::DarkGray);
+    t.bg(Color::DarkGray);
 }
 ```
 
 `.with_if(cond, modifier)` compresses that into a chain that reads top-to-bottom:
 
+<!-- slt-check: {"name": "pat_text_with_if", "features": [], "context": "ui", "setup": "let is_error = true; let is_selected = false;"} -->
 ```rust
 ui.text("Status")
     .with_if(is_error, |t| {
@@ -263,6 +276,7 @@ The closure runs only when the condition is true. The modifier receives a mutabl
 
 For unconditional grouping — factoring shared modifier blocks out of multiple call sites — use `.with(modifier)`:
 
+<!-- slt-check: {"name": "pat_text_with", "features": [], "context": "ui"} -->
 ```rust
 // The helper receives a `Text` builder for the same element.
 fn dim_label(t: Text<'_>) {
@@ -279,12 +293,13 @@ builder, so its closure takes the builder and must **return** it
 (`FnOnce(ContainerBuilder) -> ContainerBuilder`), while the text version takes
 a `Text` for the same element and returns `()`:
 
+<!-- slt-check: {"name": "pat_container_with_if", "features": [], "context": "ui", "setup": "let panel_focused = true;"} -->
 ```rust
 ui
     .bordered(Border::Single)
     .with_if(panel_focused, |c| c.title("(focused)").p(2))
     .col(|ui| {
-        // ...
+        ui.text("panel body");
     });
 ```
 
@@ -296,13 +311,14 @@ ui
 > typing, render dimmed, and report `Response::disabled`. The same snippet is
 > compiled in [Interaction guide](04-interaction.md) and as the rustdoc example of
 > `Context::disabled`.
->
-> ```rust
-> let submit = ui.disabled(!form_valid, |ui| ui.button("Save").show());
-> if submit.clicked {
->     save(); // never runs while the form is invalid
-> }
-> ```
+
+<!-- slt-check: {"name": "pat_disabled_scope", "features": [], "context": "ui", "setup": "let form_valid = false; fn save() {}"} -->
+```rust
+let submit = ui.disabled(!form_valid, |ui| ui.button("Save").show());
+if submit.clicked {
+    save(); // never runs while the form is invalid
+}
+```
 
 ### When to use which
 
@@ -328,6 +344,7 @@ For full working apps that combine these patterns, see the [Cookbook](../referen
 
 ## Split big screens into render helpers
 
+<!-- slt-check: {"name": "pat_render_helpers", "features": [], "context": "module", "setup": "fn panel(ui: &mut Context, _: &str, f: impl FnOnce(&mut Context)) { ui.col(f); } struct App { sidebar: ListState } impl App { fn current_title(&self) -> String { String::new() } }"} -->
 ```rust
 fn render_sidebar(ui: &mut Context, app: &mut App) {
     ui.text("Navigation").bold();
@@ -350,6 +367,7 @@ If a closure becomes hard to scan, extract render helpers before inventing a new
 
 ## Forms and validation
 
+<!-- slt-check: {"name": "pat_form_validation", "features": [], "context": "ui"} -->
 ```rust
 let mut email = TextInputState::with_placeholder("you@example.com");
 ui.text_input(&mut email);
@@ -366,6 +384,7 @@ For larger forms, reach for `FormField` and `FormState`.
 
 ## Focus and keyboard shortcuts
 
+<!-- slt-check: {"name": "pat_shortcuts_after_widgets", "features": [], "context": "ui", "setup": "let mut search = TextInputState::new(); let mut results = ListState::new(vec![\"a\"]); fn submit() {} fn close_overlay() {}"} -->
 ```rust
 // Render widgets first...
 ui.text_input(&mut search);
@@ -403,6 +422,7 @@ widget already consumed.
 
 ## Screen helpers and navigation
 
+<!-- slt-check: {"name": "pat_screens", "features": [], "context": "ui", "setup": "let mut screens = ScreenState::new(\"home\");"} -->
 ```rust
 ui.screen("home", &mut screens, |ui| {
     ui.text("Home").bold();
@@ -418,6 +438,7 @@ Use `screen(name, &mut screens, ...)` when you want declarative rendering that o
 
 ## Modal, overlay, and screen composition
 
+<!-- slt-check: {"name": "pat_screens_and_modal", "features": [], "context": "ui", "setup": "let mut screens = ScreenState::new(\"home\"); let show_modal = false;"} -->
 ```rust
 ui.screen("home", &mut screens, |ui| {
     if ui.button("Settings").clicked {
@@ -442,6 +463,7 @@ Use screens for view-level navigation and modal/overlay for transient UI layers.
 
 ## Error boundaries and recovery
 
+<!-- slt-check: {"name": "pat_error_boundary", "features": [], "context": "ui"} -->
 ```rust
 ui.error_boundary(|ui| {
     ui.text("Protected subtree");
@@ -456,12 +478,16 @@ draw panic restores frame/clip state before it is rethrown.
 
 ## Custom widgets: focus and interaction
 
+<!-- slt-check: {"name": "pat_custom_focus_interaction", "features": [], "context": "ui"} -->
 ```rust
 let focused = ui.register_focusable();
 let response = ui.interaction();
 
 if response.hovered {
     ui.tooltip("Hovered");
+}
+if focused && ui.key_code(KeyCode::Enter) {
+    ui.text("activated");
 }
 ```
 
@@ -470,23 +496,32 @@ Use `interaction()` when the widget needs click/hover without wrapping everythin
 
 ## Async background messages
 
+<!-- slt-check: {"name": "pat_async_messages", "features": ["async"], "context": "module", "tokio": true} -->
 ```rust
-let run = slt::run_async(|ui, messages: &mut Vec<String>| {
-    for message in messages.drain(..) {
-        ui.text(message);
-    }
-})?;
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let run = slt::run_async(|ui, messages: &mut Vec<String>| {
+        for message in messages.drain(..) {
+            ui.text(message);
+        }
+    })?;
 
-let tx = run.sender();
-tx.send("Background work done".into()).await?;
-run.cancel_and_join().await.map_err(std::io::Error::other)?;
+    let tx = run.sender();
+    tx.send("Background work done".into()).await?;
+    run.cancel_and_join().await.map_err(std::io::Error::other)?;
+    Ok(())
+}
 ```
 
 Enable with the `async` feature.
 
 ## Animation patterns
 
+<!-- slt-check: {"name": "pat_animation", "features": [], "context": "ui", "setup": "let hovered = false; let items = vec![String::from(\"one\"), String::from(\"two\")];"} -->
 ```rust
+// Animations are state: create them once (app struct or `use_state`), not
+// every frame. They are built inline here only to keep the example short.
+
 // Tween: smooth transition over N ticks
 let mut fade = Tween::new(0.0, 1.0, 30);
 let opacity = fade.value(ui.tick());
@@ -508,6 +543,7 @@ for (i, item) in items.iter().enumerate() {
     ui.text(item)
         .fg(Color::Rgb(255, 255, (alpha * 255.0) as u8));
 }
+ui.text(format!("opacity {opacity:.2}, scale {scale:.2}"));
 ```
 
 Animation types are standalone structs that compute values from `ui.tick()`.
@@ -516,13 +552,14 @@ See `docs/guide/07-animation.md` for the full API.
 
 ## Responsive layout
 
+<!-- slt-check: {"name": "pat_responsive_breakpoint", "features": [], "context": "ui"} -->
 ```rust
 match ui.breakpoint() {
     Breakpoint::Xs | Breakpoint::Sm => {
-        ui.col(|ui| { /* stacked layout */ });
+        ui.col(|ui| { ui.text("stacked layout"); });
     }
     _ => {
-        ui.row(|ui| { /* side-by-side layout */ });
+        ui.row(|ui| { ui.text("side-by-side layout"); });
     }
 };
 ```
@@ -532,6 +569,7 @@ ContainerBuilder also supports responsive methods like `.gap_sm(1).gap_lg(2)`.
 
 ## Custom widgets
 
+<!-- slt-check: {"name": "pat_custom_widget_trait", "features": [], "context": "module"} -->
 ```rust
 use slt::{Color, Context, Style, Widget};
 
@@ -578,15 +616,19 @@ If you add a new built-in widget to the library itself, also follow the checklis
 
 ## Testing and verification
 
+<!-- slt-check: {"name": "pat_test_backend", "features": [], "context": "module"} -->
 ```rust
 use slt::TestBackend;
 
-let mut backend = TestBackend::new(40, 10);
-backend.render(|ui| {
-    ui.text("Hello");
-});
+#[test]
+fn renders_hello() {
+    let mut backend = TestBackend::new(40, 10);
+    backend.render(|ui| {
+        ui.text("Hello");
+    });
 
-backend.assert_contains("Hello");
+    backend.assert_contains("Hello");
+}
 ```
 
 Use `TestBackend` for headless rendering checks and snapshot-style assertions.

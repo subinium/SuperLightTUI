@@ -1,13 +1,13 @@
 ---
 name: slt-migration
-description: Migrate Rust TUIs from ratatui (or cursive, Python textual) to SuperLightTUI v0.25. Use when porting an existing TUI codebase to SLT, or when the user asks "how do I do X from ratatui in SLT". Korean triggers "ratatui 마이그레이션", "SLT로 포팅", "이걸 SLT로".
+description: Migrate Rust TUIs from ratatui (or cursive, Python textual) to SuperLightTUI v0.26. Use when porting an existing TUI codebase to SLT, or when the user asks "how do I do X from ratatui in SLT". Korean triggers "ratatui 마이그레이션", "SLT로 포팅", "이걸 SLT로".
 ---
 
 # SLT Migration Skill (from ratatui / cursive / textual)
 
 This skill complements `.agents/skills/slt/SKILL.md` (authoring). Use this one to **port** an existing codebase. After migration switch to the `slt` skill for day-to-day work.
 
-**Targets SLT v0.25.0**. Every API name below must be verified against `src/lib.rs` and `src/context/widgets/`. The v0.20 API consistency pass removed several v0.19 names; the historical table below remains relevant.
+**Targets SLT v0.26.0**. Every API name below must be verified against `src/lib.rs` and `src/context/widgets/`. The v0.20 API consistency pass removed several v0.19 names; the historical table below remains relevant.
 
 ## When to use
 
@@ -63,6 +63,7 @@ Compact side-by-side — read once before writing any code.
 ### Run loop
 
 ratatui (typical):
+<!-- slt-check-skip: ratatui code shown for comparison; not SLT -->
 ```rust
 let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
 terminal::enable_raw_mode()?;
@@ -79,6 +80,7 @@ terminal::disable_raw_mode()?;
 ```
 
 SLT:
+<!-- slt-check: {"name":"migration_run_loop","features":["crossterm"],"context":"module","setup":"#[derive(Default)] struct App { saves: u32 } fn render(ui: &mut Context, app: &mut App) { if ui.button(\"Save\").clicked { app.saves += 1; } }"} -->
 ```rust
 fn main() -> std::io::Result<()> {
     let mut app = App::default();
@@ -94,7 +96,7 @@ fn main() -> std::io::Result<()> {
 `slt::run` enters alternate screen, enables raw mode, installs a panic hook restoring terminal state, and tears down on exit. Variants:
 - `slt::run_with(RunConfig::default().mouse_mode(MouseMode::Hover).theme(Theme::dark()), \|ui\| ...)` — hover reporting, custom theme
 - `slt::run_inline(rows, \|ui\| ...)` — render below the prompt, no alt screen
-- `slt::run_static(\|ui\| ...)` — append-only scrollback (use with `ui.static_log(...)`)
+- `slt::run_static(&mut output, dynamic_rows, \|ui\| ...)` — inline TUI below append-only scrollback; `output` is a `StaticOutput` (`output.println(..)` before the run, `ui.static_log(..)` inside it)
 - `slt::run_async::<Message>(\|ui, messages\| ...)` — tokio integration (`async` feature)
 
 ### Widget mapping (top ratatui widgets → SLT)
@@ -145,11 +147,13 @@ These are SLT additions; if your ratatui app hand-rolled them, replace with the 
 ratatui custom `Widget` trait impls don't translate directly. Two options:
 
 **Option A — function** (preferred for one-off widgets):
+<!-- slt-check: {"name":"migration_widget_fn","features":[],"context":"module","setup":"struct MyData { title: String }"} -->
 ```rust
-fn render_my_widget(ui: &mut Context, data: &MyData) { /* method calls */ }
+fn render_my_widget(ui: &mut Context, data: &MyData) { ui.text(&data.title).bold(); }
 ```
 
 **Option B — implement SLT's `Widget` trait** (for reusable libraries):
+<!-- slt-check: {"name":"migration_widget_trait","features":[],"context":"module"} -->
 ```rust
 struct Label<'a> { text: &'a str }
 impl<'a> slt::Widget for Label<'a> {
@@ -160,8 +164,10 @@ impl<'a> slt::Widget for Label<'a> {
         slt::Response::default()
     }
 }
-let mut label = Label { text: "hello" };
-ui.widget(&mut label);
+fn render(ui: &mut slt::Context) {
+    let mut label = Label { text: "hello" };
+    ui.widget(&mut label);
+}
 ```
 
 Note: SLT's `Widget` trait is different from ratatui's. ratatui's `Widget::render(self, area, buf)` is a stateless paint into a `Buffer`. SLT's `Widget::ui(&mut self, ui)` is an immediate-mode call that returns a `Response`.
@@ -170,6 +176,7 @@ Note: SLT's `Widget` trait is different from ratatui's. ratatui's `Widget::rende
 
 When a rewrite is too big to do at once, or a third-party ratatui widget has no SLT equivalent, enable `superlighttui = { version = "0.26", features = ["ratatui"] }` and render the ratatui widget inside an SLT container. The feature depends only on `ratatui-core` 0.1 (ratatui 0.30), not on a ratatui backend, and is not part of `full`.
 
+<!-- slt-check-skip: needs the external ratatui-widgets crate and captured app values -->
 ```rust
 use ratatui_widgets::{block::Block, paragraph::Paragraph}; // or `ratatui::widgets`
 ui.container().h(5).ratatui_widget(Paragraph::new(text.clone()).block(Block::bordered()));
@@ -181,6 +188,7 @@ The closure is deferred (`'static`): move owned data in. It is render-only — i
 ### Layout mapping
 
 ratatui:
+<!-- slt-check-skip: ratatui code shown for comparison; not SLT -->
 ```rust
 let chunks = Layout::default()
     .direction(Direction::Vertical)
@@ -192,11 +200,12 @@ f.render_widget(footer, chunks[2]);
 ```
 
 SLT:
+<!-- slt-check: {"name":"migration_layout","features":[],"context":"ui"} -->
 ```rust
 ui.col(|ui| {
-    ui.container().h(3).col(|ui| { /* header */ });
-    ui.container().fill().col(|ui| { /* body — fills remaining (v0.20 fill() == grow(1)) */ });
-    ui.container().h(1).col(|ui| { /* footer */ });
+    ui.container().h(3).col(|ui| { ui.text("header"); });
+    ui.container().fill().col(|ui| { ui.text("body"); }); // fills remaining (fill() == grow(1))
+    ui.container().h(1).col(|ui| { ui.text("footer"); });
 });
 ```
 
@@ -209,7 +218,7 @@ Constraint translation:
 | `Constraint::Min(n)` | `.min_h(n).fill()` (col) or `.min_w(n).fill()` (row) |
 | `Constraint::Max(n)` | `.max_h(n)` or `.max_w(n)` |
 | `Constraint::Percentage(50)` | `.h_pct(50)` or `.w_pct(50)` |
-| `Constraint::Ratio(1, 3)` | `.constraints(Constraints::default().h_ratio(1, 3))` or `.w_ratio(1, 3)` (ratio lives on `Constraints`, not on `ContainerBuilder`) |
+| `Constraint::Ratio(1, 3)` | `.h_ratio(1, 3)` (col) or `.w_ratio(1, 3)` (row), directly on `ContainerBuilder`; also on `Constraints` |
 | `.margin(1)` on Layout | `.p(1)` on parent container |
 | `.spacing(1)` between chunks | `.gap(1)` on parent `row` / `col` |
 
@@ -238,6 +247,7 @@ Constraint translation:
 
 ratatui apps typically thread `&mut App` (or `&App`) through every render fn:
 
+<!-- slt-check-skip: ratatui code shown for comparison; not SLT -->
 ```rust
 fn render(f: &mut Frame, app: &mut App) {
     render_header(f, app);
@@ -248,21 +258,25 @@ fn render(f: &mut Frame, app: &mut App) {
 
 In SLT v0.19+ replace **read-only** sharing with `provide`/`use_context`:
 
+<!-- slt-check: {"name":"migration_provide_context","features":["crossterm"],"context":"module","setup":"#[derive(Clone, Default)] struct Settings; #[derive(Default)] struct App { settings: Settings, doc: TextareaState } fn render_body(ui: &mut Context, doc: &mut TextareaState) { let _ = ui.textarea(doc, 5); } fn render_footer(ui: &mut Context) { ui.text(\"q quit\"); }"} -->
 ```rust
 struct AppCtx { theme: slt::Theme, tick: u64, settings: Settings }
 
-slt::run(|ui| {
-    let ctx = AppCtx { theme: *ui.theme(), tick: ui.tick(), settings: app.settings.clone() };
-    ui.provide(ctx, |ui| {
-        render_header(ui);
-        render_body(ui, &mut app.doc);   // writes still pass &mut explicitly
-        render_footer(ui);
-    });
-});
+fn main() -> std::io::Result<()> {
+    let mut app = App::default();
+    slt::run(|ui| {
+        let ctx = AppCtx { theme: *ui.theme(), tick: ui.tick(), settings: app.settings.clone() };
+        ui.provide(ctx, |ui| {
+            render_header(ui);
+            render_body(ui, &mut app.doc);   // writes still pass &mut explicitly
+            render_footer(ui);
+        });
+    })
+}
 
 fn render_header(ui: &mut slt::Context) {
-    let ctx = ui.use_context::<AppCtx>();
-    ui.text(format!("tick {}", ctx.tick));
+    let tick = ui.use_context::<AppCtx>().tick;   // copy out before the next `ui` call
+    ui.text(format!("tick {tick}"));
 }
 ```
 
@@ -311,7 +325,7 @@ Both libraries have:
 - `Color::Reset` in both
 
 Differences:
-- ratatui has `Color::Gray` and `Color::DarkGray` — SLT only has `Color::DarkGray`. Use `Color::Indexed(8)` (ANSI bright black) or `Color::Rgb(128, 128, 128)` for mid-gray.
+- Gray/white names are shifted by one ANSI slot. ratatui `Color::Gray` (index 7) is SLT `Color::White`, ratatui `Color::White` (index 15) is SLT `Color::LightWhite`, and `Color::DarkGray` (index 8) is the same in both. The `ratatui` feature's `From` impls apply this mapping (`src/ratatui_compat.rs`); a literal `Color::White` left in ported code renders one shade darker than before.
 - For semantic colors prefer `slt::palette::tailwind::*` (`BLUE.c500`, `RED.c700`) — same 11-shade scale across 22 palettes, identical to Tailwind CSS.
 
 ### Border type mapping
@@ -386,14 +400,14 @@ textual is class-based with reactive state and CSS. SLT is functional with plain
 
 - **"I have a struct that implements `Widget` trait."** — drop ratatui's. Either rewrite as `fn render_my_widget(ui: &mut Context, data: &MyData)`, or implement `slt::Widget` (different shape — see Custom widgets section).
 - **"My App has a `draw(&mut self, frame: &mut Frame)` method."** — convert to `fn render(ui: &mut Context, app: &mut App)` and call from `slt::run(\|ui\| render(ui, &mut app))`.
-- **"ratatui `ListState` lives across frames."** — same in SLT. `let mut list = ListState::new(items);` outside the closure; pass `&mut list` to `ui.list(&mut list)` each frame.
+- **"ratatui `ListState` lives across frames."** — same in SLT. `let mut list = ListState::new(items);` outside the closure; pass `&mut list` to `ui.list(&mut list)` each frame. Read the selection with `list.selected_item()` (`Option<&str>`) or `list.selected_index()` (`Option<usize>`, the data index into `items` to pass to `remove_item` / `item`); the `selected` field is deprecated since 0.26 because it holds the filtered-view position, not the data index.
 - **"I want raw crossterm events."** — prefer `ui.key()` / `ui.key_code()` / `ui.key_mod()` / `ui.mouse_down()` / `ui.scroll_up()`. Raw `ui.events()` is for advanced cases (key release, paste handling, custom modifier matching). For modal-aware globals use `ui.raw_key_code()` / `ui.raw_key_mod()`.
 - **"I have heavy custom layout math (`.split()` arithmetic on `Rect`)."** — try `ui.row` / `ui.col` + `.fill / .h / .w / .h_pct / .w_pct / .align / .justify` first. Flexbox handles 95% of cases. Drop to `ui.container().draw(\|buf, rect\| { ... })` only when flexbox can't express it. The `draw` closure must be `'static` (deferred execution).
 - **"`Constraint::Percentage(50)` is everywhere."** — `.w_pct(50)` (row child) or `.h_pct(50)` (col child). Both take `u8`.
 - **"I use `Layout::default().margin(1).split(area)`."** — `.p(1)` on the parent container.
 - **"I check `Response.rect` immediately."** — SLT layout runs *after* the closure. Frame 1 returns zero `Rect`. Guard with `if ui.tick() > 0 { ... }`.
 - **"`Borders::ALL`."** — SLT default. `ui.bordered(Border::Rounded)` draws all 4 sides. Subset via `.border_sides(BorderSides::horizontal())` (top + bottom) or `vertical()` (left + right).
-- **"I want `Color::Gray`."** — doesn't exist. Use `Color::Indexed(8)` or `Color::Rgb(128, 128, 128)`. Or pull from `palette::tailwind::SLATE.c500`.
+- **"I want `Color::Gray`."** — SLT has no `Gray`; ratatui's `Gray` is ANSI 7, which is SLT `Color::White`. Port ratatui `White` to `Color::LightWhite` (ANSI 15). For a theme-independent mid-gray use `palette::tailwind::SLATE.c500`.
 - **"My ratatui app calls `terminal.clear()` between frames."** — don't. SLT diffs the buffer and only emits changed cells. Manual clear breaks the diff and causes flicker.
 - **"My panic hook restores raw mode."** — drop it. `slt::run` installs one on first call.
 - **"I'm threading `&App` through every render fn."** — replace read-only sharing with `ui.provide(ctx, \|ui\| ...)` + `ui.use_context::<AppCtx>()`. Keep `&mut` for writes.

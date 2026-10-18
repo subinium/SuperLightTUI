@@ -89,6 +89,7 @@ One recommended validation path each: standalone inputs use `add_validator`
 
 ### Minimal example
 
+<!-- slt-check: {"name": "text_input_validators", "features": [], "context": "ui"} -->
 ```rust
 let mut input = TextInputState::with_placeholder("email");
 input.add_validator(|v| {
@@ -132,6 +133,7 @@ Multi-line text area state. Pass with a row count to `Context::textarea`.
 
 ### Minimal example
 
+<!-- slt-check: {"name": "textarea_state", "features": [], "context": "ui", "setup": "fn save(_: &str) {}"} -->
 ```rust
 let mut area = TextareaState::new().word_wrap(60).max_length(2000);
 ui.textarea(&mut area, 8);
@@ -190,6 +192,7 @@ call. Numbers vary with hardware; rerun the bench on yours.
 
 ### Minimal example
 
+<!-- slt-check: {"name": "code_editor_state", "features": [], "context": "ui", "setup": "let source = String::from(\"fn main() {}\"); fn save(_: &str) {}"} -->
 ```rust
 let mut editor = CodeEditorState::new(source).lang("rust").tab_width(4);
 let r = ui.code_editor(&mut editor).line_numbers(true).h(20).show();
@@ -226,9 +229,12 @@ One labeled input inside a `FormState`.
 
 ### Minimal example
 
+<!-- slt-check: {"name": "form_field_builders", "features": [], "context": "ui"} -->
 ```rust
 let email = FormField::new("Email").key("email").placeholder("you@example.com");
 let password = FormField::new("Password").masked(true);
+let mut form = FormState::new().field(email).field(password);
+ui.form_field(&mut form.fields[0]);
 ```
 
 ## FormState
@@ -266,6 +272,7 @@ attach validators to each field with `FormField::validate` and use
 
 ### Minimal example
 
+<!-- slt-check: {"name": "form_state_validate", "features": [], "context": "ui"} -->
 ```rust
 let mut form = FormState::new()
     .field(FormField::new("Name").validate(validators::required("required")))
@@ -273,6 +280,7 @@ let mut form = FormState::new()
 if form.validate_all() {
     form.submitted = true;
     let email = form.get("email").unwrap_or_default();
+    ui.text(format!("submitted {email}"));
 }
 ```
 
@@ -302,9 +310,13 @@ All fields are private.
 
 ### Minimal example
 
+<!-- slt-check: {"name": "static_output", "features": ["crossterm"], "context": "module"} -->
 ```rust
-let mut out = StaticOutput::new();
-out.println("Saved record 123");
+fn main() -> std::io::Result<()> {
+    let mut out = StaticOutput::new();
+    out.println("Saved record 123");
+    slt::run_static(&mut out, 1, |ui| { ui.text("working..."); })
+}
 ```
 
 ## ListState
@@ -336,8 +348,11 @@ is active:
 `visible_indices()` maps one to the other: `visible_indices()[view] == data`.
 To delete the item the user sees highlighted, filter or not:
 
+<!-- slt-check: {"name": "list_remove_selected", "features": [], "context": "ui", "setup": "let mut list = ListState::new(vec![\"a\", \"b\"]);"} -->
 ```rust
-let removed = list.remove_selected(); // Option<String>
+if let Some(removed) = list.remove_selected() { // Option<String>
+    ui.text(format!("removed {removed}"));
+}
 ```
 
 `selected_index()` returns the highlighted item's data index (`None` when the
@@ -372,6 +387,7 @@ so `list.remove_item(list.selected)` removes the wrong item under a filter.
 
 ### Minimal example
 
+<!-- slt-check: {"name": "list_state_filter", "features": [], "context": "ui"} -->
 ```rust
 let mut list = ListState::new(vec!["apple", "banana", "cherry"]);
 list.set_filter("an");
@@ -418,6 +434,7 @@ Directory browser with extension and hidden-file filters.
 
 ### Minimal example
 
+<!-- slt-check: {"name": "file_picker_state", "features": [], "context": "ui"} -->
 ```rust
 let mut picker = FilePickerState::new(".").extensions(&["rs", "toml"]);
 picker.refresh();
@@ -469,6 +486,7 @@ Source: `src/widgets/selection.rs`.
 
 ### Minimal example
 
+<!-- slt-check: {"name": "tabs_state", "features": [], "context": "ui"} -->
 ```rust
 let mut tabs = TabsState::new(vec!["General", "Keys", "About"]);
 ui.tabs(&mut tabs);
@@ -506,8 +524,11 @@ filter and sort, absolute across pages); `selected_index()`, `row`,
 `insert_row`, and `remove_row` use **data** indices into `rows()`. They differ
 as soon as a filter or sort is active. Act on the highlighted row with:
 
+<!-- slt-check: {"name": "table_remove_selected", "features": [], "context": "ui", "setup": "let mut table = TableState::new(vec![\"Name\"], vec![vec![\"Alice\"]]);"} -->
 ```rust
-let removed = table.remove_selected(); // Option<Vec<String>>
+if let Some(removed) = table.remove_selected() { // Option<Vec<String>>
+    ui.text(format!("removed {}", removed.join(", ")));
+}
 ```
 
 `selected_row()` and `selected_rows()` perform the same mapping for reads.
@@ -548,6 +569,7 @@ page when pagination is on.
 
 ### Minimal example
 
+<!-- slt-check: {"name": "table_state_sort", "features": [], "context": "ui"} -->
 ```rust
 let mut table = TableState::new(
     vec!["Name", "Score"],
@@ -637,6 +659,7 @@ Option storage and the internal cursor are private. Use `items()` and
 
 ### Minimal example
 
+<!-- slt-check: {"name": "select_state", "features": [], "context": "ui"} -->
 ```rust
 let mut dropdown = SelectState::new(vec!["Low", "Medium", "High"])
     .placeholder("select priority");
@@ -685,6 +708,7 @@ and `has_submenu()` inspect the kind.
 
 ### Minimal example
 
+<!-- slt-check: {"name": "context_menu_state", "features": [], "context": "ui"} -->
 ```rust
 let mut menu = MenuState::new(vec![
     MenuItem::new("copy", "Copy").shortcut("Ctrl+C"),
@@ -693,7 +717,7 @@ let mut menu = MenuState::new(vec![
 ]);
 let row = ui.button("notes.md").show();
 if let Some(id) = ui.context_menu(&mut menu, &row) {
-    // run the command named `id`
+    ui.notify(&format!("ran {id}"), ToastLevel::Info); // run the command named `id`
 }
 ```
 
@@ -732,13 +756,14 @@ Active / open state, the selected title and the dropdown cursor are private.
 
 ### Minimal example
 
+<!-- slt-check: {"name": "menu_bar_state", "features": [], "context": "ui"} -->
 ```rust
 let mut bar = MenuBarState::new(vec![
     ("File", vec![MenuItem::new("open", "Open"), MenuItem::new("quit", "Quit")]),
     ("Help", vec![MenuItem::new("about", "About")]),
 ]);
 if let Some(id) = ui.menu_bar(&mut bar) {
-    // run the command named `id`
+    if id == "quit" { ui.quit(); } // run the command named `id`
 }
 ```
 
@@ -794,6 +819,7 @@ indices are pruned.
 
 ### Minimal example
 
+<!-- slt-check: {"name": "multi_select_state", "features": [], "context": "ui"} -->
 ```rust
 let mut ms = MultiSelectState::new(vec!["bold", "italic", "underline"]);
 ms.toggle(0);
@@ -849,6 +875,7 @@ and flatten helpers are `pub(crate)` and called by `Context::tree`.
 
 ### Minimal example
 
+<!-- slt-check: {"name": "tree_state", "features": [], "context": "ui"} -->
 ```rust
 let root = TreeNode::new("project").expanded().children(vec![
     TreeNode::new("src").children(vec![TreeNode::new("main.rs")]),
@@ -885,6 +912,7 @@ Directory-flavored tree with icon toggle.
 
 ### Minimal example
 
+<!-- slt-check: {"name": "directory_tree_state", "features": [], "context": "ui"} -->
 ```rust
 let mut dt = DirectoryTreeState::from_paths(&[
     "src/main.rs", "src/lib.rs", "Cargo.toml",
@@ -949,6 +977,7 @@ through the synchronization methods below.
 
 ### Minimal example
 
+<!-- slt-check: {"name": "command_palette_state", "features": [], "context": "ui", "setup": "fn run(_: usize) {}"} -->
 ```rust
 let mut palette = CommandPaletteState::new(vec![
     PaletteCommand::new("Open File", "Pick a file").shortcut("Ctrl+O"),
@@ -1043,6 +1072,7 @@ All fields are private. Use the methods below to read and mutate state.
 
 ### Minimal example
 
+<!-- slt-check: {"name": "screen_state", "features": [], "context": "ui"} -->
 ```rust
 let mut screens = ScreenState::new("home");
 if ui.button("Settings").clicked { screens.push("settings"); }
@@ -1078,6 +1108,7 @@ All fields are private.
 
 ### Minimal example
 
+<!-- slt-check: {"name": "mode_state", "features": [], "context": "ui"} -->
 ```rust
 let mut modes = ModeState::new("app", "home");
 modes.add_mode("settings", "general");
@@ -1266,6 +1297,7 @@ Date picker.
 
 ### Minimal example
 
+<!-- slt-check: {"name": "calendar_state", "features": [], "context": "ui"} -->
 ```rust
 let mut cal = CalendarState::new();
 ui.calendar(&mut cal);
@@ -1296,6 +1328,7 @@ Internal character set only.
 
 ### Minimal example
 
+<!-- slt-check: {"name": "spinner_state", "features": [], "context": "ui"} -->
 ```rust
 let spinner = SpinnerState::dots();
 let ch = spinner.frame(ui.tick());
@@ -1338,6 +1371,7 @@ Stack of timed toast notifications. Pass to `Context::toast` each frame.
 
 ### Minimal example
 
+<!-- slt-check: {"name": "toast_state", "features": [], "context": "ui"} -->
 ```rust
 let mut toasts = ToastState::new();
 if ui.key('s') { toasts.success("Saved", ui.tick()); }

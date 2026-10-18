@@ -1,5 +1,7 @@
 # Performance
 
+<!-- slt-check-default: illustrative fragments require application context -->
+
 A performance guide for SLT — frame budget, allocation budget, optimization
 patterns, and how to detect regressions. If you've used the React profiler,
 the Flutter timeline, or browser DevTools' performance panel, the model here

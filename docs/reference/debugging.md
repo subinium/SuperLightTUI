@@ -78,6 +78,7 @@ Check:
 
 Bad:
 
+<!-- slt-check-skip: anti-pattern shown for contrast; conditional use_state drifts hook order -->
 ```rust
 if show_sidebar {
     let state = ui.use_state(|| 0);
@@ -86,6 +87,7 @@ if show_sidebar {
 
 Good:
 
+<!-- slt-check: {"name":"debugging_hook_order_good","features":[],"context":"ui","setup":"let show_sidebar = true;"} -->
 ```rust
 let state = ui.use_state(|| 0);
 if show_sidebar {
@@ -123,10 +125,13 @@ resolves to `MouseMode::Drag` locally and `MouseMode::Click` over SSH/mosh. So:
 - **Hover and tooltips do nothing**: pointer moves without a button held are
   only reported in `MouseMode::Hover`. Start the app with:
 
+<!-- slt-check: {"name":"debugging_hover_mode","features":["crossterm"],"context":"module"} -->
 ```rust
-slt::run_with(slt::RunConfig::default().mouse_mode(slt::MouseMode::Hover), |ui| {
-    // ...
-})
+fn main() -> std::io::Result<()> {
+    slt::run_with(slt::RunConfig::default().mouse_mode(slt::MouseMode::Hover), |ui| {
+        ui.text("hover me").show().on_hover(ui, "tooltip");
+    })
+}
 ```
 
 - **Drags do nothing over SSH**: the SSH default is `Click`; set
@@ -199,6 +204,7 @@ libc = { version = "0.2", optional = true }
 hot = ["dep:subsecond", "dep:dioxus-devtools", "dep:libc"]
 ```
 
+<!-- slt-check-skip: needs the external subsecond, dioxus-devtools and libc crates behind an app-level hot feature -->
 ```rust,ignore
 use slt::Context;
 

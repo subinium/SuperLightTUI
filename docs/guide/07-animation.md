@@ -14,6 +14,7 @@ layout methods yourself.
 
 ## Quick transitions (CSS-transition-like)
 
+<!-- slt-check: {"name": "an_quick_transitions", "features": [], "context": "module"} -->
 ```rust
 use slt::{Color, Context};
 
@@ -56,6 +57,7 @@ The rest of this page covers the struct-based API. These are standalone
 structs, not Context methods: you create them once outside the frame closure
 and sample them each frame.
 
+<!-- slt-check: {"name": "an_struct_overview", "features": [], "context": "ui", "setup": "use slt::anim::ease_out_quad;"} -->
 ```rust
 let mut fade = Tween::new(0.0, 1.0, 30).easing(ease_out_quad);
 fade.reset(ui.tick());
@@ -86,20 +88,23 @@ Animations run on frame ticks, not wall-clock time.
 
 Linear interpolation from A to B over a fixed number of ticks.
 
+<!-- slt-check: {"name": "an_tween", "features": ["crossterm"], "context": "module"} -->
 ```rust
 use slt::{Tween, Context, Color};
 use slt::anim::ease_out_quad;
 
-let mut tween = Tween::new(0.0, 100.0, 60)
-    .easing(ease_out_quad);
+fn main() -> std::io::Result<()> {
+    let mut tween = Tween::new(0.0, 100.0, 60)
+        .easing(ease_out_quad);
 
-slt::run(|ui: &mut Context| {
-    if ui.tick() == 0 {
-        tween.reset(ui.tick());
-    }
-    let x = tween.value(ui.tick()) as u32;
-    ui.text("sliding").ml(x);
-});
+    slt::run(|ui: &mut Context| {
+        if ui.tick() == 0 {
+            tween.reset(ui.tick());
+        }
+        let x = tween.value(ui.tick()) as u32;
+        ui.text("sliding").ml(x).fg(Color::Cyan);
+    })
+}
 ```
 
 Key methods:
@@ -114,20 +119,24 @@ Key methods:
 
 Physics-based damped harmonic oscillator. Unlike Tween, Spring has no fixed duration -- it settles naturally based on stiffness and damping.
 
+<!-- slt-check: {"name": "an_spring", "features": ["crossterm"], "context": "module"} -->
 ```rust
 use slt::{Spring, Context};
 
-let mut spring = Spring::new(0.0, 0.2, 0.85);
+fn main() -> std::io::Result<()> {
+    let mut spring = Spring::new(0.0, 0.2, 0.85);
 
-// Hover needs every pointer move: MouseMode::Hover (clicks work by default).
-slt::run_with(slt::RunConfig::default().mouse_mode(slt::MouseMode::Hover), |ui: &mut Context| {
-    let hovered = ui.button("Hover me").hovered;
-    spring.set_target(if hovered { 10.0 } else { 0.0 });
-    spring.tick();
+    // Hover needs every pointer move: MouseMode::Hover (clicks work by default).
+    let config = slt::RunConfig::default().mouse_mode(slt::MouseMode::Hover);
+    slt::run_with(config, |ui: &mut Context| {
+        let hovered = ui.button("Hover me").hovered;
+        spring.set_target(if hovered { 10.0 } else { 0.0 });
+        spring.tick();
 
-    let offset = spring.value() as u32;
-    ui.text("bouncy").ml(offset);
-});
+        let offset = spring.value() as u32;
+        ui.text("bouncy").ml(offset);
+    })
+}
 ```
 
 Key methods:
@@ -148,6 +157,7 @@ Spring does not use `reset(tick)`. Call `.tick()` every frame and `.set_target()
 
 Multi-stop timeline animation, like CSS `@keyframes`. Each segment between stops can use its own easing.
 
+<!-- slt-check: {"name": "an_keyframes", "features": [], "context": "ui"} -->
 ```rust
 use slt::anim::{Keyframes, LoopMode, ease_out_quad, ease_in_cubic};
 
@@ -162,6 +172,7 @@ let mut kf = Keyframes::new(90)
 
 kf.reset(ui.tick());
 let brightness = kf.value(ui.tick());
+ui.text(format!("brightness {brightness:.0}"));
 ```
 
 Key methods:
@@ -179,6 +190,7 @@ Key methods:
 
 Chain multiple tween segments end-to-end into a single timeline.
 
+<!-- slt-check: {"name": "an_sequence", "features": [], "context": "ui"} -->
 ```rust
 use slt::anim::{Sequence, LoopMode, ease_linear, ease_out_quad, ease_in_cubic};
 
@@ -190,6 +202,7 @@ let mut seq = Sequence::new()
 
 seq.reset(ui.tick());
 let x = seq.value(ui.tick());
+ui.text("->").ml(x as u32);
 ```
 
 Key methods:
@@ -205,6 +218,7 @@ Key methods:
 
 Apply the same tween to N items with a fixed delay between each start.
 
+<!-- slt-check: {"name": "an_stagger", "features": [], "context": "ui"} -->
 ```rust
 use slt::anim::{Stagger, LoopMode, ease_out_quad};
 
@@ -254,11 +268,13 @@ All easing functions have signature `fn(f64) -> f64`, mapping `[0, 1]` to `[0, 1
 
 Helper: `lerp(a, b, t)` — linear interpolation, not clamped. Apply easing to `t` before calling.
 
+<!-- slt-check: {"name": "an_lerp", "features": [], "context": "ui"} -->
 ```rust
 use slt::anim::{lerp, ease_out_quad};
 
 let t = ease_out_quad(0.5);
 let value = lerp(0.0, 100.0, t); // ~75.0
+ui.text(format!("{value:.1}"));
 ```
 
 ## LoopMode
@@ -277,63 +293,82 @@ Applies to `Keyframes`, `Sequence`, and `Stagger`. `Tween` always plays once (us
 
 ### Fade-in on mount
 
+<!-- slt-check: {"name": "an_fade_in", "features": ["crossterm"], "context": "module"} -->
 ```rust
-let mut fade = Tween::new(0.0, 1.0, 30).easing(ease_out_quad);
-let mut started = false;
+use slt::anim::ease_out_quad;
+use slt::{Color, Context, Tween};
 
-slt::run(|ui: &mut Context| {
-    if !started {
-        fade.reset(ui.tick());
-        started = true;
-    }
-    let alpha = fade.value(ui.tick());
-    let g = (255.0 * alpha) as u8;
-    ui.text("Welcome").fg(Color::Rgb(g, g, g));
-});
+fn main() -> std::io::Result<()> {
+    let mut fade = Tween::new(0.0, 1.0, 30).easing(ease_out_quad);
+    let mut started = false;
+
+    slt::run(|ui: &mut Context| {
+        if !started {
+            fade.reset(ui.tick());
+            started = true;
+        }
+        let alpha = fade.value(ui.tick());
+        let g = (255.0 * alpha) as u8;
+        ui.text("Welcome").fg(Color::Rgb(g, g, g));
+    })
+}
 ```
 
 ### Button hover spring
 
+<!-- slt-check: {"name": "an_hover_spring", "features": ["crossterm"], "context": "module"} -->
 ```rust
-let mut spring = Spring::new(0.0, 0.3, 0.8);
+use slt::{Context, MouseMode, RunConfig, Spring};
 
-// Hover needs every pointer move: MouseMode::Hover (clicks work by default).
-slt::run_with(slt::RunConfig::default().mouse_mode(slt::MouseMode::Hover), |ui: &mut Context| {
-    let btn = ui.button("Click me");
-    spring.set_target(if btn.hovered { 2.0 } else { 0.0 });
-    spring.tick();
+fn main() -> std::io::Result<()> {
+    let mut spring = Spring::new(0.0, 0.3, 0.8);
 
-    let pad = spring.value() as u32;
-    ui.text(">>").ml(pad);
-});
+    // Hover needs every pointer move: MouseMode::Hover (clicks work by default).
+    let config = RunConfig::default().mouse_mode(MouseMode::Hover);
+    slt::run_with(config, |ui: &mut Context| {
+        let btn = ui.button("Click me").show();
+        spring.set_target(if btn.hovered { 2.0 } else { 0.0 });
+        spring.tick();
+
+        let pad = spring.value() as u32;
+        ui.text(">>").ml(pad);
+    })
+}
 ```
 
 ### Staggered list entry
 
+<!-- slt-check: {"name": "an_staggered_list", "features": ["crossterm"], "context": "module"} -->
 ```rust
-let items = vec!["One", "Two", "Three", "Four", "Five"];
-let mut stagger = Stagger::new(0.0, 1.0, 15)
-    .easing(ease_out_cubic)
-    .delay(3)
-    .items(items.len());
+use slt::anim::ease_out_cubic;
+use slt::{Color, Context, Stagger};
 
-let mut started = false;
+fn main() -> std::io::Result<()> {
+    let items = vec!["One", "Two", "Three", "Four", "Five"];
+    let mut stagger = Stagger::new(0.0, 1.0, 15)
+        .easing(ease_out_cubic)
+        .delay(3)
+        .items(items.len());
 
-slt::run(|ui: &mut Context| {
-    if !started {
-        stagger.reset(ui.tick());
-        started = true;
-    }
-    for (i, item) in items.iter().enumerate() {
-        let t = stagger.value(ui.tick(), i);
-        let brightness = (255.0 * t) as u8;
-        ui.text(*item).fg(Color::Rgb(brightness, brightness, brightness));
-    }
-});
+    let mut started = false;
+
+    slt::run(|ui: &mut Context| {
+        if !started {
+            stagger.reset(ui.tick());
+            started = true;
+        }
+        for (i, item) in items.iter().enumerate() {
+            let t = stagger.value(ui.tick(), i);
+            let brightness = (255.0 * t) as u8;
+            ui.text(*item).fg(Color::Rgb(brightness, brightness, brightness));
+        }
+    })
+}
 ```
 
 ### Loading sequence (multi-phase)
 
+<!-- slt-check: {"name": "an_loading_keyframes", "features": [], "context": "ui", "setup": "use slt::anim::ease_in_out_quad;"} -->
 ```rust
 let mut loading = Keyframes::new(120)
     .stop(0.0, 0.0)     // idle
@@ -351,6 +386,7 @@ ui.text(format!("[{:>3.0}%]", pct));
 
 ### Chained transitions
 
+<!-- slt-check: {"name": "an_chained", "features": [], "context": "ui", "setup": "use slt::anim::{ease_in_cubic, ease_linear, ease_out_quad};"} -->
 ```rust
 let mut chain = Sequence::new()
     .then(0.0, 50.0, 20, ease_out_quad)    // move to center

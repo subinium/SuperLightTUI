@@ -3,8 +3,6 @@
 How mouse, keyboard focus, hover, drag, scrolling, and expand/collapse work in
 SLT, how to test them, and where the current limits are.
 
-<!-- slt-check-default: illustrative fragments require application context -->
-
 ## The mouse is on by default
 
 Since v0.26, `slt::run` turns mouse reporting **on**. `RunConfig::default()`
@@ -165,7 +163,6 @@ too, opt in with `.bubble_clicks()`:
 
 <!-- slt-check: {"name":"ix_bubble_clicks","features":[],"context":"ui"} -->
 ```rust
-let mut opened = 0;
 let card = ui.bordered(Border::Rounded).bubble_clicks().col(|ui| {
     ui.row(|ui| {
         ui.text("Title").bold();
@@ -174,7 +171,7 @@ let card = ui.bordered(Border::Rounded).bubble_clicks().col(|ui| {
 });
 if card.clicked {
     // fires for clicks on the title row and the body
-    opened += 1;
+    ui.notify("card opened", ToastLevel::Info);
 }
 ```
 
@@ -752,8 +749,6 @@ layout exists, then send events at coordinates you look up with `find_text`:
 
 <!-- slt-check: {"name":"ix_testing","features":[],"context":"module"} -->
 ```rust
-use slt::{EventBuilder, KeyCode, TestBackend};
-
 fn view(ui: &mut slt::Context, open: &mut [bool; 2]) {
     ui.accordion("First", &mut open[0], |ui| {
         ui.text("first body");
@@ -765,6 +760,8 @@ fn view(ui: &mut slt::Context, open: &mut [bool; 2]) {
 
 #[test]
 fn click_and_keyboard_toggle() {
+    use slt::{EventBuilder, KeyCode, TestBackend};
+
     let mut open = [false; 2];
     let mut tb = TestBackend::new(40, 10);
 

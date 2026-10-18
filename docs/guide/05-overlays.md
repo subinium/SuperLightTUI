@@ -62,6 +62,7 @@ it's the same flexbox you know.
 (e.g. "16 px from the right edge"), use the offset variant; modals take the
 same anchor and offset through `ModalOpts`:
 
+<!-- slt-check-skip: signature excerpt copied from the Context impl, not a callable snippet -->
 ```rust
 pub fn overlay_at_offset(&mut self, anchor: Anchor, dx: i32, dy: i32, f: impl FnOnce(&mut Context)) -> Response
 pub fn modal_with(&mut self, opts: ModalOpts, f: impl FnOnce(&mut Context)) -> Response
@@ -86,6 +87,7 @@ overlay_at(BottomRight)                overlay_at_offset(BottomRight, 2, 1)
 
 Pattern:
 
+<!-- slt-check: {"name": "ov_offset_pattern", "features": [], "context": "ui", "setup": "fn render_badge(ui: &mut Context) { ui.text(\"Saved\"); }"} -->
 ```rust
 // 2 cells from the right edge, 1 row from the bottom edge
 ui.overlay_at_offset(Anchor::BottomRight, 2, 1, |ui| {
@@ -121,6 +123,7 @@ Nesting a margin container inside `overlay_at` produces the same position for a
 single child, and is useful when you also want padding, borders, or a
 background on the wrapper:
 
+<!-- slt-check: {"name": "ov_manual_margin", "features": [], "context": "ui", "setup": "fn render_badge(ui: &mut Context) { ui.text(\"Saved\"); }"} -->
 ```rust
 ui.overlay_at(Anchor::BottomRight, |ui| {
     ui.container().mr(2).mb(1).col(|ui| {
@@ -168,6 +171,7 @@ unchanged, it's an overlay.
 }
 ```
 
+<!-- slt-check: {"name": "ov_from_css", "features": [], "context": "ui", "setup": "fn render_badge(ui: &mut Context) { ui.text(\"Saved\"); }"} -->
 ```rust
 ui.overlay_at_offset(Anchor::BottomRight, 2, 1, |ui| {
     render_badge(ui);
@@ -190,6 +194,7 @@ Stack(
 )
 ```
 
+<!-- slt-check: {"name": "ov_from_flutter", "features": [], "context": "ui", "setup": "fn render_badge(ui: &mut Context) { ui.text(\"Saved\"); }"} -->
 ```rust
 ui.overlay_at_offset(Anchor::BottomRight, 2, 1, |ui| {
     render_badge(ui);
@@ -204,6 +209,7 @@ ui.overlay_at_offset(Anchor::BottomRight, 2, 1, |ui| {
 </View>
 ```
 
+<!-- slt-check: {"name": "ov_from_react_native", "features": [], "context": "ui", "setup": "fn render_badge(ui: &mut Context) { ui.text(\"Saved\"); }"} -->
 ```rust
 ui.overlay_at_offset(Anchor::BottomRight, 2, 1, |ui| {
     render_badge(ui);
@@ -228,12 +234,17 @@ showDialog(context: context, builder: (_) => AlertDialog(...));
 <Modal visible transparent><View style={styles.center}>...</View></Modal>
 ```
 
+<!-- slt-check: {"name": "ov_modal_backdrop", "features": [], "context": "ui"} -->
 ```rust
 // SLT — modal adds the dimmed backdrop automatically
+let mut confirmed = false;
 ui.modal(|ui| {
     ui.text("Are you sure?");
-    if ui.button("OK").clicked { confirm = true; }
+    if ui.button("OK").clicked { confirmed = true; }
 });
+if confirmed {
+    ui.notify("Deleted", ToastLevel::Success);
+}
 ```
 
 ---
@@ -293,29 +304,32 @@ ui.modal(|ui| {
 
 ## 8. TL;DR
 
+<!-- slt-check: {"name": "ov_tldr", "features": ["crossterm"], "context": "module"} -->
 ```rust
 use slt::{Anchor, Context, ModalOpts};
 
-let mut show_dialog = true;
-slt::run(|ui: &mut Context| {
-    // Flow content
-    ui.col(|ui| {
-        ui.text("Main content here");
-    });
-
-    // Floating badge in the bottom-right with a 2x1 cell inset
-    ui.overlay_at_offset(Anchor::BottomRight, 2, 1, |ui| {
-        ui.text("Saved").dim();
-    });
-
-    // Modal with backdrop, pinned near the top-right corner
-    if show_dialog {
-        ui.modal_with(ModalOpts::new().anchor(Anchor::TopRight).offset(2, 1), |ui| {
-            ui.text("Confirm?");
-            if ui.button("OK").clicked { show_dialog = false; }
+fn main() -> std::io::Result<()> {
+    let mut show_dialog = true;
+    slt::run(|ui: &mut Context| {
+        // Flow content
+        ui.col(|ui| {
+            ui.text("Main content here");
         });
-    }
-});
+
+        // Floating badge in the bottom-right with a 2x1 cell inset
+        ui.overlay_at_offset(Anchor::BottomRight, 2, 1, |ui| {
+            ui.text("Saved").dim();
+        });
+
+        // Modal with backdrop, pinned near the top-right corner
+        if show_dialog {
+            ui.modal_with(ModalOpts::new().anchor(Anchor::TopRight).offset(2, 1), |ui| {
+                ui.text("Confirm?");
+                if ui.button("OK").clicked { show_dialog = false; }
+            });
+        }
+    })
+}
 ```
 
 That's the whole positioning system. Nine anchors, `overlay_at` /

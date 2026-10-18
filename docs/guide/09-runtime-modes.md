@@ -21,17 +21,24 @@ To drive SLT from a non-terminal target or an external event loop, read
 
 `RunConfig` is the runtime policy object for all built-in loops.
 
+<!-- slt-check: {"name": "rt_run_config", "features": ["crossterm"], "context": "module"} -->
 ```rust
 use slt::{MouseMode, RunConfig, Theme};
 use std::time::Duration;
 
-let config = RunConfig::default()
-    .tick_rate(Duration::from_millis(16))
-    .mouse_mode(MouseMode::Hover)
-    .theme(Theme::light())
-    .max_fps(60)
-    .scroll_speed(2)
-    .title("My App");
+fn main() -> std::io::Result<()> {
+    let config = RunConfig::default()
+        .tick_rate(Duration::from_millis(16))
+        .mouse_mode(MouseMode::Hover)
+        .theme(Theme::light())
+        .max_fps(60)
+        .scroll_speed(2)
+        .title("My App");
+
+    slt::run_with(config, |ui| {
+        ui.text("configured");
+    })
+}
 ```
 
 Important details:
@@ -61,12 +68,20 @@ Use it when the TUI is a helper surface rather than the whole app.
 
 `StaticOutput` is a scrollback-friendly companion for inline apps.
 
+<!-- slt-check: {"name": "rt_static_output", "features": ["crossterm"], "context": "module"} -->
 ```rust
 use slt::StaticOutput;
 
-let mut output = StaticOutput::new();
-output.println("Build started...");
-output.println("Fetching data...");
+fn main() -> std::io::Result<()> {
+    let mut output = StaticOutput::new();
+    output.println("Build started...");
+    output.println("Fetching data...");
+
+    // Printed lines go to scrollback; the closure stays live below them.
+    slt::run_static(&mut output, 3, |ui| {
+        ui.text("Working...");
+    })
+}
 ```
 
 Use it when you want:

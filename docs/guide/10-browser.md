@@ -59,6 +59,7 @@ must remove every path/git override and resolve both exact published versions.
 
 ## Mounting And Options
 
+<!-- slt-check-skip: uses the separate slt-wasm workspace crate (slt_wasm::WasmOptions, run_wasm_with_options) and a browser host element; the checker only depends on superlighttui -->
 ```rust,ignore
 let options = slt_wasm::WasmOptions {
     width: 80,

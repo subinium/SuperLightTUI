@@ -29,6 +29,7 @@ State is plain Rust variables; there is no app trait, message enum, or retained 
 cargo add superlighttui
 ```
 
+<!-- slt-check: {"name": "readme_hello", "features": ["crossterm"], "context": "module"} -->
 ```rust
 fn main() -> std::io::Result<()> {
     slt::run(|ui: &mut slt::Context| {
@@ -45,6 +46,7 @@ drags (split handles, scrollbar thumbs, text selection); over SSH it falls back 
 clicks and the wheel only. Tab/Shift+Tab move focus and Enter/Space activate the
 focused button either way:
 
+<!-- slt-check: {"name": "readme_click_counter", "features": ["crossterm"], "context": "module"} -->
 ```rust
 use slt::Context;
 
@@ -94,6 +96,7 @@ There are four ideas most apps start with:
 3. Styling is method chaining.
 4. Interactive widgets usually return `Response`.
 
+<!-- slt-check: {"name": "readme_grammar", "features": [], "context": "ui"} -->
 ```rust
 ui.bordered(Border::Rounded).title("Status").p(1).gap(1).col(|ui| {
     ui.text("SLT").bold().fg(Color::Cyan);
@@ -114,6 +117,7 @@ mouse is on by default).
 
 ## A Real App
 
+<!-- slt-check: {"name": "readme_real_app", "features": ["crossterm"], "context": "module"} -->
 ```rust
 use slt::{Border, Color, Context, KeyCode};
 
@@ -239,6 +243,7 @@ For the full eight-stage lifecycle, see [Architecture Guide].
 Stateless calls take values; stateful widgets take an explicit state struct so your data
 keeps living in normal Rust variables across frames.
 
+<!-- slt-check: {"name": "readme_api_surface", "features": [], "context": "ui", "setup": "let mut input = TextInputState::new(); let mut dark = false; let mut tabs = TabsState::new(vec![\"Home\", \"Logs\"]); let mut list = ListState::new(vec![\"a\", \"b\"]); let mut table = TableState::new(vec![\"Name\"], vec![vec![\"SLT\"]]); let mut palette = CommandPaletteState::new(vec![PaletteCommand::new(\"Quit\", \"Exit\")]); let mut toasts = ToastState::new(); let data = vec![(0.0, 1.0), (1.0, 2.0)]; let values = vec![1.0, 3.0, 2.0];"} -->
 ```rust
 // Text and layout
 ui.text("Hello").bold().fg(Color::Cyan);

@@ -1,5 +1,7 @@
 # SLT Rustdoc Style Guide (Detail Tier)
 
+<!-- slt-check-default: illustrative fragments require application context -->
+
 > Companion to [Design principles](design-principles.md). This doc
 > is the **Detail tier**: how rustdoc is written so both humans and AI
 > assistants can predict the next call from the docs alone.

@@ -1,5 +1,7 @@
 # SLT Demo Guide
 
+<!-- slt-check-default: illustrative fragments require application context -->
+
 > Companion to [Design principles](design-principles.md). Not a tier
 > doc — this is a **practitioner manual** for the people writing
 > `examples/*.rs`. Every rule here exists because a real demo bug shipped

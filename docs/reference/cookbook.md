@@ -26,10 +26,11 @@ superlighttui = "0.25"
 
 Every recipe follows the same outer shape:
 
+<!-- slt-check: {"name":"cookbook_outer_shape","features":["crossterm"],"context":"module"} -->
 ```rust
 fn main() -> std::io::Result<()> {
     // 1. Create state once, outside the closure.
-    let mut state = /* ... */;
+    let mut clicks = 0u32;
 
     // 2. Your closure runs each frame. The mouse is on by default: clicks,
     //    the scroll wheel, and drags reach SLT, and keyboard focus +
@@ -42,7 +43,10 @@ fn main() -> std::io::Result<()> {
         }
 
         // Describe your UI.
-        ui.text("hello");
+        ui.text(format!("hello, {clicks} clicks"));
+        if ui.button("+1").clicked {
+            clicks += 1;
+        }
     })
 }
 ```
@@ -65,6 +69,7 @@ The closure is the whole app. Plain Rust variables hold state; `slt::Context` mu
 
 ### Full code
 
+<!-- slt-check: {"name":"cookbook_login","features":["crossterm"],"context":"module"} -->
 ```rust
 use slt::{AlertLevel, Border, Color, Context, KeyCode, TextInputState};
 
@@ -163,6 +168,7 @@ fn main() -> std::io::Result<()> {
 
 ### Full code
 
+<!-- slt-check: {"name":"cookbook_table","features":["crossterm"],"context":"module"} -->
 ```rust
 use slt::{Border, Color, Context, KeyCode, TableState, TextInputState};
 
@@ -270,6 +276,7 @@ fn main() -> std::io::Result<()> {
 
 ### Full code
 
+<!-- slt-check: {"name":"cookbook_modal_toast","features":["crossterm"],"context":"module"} -->
 ```rust
 use slt::{Border, ButtonVariant, Color, Context, KeyCode, ToastState};
 
@@ -391,6 +398,7 @@ fn main() -> std::io::Result<()> {
 
 ### Full code
 
+<!-- slt-check: {"name":"cookbook_dashboard","features":["crossterm"],"context":"module"} -->
 ```rust
 use slt::{Border, Color, Context, KeyCode, SpinnerState, Trend};
 
@@ -516,6 +524,7 @@ fn main() -> std::io::Result<()> {
 
 ### Full code
 
+<!-- slt-check: {"name":"cookbook_file_picker","features":["crossterm"],"context":"module"} -->
 ```rust
 use slt::{Border, Color, Context, FilePickerState, KeyCode, ScrollState, ToastState};
 use std::path::PathBuf;
@@ -650,6 +659,7 @@ Reserve explicit parameters for **writes** (`&mut MyDocState`, `&mut ToastState`
 
 ### Full code
 
+<!-- slt-check: {"name":"cookbook_shared_context","features":["crossterm"],"context":"module"} -->
 ```rust
 use slt::{Border, Color, Context, KeyCode, Theme};
 
@@ -723,12 +733,16 @@ fn render_card(ui: &mut Context) {
 
 For unbounded accumulation use `RichLogState::new_unbounded()` and accept the memory cost, or add your own retention policy on top of the bounded variant.
 
+<!-- slt-check: {"name":"cookbook_rich_log_cap","features":[],"context":"module"} -->
 ```rust
-// Bounded — drops oldest after 10k entries.
-let mut log = slt::RichLogState::new();
+fn logs() -> (slt::RichLogState, slt::RichLogState) {
+    // Bounded — drops oldest after 10k entries.
+    let bounded = slt::RichLogState::new();
 
-// Unbounded — grows until the process dies. Use only when you control the input rate.
-let mut log = slt::RichLogState::new_unbounded();
+    // Unbounded — grows until the process dies. Use only when you control the input rate.
+    let unbounded = slt::RichLogState::new_unbounded();
+    (bounded, unbounded)
+}
 ```
 
 ### Delete the selected list item or table row
@@ -737,6 +751,7 @@ The highlighted row is a position in the **filtered** (and, for tables,
 sorted) view, while `remove_item` / `remove_row` take a **data** index into the
 underlying items. Use the selection helpers, which map between the two:
 
+<!-- slt-check: {"name":"cookbook_remove_selected","features":[],"context":"ui","setup":"let mut list = ListState::new(vec![\"a\", \"b\"]); let mut table = TableState::new(vec![\"Name\"], vec![vec![\"x\"]]); let _ = ui.list(&mut list);"} -->
 ```rust
 let _ = list.remove_selected(); // the item the user sees highlighted
 let _ = table.remove_selected(); // the row the user sees highlighted

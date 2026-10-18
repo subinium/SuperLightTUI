@@ -1,5 +1,7 @@
 # SLT Architecture
 
+<!-- slt-check-default: illustrative fragments require application context -->
+
 This document describes how the code is organized and how data flows
 through the system. It is the **Macro tier** of SLT's convention stack —
 see [Design principles](design-principles.md) §4 for the full

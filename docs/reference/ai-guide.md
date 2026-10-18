@@ -51,6 +51,7 @@ Stateful widgets (`list_colored`, `table_colored`, `text_input_colored`, ...) ta
 
 Exception: `ui.use_state_keyed(id, init)` and `ui.use_state_keyed_default::<T>(id)` are id-keyed variants and are safe inside `if`/`match` branches and loops (`id` is a `&'static str` or a runtime `String`). `use_state_named` is a deprecated alias that now shares the same slot.
 
+<!-- slt-check-skip: anti-pattern shown for contrast; the Wrong half drifts hook order -->
 ```rust
 // Wrong: order-based hook inside a conditional drifts the call order.
 if expanded {
@@ -124,6 +125,7 @@ Phase-0 streaming benchmark.
 
 When a value is *read* by many nested render functions (theme, current tick, current user, toast bus), do not thread `&theme`, `&tick`, `&mut toasts` parameters through every signature. Use `ui.provide(value, |ui| ...)` once near the root, then have nested code read it back with `ui.use_context::<T>()` (panics if missing) or `ui.try_use_context::<T>()` (returns `Option<&T>`). Added in v0.19.0.
 
+<!-- slt-check: {"name":"ai_guide_provide_context","features":["crossterm"],"context":"module"} -->
 ```rust
 // `provide` boxes the value as `dyn Any`, so the type must satisfy `T: 'static`.
 // `Theme` is `Copy`, so deref-copy from `ui.theme()`. Use `&'static str` for
@@ -135,13 +137,14 @@ struct AppCtx {
     user: &'static str,
 }
 
-slt::run(|ui: &mut slt::Context| {
-    let ctx = AppCtx { theme: *ui.theme(), tick: ui.tick(), user: "subin" };
-    ui.provide(ctx, |ui| {
-        render_header(ui);
-        render_card(ui);
-    });
-});
+fn main() -> std::io::Result<()> {
+    slt::run(|ui: &mut slt::Context| {
+        let ctx = AppCtx { theme: *ui.theme(), tick: ui.tick(), user: "subin" };
+        ui.provide(ctx, |ui| {
+            render_card(ui);
+        });
+    })
+}
 
 fn render_card(ui: &mut slt::Context) {
     // End the immutable borrow before the next `&mut ui` widget call.

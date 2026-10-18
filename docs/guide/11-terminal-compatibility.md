@@ -4,8 +4,6 @@ SLT runs anywhere crossterm runs, but terminals and multiplexers differ in
 what they support. This page lists what each feature needs, how SLT decides,
 what happens when the feature is missing, and how to diagnose problems.
 
-<!-- slt-check-default: illustrative fragments require application context -->
-
 ## How much of this is verified
 
 Be precise about what "works in X" means here:

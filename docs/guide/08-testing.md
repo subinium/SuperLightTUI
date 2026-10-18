@@ -2,8 +2,6 @@
 
 This guide covers the test paths that contributors and AI-assisted editors should reach for first.
 
-<!-- slt-check-default: illustrative fragments require application context -->
-
 ## Start with the right lane
 
 SLT testing is easier if you pick the right layer up front.
@@ -21,15 +19,18 @@ Most tests should stay in the first two lanes.
 
 `TestBackend` renders one or more frames into an in-memory buffer without a real terminal.
 
+<!-- slt-check: {"name":"testing_render_hello","features":[],"context":"module"} -->
 ```rust
 use slt::TestBackend;
 
-let mut tb = TestBackend::new(40, 10);
-tb.render(|ui| {
-    ui.text("Hello");
-});
+fn renders_hello() {
+    let mut tb = TestBackend::new(40, 10);
+    tb.render(|ui| {
+        ui.text("Hello");
+    });
 
-tb.assert_contains("Hello");
+    tb.assert_contains("Hello");
+}
 ```
 
 Use this for:
@@ -42,19 +43,22 @@ Use this for:
 
 ## Simulating input with `EventBuilder`
 
+<!-- slt-check: {"name":"testing_event_builder","features":[],"context":"module"} -->
 ```rust
 use slt::{EventBuilder, KeyCode, TestBackend};
 
-let mut tb = TestBackend::new(40, 10);
-let events = EventBuilder::new()
-    .key('h')
-    .key_code(KeyCode::Tab)
-    .click(4, 2)
-    .build();
+fn handles_input() {
+    let mut tb = TestBackend::new(40, 10);
+    let events = EventBuilder::new()
+        .key('h')
+        .key_code(KeyCode::Tab)
+        .click(4, 2)
+        .build();
 
-tb.run_with_events(events, |ui| {
-    ui.text("interactive");
-});
+    tb.run_with_events(events, |ui| {
+        ui.text("interactive");
+    });
+}
 ```
 
 Use `EventBuilder` when the widget logic depends on keyboard, mouse, paste, or resize events.
@@ -85,19 +89,25 @@ Click vs drag is the test gap most authors miss — a `click` is a single
 left-button press (add `.mouse_up(x, y)` when a handler needs the release),
 a `drag` is movement while a button is held:
 
+<!-- slt-check: {"name":"testing_click_vs_drag","features":[],"context":"module"} -->
 ```rust
-// Click: a left-button press in that cell
-let events = EventBuilder::new()
-    .click(10, 4)
-    .build();
+use slt::{Event, EventBuilder};
 
-// Drag: emit drag events while moving across cells
-let events = EventBuilder::new()
-    .drag(10, 4)
-    .drag(11, 4)
-    .drag(12, 4)
-    .mouse_up(12, 4)
-    .build();
+fn click_and_drag() -> (Vec<Event>, Vec<Event>) {
+    // Click: a left-button press in that cell
+    let click = EventBuilder::new()
+        .click(10, 4)
+        .build();
+
+    // Drag: emit drag events while moving across cells
+    let drag = EventBuilder::new()
+        .drag(10, 4)
+        .drag(11, 4)
+        .drag(12, 4)
+        .mouse_up(12, 4)
+        .build();
+    (click, drag)
+}
 ```
 
 Use `mouse_up` when you want to assert that a handler only fires on release
@@ -129,7 +139,7 @@ one closure over plain `&mut` state, with no `RefCell`:
 
 <!-- slt-check: {"name":"testing_step_sequence","features":[],"context":"module"} -->
 ```rust
-use slt::{KeyCode, TestBackend, TextInputState};
+use slt::{Context, KeyCode, TestBackend, TextInputState};
 
 fn tab_then_type() {
     let mut tb = TestBackend::new(30, 4);
@@ -200,11 +210,15 @@ If you change internals and the public API stays the same, this test lane is oft
 
 ## Assertions that age well
 
+<!-- slt-check: {"name":"testing_assertions","features":[],"context":"module"} -->
 ```rust
-tb.assert_contains("Saved");
-tb.assert_line(0, "Header");
-tb.assert_line_contains(3, "status");
-let snapshot = tb.to_string_trimmed();
+fn check_screen(tb: &TestBackend) {
+    tb.assert_contains("Saved");
+    tb.assert_line(0, "Header");
+    tb.assert_line_contains(3, "status");
+    let snapshot = tb.to_string_trimmed();
+    assert!(snapshot.lines().count() <= 10);
+}
 ```
 
 The most robust pattern is:
@@ -236,6 +250,7 @@ insta = "1"
 
 Compare the full buffer against a checked-in snapshot:
 
+<!-- slt-check-skip: needs the external insta dev-dependency and the #[test] harness -->
 ```rust,ignore
 use slt::TestBackend;
 
@@ -332,6 +347,7 @@ For custom widgets:
 - use `interaction()` if you need click/hover without a wrapping container
 - verify both rendering and return-value semantics
 
+<!-- slt-check: {"name":"testing_custom_widget","features":[],"context":"ui","setup":"struct Rating; impl Widget for Rating { type Response = bool; fn ui(&mut self, _ui: &mut Context) -> bool { true } } let mut rating = Rating;"} -->
 ```rust
 let changed = ui.widget(&mut rating);
 assert!(changed);

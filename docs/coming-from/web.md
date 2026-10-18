@@ -4,8 +4,6 @@ This guide maps what you already know from HTML, CSS, the DOM, and React onto
 SLT. It is a translation table plus the handful of places where a terminal
 works differently from a browser.
 
-<!-- slt-check-default: illustrative fragments require application context -->
-
 ## The mental model in one paragraph
 
 Your closure is a render function that runs **every frame**, like a React

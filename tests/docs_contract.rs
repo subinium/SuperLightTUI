@@ -1,6 +1,6 @@
 //! Repository-level documentation and release-contract checks.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -733,4 +733,321 @@ fn state_api_guide_lists_every_public_widget_state() {
             }
         }
     }
+}
+
+/// `required-features` of every `[[example]]` target that declares them.
+fn example_required_features(manifest: &str) -> BTreeMap<String, Vec<String>> {
+    let mut out = BTreeMap::new();
+    let mut name: Option<String> = None;
+    for line in manifest.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            name = None;
+            if line == "[[example]]" {
+                name = Some(String::new());
+            }
+            continue;
+        }
+        let Some(current) = name.as_mut() else {
+            continue;
+        };
+        if let Some(value) = line
+            .strip_prefix("name = \"")
+            .and_then(|value| value.strip_suffix('"'))
+        {
+            *current = value.to_string();
+        } else if let Some(list) = line
+            .strip_prefix("required-features = [")
+            .and_then(|value| value.strip_suffix(']'))
+        {
+            let features = list
+                .split(',')
+                .map(|feature| feature.trim().trim_matches('"').to_string())
+                .filter(|feature| !feature.is_empty())
+                .collect();
+            out.insert(current.clone(), features);
+        }
+    }
+    out
+}
+
+/// Features a single command line enables with `--features a,b` /
+/// `--features "a b"` / `-F a`; `None` means `--all-features`.
+fn enabled_features(command: &str) -> Option<BTreeSet<String>> {
+    if command.contains("--all-features") {
+        return None;
+    }
+    let mut enabled = BTreeSet::new();
+    let words: Vec<&str> = command.split_whitespace().collect();
+    for (index, word) in words.iter().enumerate() {
+        let value = if let Some(value) = word.strip_prefix("--features=") {
+            Some(value.to_string())
+        } else if *word == "--features" || *word == "-F" {
+            let mut value = String::new();
+            for next in &words[index + 1..] {
+                value.push_str(next);
+                value.push(' ');
+                let opens_quote = value.starts_with(['"', '\'']);
+                let closed = value.trim_end().len() > 1 && value.trim_end().ends_with(['"', '\'']);
+                if !opens_quote || closed {
+                    break;
+                }
+            }
+            Some(value)
+        } else {
+            None
+        };
+        if let Some(value) = value {
+            for feature in value
+                .trim_matches(|ch: char| ch == '"' || ch == '\'' || ch == '`' || ch.is_whitespace())
+                .split(|ch: char| ch == ',' || ch.is_whitespace())
+            {
+                let feature = feature.trim_start_matches(['"', '\'', '`']);
+                let len = feature
+                    .bytes()
+                    .take_while(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+                    .count();
+                let feature = &feature[..len];
+                if !feature.is_empty() {
+                    enabled.insert(feature.to_string());
+                }
+            }
+        }
+    }
+    Some(enabled)
+}
+
+/// `cargo run --example X` lines that omit a required feature of `X`.
+fn missing_example_features(text: &str, required: &BTreeMap<String, Vec<String>>) -> Vec<String> {
+    let mut missing = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        for (start, _) in line.match_indices("cargo run") {
+            let command = &line[start..];
+            // A line may hold several commands (`a && b`, table cells, prose).
+            let command = command
+                .split(['|', ';'])
+                .next()
+                .unwrap_or(command)
+                .split("&&")
+                .next()
+                .unwrap_or(command)
+                .split('`')
+                .next()
+                .unwrap_or(command);
+            let Some(name) = advertised_examples(command).next() else {
+                continue;
+            };
+            let Some(features) = required.get(name) else {
+                continue;
+            };
+            let Some(enabled) = enabled_features(command) else {
+                continue;
+            };
+            let absent: Vec<&str> = features
+                .iter()
+                .filter(|feature| !enabled.contains(*feature) && !enabled.contains("full"))
+                .map(String::as_str)
+                .collect();
+            if !absent.is_empty() {
+                missing.push(format!(
+                    "{}: `{}` needs --features {}",
+                    index + 1,
+                    command.trim(),
+                    absent.join(",")
+                ));
+            }
+        }
+    }
+    missing
+}
+
+/// Files that tell users how to run examples or depend on the crate.
+fn user_facing_text_files(root: &Path) -> Vec<PathBuf> {
+    let mut files = vec![
+        root.join("README.md"),
+        root.join("CONTRIBUTING.md"),
+        root.join("AGENTS.md"),
+        root.join("docs/llms.txt"),
+    ];
+    collect_files(&root.join("docs"), "md", &mut files);
+    collect_files(&root.join(".agents/skills"), "md", &mut files);
+    collect_files(&root.join(".claude/skills"), "md", &mut files);
+    files
+}
+
+#[test]
+fn advertised_examples_enable_required_features() {
+    let required = BTreeMap::from([("system_tour".to_string(), vec!["async".to_string()])]);
+    assert_eq!(
+        missing_example_features("cargo run --example system_tour\n", &required).len(),
+        1
+    );
+    for ok in [
+        "cargo run --example system_tour --features async",
+        "cargo run --example system_tour --features \"async image\"",
+        "cargo run --example system_tour --features=serde,async",
+        "cargo run --example system_tour --all-features",
+        "`cargo run --example system_tour -F async` | `cargo run --example hello`",
+        "ui.text(\"cargo run --example system_tour --features async\").bold();",
+    ] {
+        assert!(
+            missing_example_features(ok, &required).is_empty(),
+            "{ok} should be accepted"
+        );
+    }
+
+    let root = repo_root();
+    let manifest = read(root.join("Cargo.toml"));
+    let required = example_required_features(&manifest);
+    assert!(
+        required
+            .get("system_tour")
+            .is_some_and(|features| features.iter().any(|f| f == "async")),
+        "manifest parser must see system_tour's required-features"
+    );
+    let mut files = user_facing_text_files(&root);
+    collect_files(&root.join("examples"), "rs", &mut files);
+    let mut missing = Vec::new();
+    for path in files {
+        for problem in missing_example_features(&read(&path), &required) {
+            missing.push(format!("{}:{problem}", relative(&root, &path)));
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "advertised examples must enable their required-features:\n{}",
+        missing.join("\n")
+    );
+}
+
+/// `major.minor` of a version requirement such as `0.25`, `=0.25.0`, `^0.26`.
+fn requirement_minor(requirement: &str) -> Option<String> {
+    let version = requirement.trim_start_matches(['=', '^', '~', ' ']);
+    let mut parts = version.split('.');
+    let major: u64 = parts.next()?.parse().ok()?;
+    let minor: u64 = parts.next()?.parse().ok()?;
+    Some(format!("{major}.{minor}"))
+}
+
+/// Dependency pins on `superlighttui` whose minor is neither the package
+/// minor nor the next minor (pages written for the unreleased version
+/// before the release bump). `"..."` placeholders are allowed.
+fn stale_pins(text: &str, package: &str) -> Vec<String> {
+    let current = requirement_minor(package).expect("package version");
+    let (major, minor) = current.split_once('.').expect("major.minor");
+    let next = format!("{major}.{}", minor.parse::<u64>().expect("minor") + 1);
+    let mut stale = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        for needle in ["superlighttui = \"", "superlighttui = { version = \""] {
+            for (start, _) in line.match_indices(needle) {
+                let tail = &line[start + needle.len()..];
+                let requirement = &tail[..tail.find('"').unwrap_or(tail.len())];
+                if requirement == "..." {
+                    continue;
+                }
+                match requirement_minor(requirement) {
+                    Some(found) if found == current || found == next => {}
+                    _ => stale.push(format!("{}: superlighttui {requirement}", index + 1)),
+                }
+            }
+        }
+    }
+    stale
+}
+
+#[test]
+fn dependency_pins_track_the_package_minor() {
+    assert_eq!(
+        stale_pins("superlighttui = \"0.23.0\"\n", "0.25.0").len(),
+        1
+    );
+    assert!(stale_pins("superlighttui = \"0.25\"\n", "0.25.0").is_empty());
+    assert!(
+        stale_pins(
+            "superlighttui = { version = \"0.26\", features = [\"ratatui\"] }\n",
+            "0.25.0"
+        )
+        .is_empty()
+    );
+    assert_eq!(stale_pins("superlighttui = \"0.25\"\n", "0.26.0").len(), 1);
+
+    let root = repo_root();
+    let manifest = read(root.join("Cargo.toml"));
+    let version = package_version(&manifest);
+    let mut stale = Vec::new();
+    for path in user_facing_text_files(&root) {
+        let link = relative(&root, &path);
+        // Version-by-version upgrade notes and dated snapshots name old
+        // releases on purpose.
+        if link == "docs/reference/migration.md" || link.starts_with("docs/archive/") {
+            continue;
+        }
+        for problem in stale_pins(&read(&path), version) {
+            stale.push(format!("{link}:{problem}"));
+        }
+    }
+    assert!(
+        stale.is_empty(),
+        "superlighttui dependency pins must use the {version} minor (or the next, unreleased one):\n{}",
+        stale.join("\n")
+    );
+}
+
+/// Relative file paths under `dir`, mapped to their bytes.
+fn tree_bytes(dir: &Path) -> BTreeMap<String, Vec<u8>> {
+    fn walk(base: &Path, dir: &Path, out: &mut BTreeMap<String, Vec<u8>>) {
+        for entry in fs::read_dir(dir)
+            .unwrap_or_else(|error| panic!("failed to read directory {}: {error}", dir.display()))
+        {
+            let path = entry.expect("directory entry").path();
+            if path.is_dir() {
+                walk(base, &path, out);
+            } else {
+                let bytes = fs::read(&path).expect("skill file");
+                out.insert(relative(base, &path), bytes);
+            }
+        }
+    }
+    let mut out = BTreeMap::new();
+    walk(dir, dir, &mut out);
+    out
+}
+
+/// Differences between two skill trees: files missing on either side or
+/// with different bytes.
+fn tree_differences(
+    left: &BTreeMap<String, Vec<u8>>,
+    right: &BTreeMap<String, Vec<u8>>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for (path, bytes) in left {
+        match right.get(path) {
+            None => out.push(format!("only in .agents/skills: {path}")),
+            Some(other) if other != bytes => out.push(format!("differs: {path}")),
+            Some(_) => {}
+        }
+    }
+    for path in right.keys().filter(|path| !left.contains_key(*path)) {
+        out.push(format!("only in .claude/skills: {path}"));
+    }
+    out
+}
+
+#[test]
+fn agent_skill_copies_are_identical() {
+    let a = BTreeMap::from([("slt/SKILL.md".to_string(), b"one".to_vec())]);
+    let b = BTreeMap::from([("slt/SKILL.md".to_string(), b"two".to_vec())]);
+    assert_eq!(tree_differences(&a, &b), vec!["differs: slt/SKILL.md"]);
+    assert_eq!(tree_differences(&a, &BTreeMap::new()).len(), 1);
+
+    let root = repo_root();
+    let agents = tree_bytes(&root.join(".agents/skills"));
+    let claude = tree_bytes(&root.join(".claude/skills"));
+    assert!(!agents.is_empty(), ".agents/skills must not be empty");
+    let differences = tree_differences(&agents, &claude);
+    assert!(
+        differences.is_empty(),
+        ".agents/skills and .claude/skills must be byte-identical:\n{}",
+        differences.join("\n")
+    );
 }

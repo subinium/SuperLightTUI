@@ -21,6 +21,7 @@ SLT ships with 10 built-in themes:
 
 ### Usage with RunConfig
 
+<!-- slt-check: {"name": "th_runconfig_theme", "features": ["crossterm"], "context": "module"} -->
 ```rust
 use slt::{RunConfig, Theme};
 
@@ -37,6 +38,7 @@ fn main() -> std::io::Result<()> {
 
 Build a custom theme by overriding specific fields. Unset fields fall back to `Theme::dark()` defaults.
 
+<!-- slt-check: {"name": "th_builder", "features": [], "context": "ui"} -->
 ```rust
 use slt::{Color, Theme};
 
@@ -47,6 +49,7 @@ let theme = Theme::builder()
     .text(Color::Rgb(220, 220, 230))
     .is_dark(true)
     .build();
+ui.set_theme(theme);
 ```
 
 ### Builder entry points
@@ -57,6 +60,7 @@ let theme = Theme::builder()
 | `Theme::light_builder()` | `Theme::light()` | Build a light theme — keeps light bg/text/border defaults instead of dark ones (v0.19.2) |
 | `Theme::builder_from(base)` | All fields of `base` | Derive a variant from any preset, override only the fields you want to change (v0.19.2) |
 
+<!-- slt-check: {"name": "th_builder_entry_points", "features": [], "context": "ui"} -->
 ```rust
 use slt::{Color, Theme};
 
@@ -71,12 +75,14 @@ let my_light = Theme::light_builder()
     .primary(Color::Rgb(0, 100, 200))
     .build();
 assert!(!my_light.is_dark);
+ui.set_theme(custom_nord);
 ```
 
 ### `const fn` ThemeBuilder (v0.19.2)
 
 Every `ThemeBuilder` setter is `const fn`, including `builder()`, `builder_from()`, `light_builder()`, `build()`, and all field setters (`primary`, `secondary`, `accent`, `text`, `text_dim`, `border`, `bg`, `success`, `warning`, `error`, `selected_bg`, `selected_fg`, `selection_bg`, `surface`, `surface_hover`, `surface_text`, `is_dark`, `spacing`). You can define themes at compile time:
 
+<!-- slt-check: {"name": "th_const_builder", "features": [], "context": "module"} -->
 ```rust
 use slt::{Color, Theme};
 
@@ -118,6 +124,7 @@ Compile-time themes incur no runtime construction cost and let you embed branded
 
 The `Spacing` struct provides a consistent spacing scale based on a configurable base unit (default: 1 cell).
 
+<!-- slt-check: {"name": "th_spacing", "features": [], "context": "ui"} -->
 ```rust
 let sp = ui.spacing();
 ui.container().gap(sp.md()).col(|ui| {
@@ -143,6 +150,7 @@ Custom base: `Spacing::new(2)` doubles all values.
 
 `ThemeColor` lets styles reference theme colors by name. Colors resolve automatically when the theme changes.
 
+<!-- slt-check: {"name": "th_theme_color", "features": [], "context": "ui"} -->
 ```rust
 use slt::{ContainerStyle, ThemeColor, Border};
 
@@ -155,6 +163,10 @@ const CARD: ContainerStyle = ContainerStyle::new()
 // Resolve in code:
 let primary = ui.color(ThemeColor::Primary);
 let surface = ui.theme().resolve(ThemeColor::Surface);
+
+ui.container().apply(&CARD).col(|ui| {
+    ui.text("Resolved tokens").fg(primary).bg(surface);
+});
 ```
 
 | Variant | Resolves to |
@@ -168,18 +180,24 @@ let surface = ui.theme().resolve(ThemeColor::Surface);
 
 ## Contrast Helpers
 
+<!-- slt-check: {"name": "th_contrast", "features": [], "context": "ui"} -->
 ```rust
 use slt::Color;
+
+let fg = Color::Rgb(205, 214, 244);
+let bg = Color::Rgb(30, 30, 46);
 
 // WCAG 2.1 contrast ratio (>= 4.5 for AA normal text)
 let ratio = Color::contrast_ratio_f64(fg, bg);
 let ok = Color::meets_contrast_aa(fg, bg);
 
 // Auto-select readable text color for any background
-let fg = ui.theme().contrast_text_on(bg_color);
+let label_fg = ui.theme().contrast_text_on(bg);
 
 // Blend color against theme background
-let overlay = ui.theme().overlay_f64(color, 0.5);
+let overlay = ui.theme().overlay_f64(Color::Cyan, 0.5);
+
+ui.text(format!("ratio {ratio:.1}, AA: {ok}")).fg(label_fg).bg(overlay);
 ```
 
 > **Note (v0.19.1)**: `Color::contrast_fg` and `Theme::contrast_text_on` use the WCAG 2.1 relative luminance threshold of `0.179`, not the previous `0.5`. Mid-tone backgrounds — Dracula purple (`Rgb(189, 147, 249)`, luminance ≈ 0.385), Solarized base1, Catppuccin lavender — now route to white text instead of black, matching WCAG AA contrast guidance. If you depended on the old midpoint behavior for stylistic reasons, override per-callsite with `WidgetColors` instead of relying on the default.
@@ -188,25 +206,28 @@ let overlay = ui.theme().overlay_f64(color, 0.5);
 
 Change themes and dark mode on the fly inside your render closure:
 
+<!-- slt-check: {"name": "th_runtime_switch", "features": ["crossterm"], "context": "module"} -->
 ```rust
 use slt::{Color, Theme};
 
-slt::run(|ui| {
-    // Switch the entire theme
-    if ui.key('t') {
-        ui.set_theme(Theme::nord());
-    }
+fn main() -> std::io::Result<()> {
+    slt::run(|ui| {
+        // Switch the entire theme
+        if ui.key('t') {
+            ui.set_theme(Theme::nord());
+        }
 
-    // Toggle dark mode
-    if ui.key('d') {
-        let dark = ui.is_dark_mode();
-        ui.set_dark_mode(!dark);
-    }
+        // Toggle dark mode
+        if ui.key('d') {
+            let dark = ui.is_dark_mode();
+            ui.set_dark_mode(!dark);
+        }
 
-    // Pick a color based on current mode
-    let accent = ui.light_dark(Color::Rgb(37, 99, 235), Color::Cyan);
-    ui.text("Adaptive text").fg(accent);
-})
+        // Pick a color based on current mode
+        let accent = ui.light_dark(Color::Rgb(37, 99, 235), Color::Cyan);
+        ui.text("Adaptive text").fg(accent);
+    })
+}
 ```
 
 | Method | Description |
@@ -220,6 +241,7 @@ slt::run(|ui| {
 
 Override individual widget colors without changing the global theme. Stateful widgets have a `_colored` variant that takes `&WidgetColors` as the last argument; `button` takes it as a chained `.colors(&c)`.
 
+<!-- slt-check: {"name": "th_widget_colors", "features": [], "context": "ui", "setup": "let mut list_state = ListState::new(vec![\"a\", \"b\"]); let mut table_state = TableState::new(vec![\"Name\"], vec![vec![\"x\"]]);"} -->
 ```rust
 use slt::{Color, WidgetColors};
 
@@ -254,19 +276,22 @@ Resolution order: `theme_*` > literal field > theme default. Use `resolve_fg(&th
 
 Set default colors for all instances of a widget type via `RunConfig`:
 
+<!-- slt-check: {"name": "th_widget_theme", "features": ["crossterm"], "context": "module"} -->
 ```rust
 use slt::{RunConfig, WidgetTheme, WidgetColors, Color};
 
-let config = RunConfig::default()
-    .widget_theme(
-        WidgetTheme::new()
-            .button(WidgetColors::new().accent(Color::Cyan))
-            .table(WidgetColors::new().border(Color::Magenta))
-    );
+fn main() -> std::io::Result<()> {
+    let config = RunConfig::default()
+        .widget_theme(
+            WidgetTheme::new()
+                .button(WidgetColors::new().accent(Color::Cyan))
+                .table(WidgetColors::new().border(Color::Magenta))
+        );
 
-slt::run_with(config, |ui| {
-    ui.button("All cyan");  // uses WidgetTheme.button defaults
-})
+    slt::run_with(config, |ui| {
+        ui.button("All cyan").show(); // uses WidgetTheme.button defaults
+    })
+}
 ```
 
 Per-callsite overrides (`_colored(..)` or `.colors(..)`) still take precedence over `WidgetTheme` defaults.
@@ -294,6 +319,7 @@ Per-callsite overrides (`_colored(..)` or `.colors(..)`) still take precedence o
 
 A builder argument cannot borrow `ui` again, so bind theme colors first:
 
+<!-- slt-check: {"name": "th_bind_theme_color", "features": [], "context": "ui"} -->
 ```rust
 let ok = ui.theme().success;
 ui.badge("healthy").color(ok);
@@ -303,6 +329,7 @@ ui.badge("healthy").color(ok);
 
 The `palette::tailwind` module provides all 22 Tailwind CSS color palettes as `const` values. Each palette has 11 shades from lightest (`c50`) to darkest (`c950`).
 
+<!-- slt-check: {"name": "th_tailwind_shades", "features": [], "context": "ui"} -->
 ```rust
 use slt::palette::tailwind::{BLUE, ROSE, SLATE};
 
@@ -310,6 +337,10 @@ use slt::palette::tailwind::{BLUE, ROSE, SLATE};
 let primary = BLUE.c500;    // Rgb(59, 130, 246)
 let danger  = ROSE.c600;    // Rgb(225, 29, 72)
 let muted   = SLATE.c400;   // Rgb(148, 163, 184)
+
+ui.text("Deploy").fg(primary);
+ui.text("Delete").fg(danger);
+ui.text("3 files changed").fg(muted);
 ```
 
 ### Shade levels
@@ -336,6 +367,7 @@ let muted   = SLATE.c400;   // Rgb(148, 163, 184)
 
 ### Building a theme from Tailwind palettes
 
+<!-- slt-check: {"name": "th_tailwind_theme", "features": [], "context": "ui"} -->
 ```rust
 use slt::{Theme, palette::tailwind::*};
 
@@ -355,12 +387,14 @@ let theme = Theme::builder()
     .surface_text(SLATE.c300)
     .is_dark(true)
     .build();
+ui.set_theme(theme);
 ```
 
 ## Color Utilities
 
 ### Creating colors
 
+<!-- slt-check: {"name": "th_creating_colors", "features": [], "context": "ui"} -->
 ```rust
 use slt::Color;
 
@@ -376,6 +410,10 @@ let bright = Color::LightCyan;
 
 // Reset to terminal default
 let default = Color::Reset;
+
+for color in [coral, gray, red, bright, default] {
+    ui.text("sample").fg(color);
+}
 ```
 
 ### Named colors
@@ -384,6 +422,7 @@ let default = Color::Reset;
 
 ### Blending and adjustment
 
+<!-- slt-check: {"name": "th_blending", "features": [], "context": "ui"} -->
 ```rust
 use slt::Color;
 
@@ -400,10 +439,15 @@ let light_blue = blue.lighten_f64(0.3);
 
 // Darken toward black (0.0 = unchanged, 1.0 = black)
 let dark_blue = blue.darken_f64(0.3);
+
+for color in [gray, light_blue, dark_blue] {
+    ui.text("sample").fg(color);
+}
 ```
 
 ### Luminance and contrast
 
+<!-- slt-check: {"name": "th_luminance", "features": [], "context": "ui"} -->
 ```rust
 use slt::Color;
 
@@ -415,6 +459,8 @@ let lum = bg.luminance_f64(); // ~0.013 (sRGB-linearized, BT.709 weights)
 // Automatic readable foreground for a background color
 // Returns black if luminance > 0.179 (WCAG threshold), white otherwise
 let fg = Color::contrast_fg(bg); // Rgb(255, 255, 255)
+
+ui.text(format!("luminance {lum:.3}")).fg(fg).bg(bg);
 ```
 
 > **Note (v0.19.1)**: luminance (now `Color::luminance_f64`) applies the sRGB inverse transfer function (gamma decoding) to each channel before applying BT.709 weights `0.2126·R + 0.7152·G + 0.0722·B`. This matches the WCAG 2.1 relative luminance definition. Numerical results differ from pre-v0.19.1 — most notably, mid-tone colors land at lower luminance values than the old naive linear average produced. If your code compares `luminance_f64()` against a hardcoded threshold, re-check it against the new scale.
@@ -422,6 +468,7 @@ let fg = Color::contrast_fg(bg); // Rgb(255, 255, 255)
 
 ### Downsampling for terminal compatibility
 
+<!-- slt-check: {"name": "th_downsampling", "features": [], "context": "ui"} -->
 ```rust
 use slt::{Color, ColorDepth};
 
@@ -435,6 +482,11 @@ let eight = color.downsampled(ColorDepth::EightBit);
 
 // Basic: converts to nearest named ANSI color
 let basic = color.downsampled(ColorDepth::Basic);
+
+assert_eq!(true_c, color);
+for c in [eight, basic] {
+    ui.text("sample").fg(c);
+}
 ```
 
 ## ColorDepth
@@ -450,25 +502,34 @@ Represents the terminal's color capability.
 
 ### Automatic detection
 
+<!-- slt-check: {"name": "th_detect_depth", "features": [], "context": "ui"} -->
 ```rust
 use slt::ColorDepth;
 
 // Checks $COLORTERM for truecolor/24bit, then $TERM for 256color
 let depth = ColorDepth::detect();
+ui.text(format!("color depth: {depth:?}"));
 ```
 
 ### Setting via RunConfig
 
+<!-- slt-check: {"name": "th_runconfig_depth", "features": ["crossterm"], "context": "module"} -->
 ```rust
 use slt::{RunConfig, ColorDepth};
 
-let config = RunConfig::default().color_depth(ColorDepth::EightBit);
+fn main() -> std::io::Result<()> {
+    let config = RunConfig::default().color_depth(ColorDepth::EightBit);
+    slt::run_with(config, |ui| {
+        ui.text("Rendered with the 256-color palette");
+    })
+}
 ```
 
 ## Style Type
 
 `Style` sets foreground, background, and text modifiers for a terminal cell.
 
+<!-- slt-check: {"name": "th_style_type", "features": [], "context": "ui"} -->
 ```rust
 use slt::{Style, Color, Modifiers};
 
@@ -481,6 +542,9 @@ let style = Style::new()
 
 // Modifiers can also be combined with |
 let mods = Modifiers::BOLD | Modifiers::UNDERLINE;
+assert!(mods.contains(Modifiers::UNDERLINE));
+
+ui.styled("Styled text", style);
 ```
 
 ### Available modifiers
@@ -501,20 +565,24 @@ Underline color and style are independent `Style` fields configured with
 
 ### Applying to text widgets
 
+<!-- slt-check: {"name": "th_text_styles", "features": ["crossterm"], "context": "module"} -->
 ```rust
-slt::run(|ui| {
-    ui.text("bold cyan").bold().fg(Color::Cyan);
-    ui.text("dimmed").dim();
-    ui.text("warning").fg(Color::Yellow).italic();
-})
+fn main() -> std::io::Result<()> {
+    slt::run(|ui| {
+        ui.text("bold cyan").bold().fg(Color::Cyan);
+        ui.text("dimmed").dim();
+        ui.text("warning").fg(Color::Yellow).italic();
+    })
+}
 ```
 
 ## ContainerStyle
 
 Define reusable style recipes as `const` values and apply them to containers.
 
+<!-- slt-check: {"name": "th_container_style", "features": ["crossterm"], "context": "module"} -->
 ```rust
-use slt::{ContainerStyle, Border, Color, Align};
+use slt::{ContainerStyle, Border, Color};
 
 const CARD: ContainerStyle = ContainerStyle::new()
     .border(Border::Rounded)
@@ -524,23 +592,26 @@ const CARD: ContainerStyle = ContainerStyle::new()
 const DANGER: ContainerStyle = ContainerStyle::new()
     .bg(Color::Red);
 
-slt::run(|ui| {
-    // Apply a single style
-    ui.container().apply(&CARD).col(|ui| {
-        ui.text("Card content");
-    });
+fn main() -> std::io::Result<()> {
+    slt::run(|ui| {
+        // Apply a single style
+        ui.container().apply(&CARD).col(|ui| {
+            ui.text("Card content");
+        });
 
-    // Compose multiple styles (last write wins)
-    ui.container().apply(&CARD).apply(&DANGER).col(|ui| {
-        ui.text("Danger card");
-    });
-})
+        // Compose multiple styles (last write wins)
+        ui.container().apply(&CARD).apply(&DANGER).col(|ui| {
+            ui.text("Danger card");
+        });
+    })
+}
 ```
 
 ### Style inheritance with `extending()`
 
 Define derived styles without duplicating fields:
 
+<!-- slt-check: {"name": "th_extending", "features": [], "context": "module"} -->
 ```rust
 use slt::{ContainerStyle, Border, ThemeColor};
 
@@ -564,38 +635,45 @@ All fields are `Option` -- unset fields leave the builder's current value unchan
 
 Use `dark_bg()` and `dark_border_style()` on `ContainerBuilder` to set styles that apply only when dark mode is active:
 
+<!-- slt-check: {"name": "th_dark_bg", "features": ["crossterm"], "context": "module"} -->
 ```rust
 use slt::{Border, Color, Style};
 
-slt::run(|ui| {
-    ui.bordered(Border::Rounded)
-        .bg(Color::Rgb(248, 250, 252))           // light mode bg
-        .dark_bg(Color::Rgb(30, 30, 46))          // dark mode bg
-        .dark_border_style(Style::new().fg(Color::Rgb(88, 91, 112)))
-        .col(|ui| {
-            ui.text("Adapts to dark/light mode");
-        });
-})
+fn main() -> std::io::Result<()> {
+    slt::run(|ui| {
+        ui.bordered(Border::Rounded)
+            .bg(Color::Rgb(248, 250, 252))           // light mode bg
+            .dark_bg(Color::Rgb(30, 30, 46))          // dark mode bg
+            .dark_border_style(Style::new().fg(Color::Rgb(88, 91, 112)))
+            .col(|ui| {
+                ui.text("Adapts to dark/light mode");
+            });
+    })
+}
 ```
 
 ### Using `light_dark()` for inline adaptation
 
+<!-- slt-check: {"name": "th_light_dark", "features": ["crossterm"], "context": "module"} -->
 ```rust
 use slt::Color;
 
-slt::run(|ui| {
-    let text_color = ui.light_dark(
-        Color::Rgb(15, 23, 42),   // dark text for light mode
-        Color::Rgb(205, 214, 244) // light text for dark mode
-    );
-    ui.text("Adaptive").fg(text_color);
-})
+fn main() -> std::io::Result<()> {
+    slt::run(|ui| {
+        let text_color = ui.light_dark(
+            Color::Rgb(15, 23, 42),   // dark text for light mode
+            Color::Rgb(205, 214, 244) // light text for dark mode
+        );
+        ui.text("Adaptive").fg(text_color);
+    })
+}
 ```
 
 ### ContainerStyle with dark mode
 
+<!-- slt-check: {"name": "th_container_style_dark", "features": [], "context": "module"} -->
 ```rust
-use slt::{ContainerStyle, Border, Color, Style};
+use slt::{ContainerStyle, Border, Color};
 
 const PANEL: ContainerStyle = ContainerStyle::new()
     .border(Border::Rounded)

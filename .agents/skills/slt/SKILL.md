@@ -1,20 +1,24 @@
 ---
 name: slt
-description: Build Rust TUI apps with SuperLightTUI v0.25 (immediate-mode terminal UI). Use this skill when the user asks to create, modify, or debug terminal UI code in this repo, or asks "how do I X in SLT / TUI / terminal", or types Korean triggers like "터미널 UI", "TUI 만들어줘", "SLT로", "ratatui 대신". Read REFERENCES.md for feature flags and doc pointers; grep `src/context/` and `src/widgets/` before inventing any API.
+description: Build Rust TUI apps with SuperLightTUI v0.26 (immediate-mode terminal UI). Use this skill when the user asks to create, modify, or debug terminal UI code in this repo, or asks "how do I X in SLT / TUI / terminal", or types Korean triggers like "터미널 UI", "TUI 만들어줘", "SLT로", "ratatui 대신". Read REFERENCES.md for feature flags and doc pointers; grep `src/context/` and `src/widgets/` before inventing any API.
 ---
 
 # SuperLightTUI (SLT) Authoring Skill
 
-Targets SLT v0.25.0. Verify every API against `src/` before using it.
+Targets SLT v0.26.0. Verify every API against `src/` before using it.
 
 ## Two runtime rules agents get wrong
 
 1. **The mouse is on by default; hover is opt-in.** Since v0.26, `RunConfig::default()` leaves `mouse_mode: None`, which resolves to `MouseMode::Drag` locally and `MouseMode::Click` over SSH/mosh (`src/runtime/config.rs`). Plain `slt::run(...)` therefore delivers `Response.clicked`, `right_clicked`, `double_clicked`, `scroll_delta`, scrollbar and split-pane drags, and the built-in text selection. Pointer moves without a button held are only reported in `MouseMode::Hover`, so any app that relies on `hovered`, `group_hover_*`, `on_hover` or `ui.tooltip` must start with
+   <!-- slt-check: {"name":"skill_hover_mode","features":["crossterm"],"context":"module"} -->
    ```rust
-   slt::run_with(slt::RunConfig::default().mouse_mode(slt::MouseMode::Hover), |ui| { /* ... */ })
+   fn main() -> std::io::Result<()> {
+       slt::run_with(slt::RunConfig::default().mouse_mode(slt::MouseMode::Hover), |ui| { ui.text("hover me"); })
+   }
    ```
    `MouseMode::Off` (or `.mouse(false)`) disables the mouse and keeps the terminal's native selection; `.mouse(true)` is a shorthand for `Hover`. Headless `TestBackend` tests inject mouse events directly regardless of the mode.
 2. **Focused text fields own their keys.** While `text_input` / `textarea` / a form field / an open command palette has focus, `ui.key('q')`, `ui.key_code(..)`, `ui.key_mod(..)` and `ui.shortcut(..)` skip the keys it edits with (printable keys without Ctrl/Super/Meta, Backspace, Delete, arrows, Home, End; Enter/Up/Down for `textarea`; also Tab, Shift+Tab, PageUp/PageDown for `code_editor`), in any call order. Chords, Esc, Tab (outside `code_editor`) and F-keys still reach shortcuts; `ui.raw_key(c)` sees every press.
+   <!-- slt-check: {"name":"skill_shortcut_before_input","features":[],"context":"ui","setup":"let mut search = TextInputState::new();"} -->
    ```rust
    if ui.shortcut(KeyCode::Char('q'), KeyModifiers::NONE) { ui.quit(); } // safe before the input
    ui.text_input(&mut search);                                   // typing 'q' inserts it
@@ -35,30 +39,35 @@ Imports: `use slt::prelude::*;` is the one-line app import (run entry points, `C
 These are non-negotiable since v0.20. When generating new code, every public widget must match all of them. Known exceptions are listed in `docs/internals/design-principles.md#api-review-rules`; do not copy them into new APIs.
 
 1. **Builder for optional config.** Methods on `Context` return a builder when ≥1 option exists. Builders are consuming (`mut self -> Self`), render on `Drop`, and expose `.show()` (consumes the builder) to capture a `*Response`.
+   <!-- slt-check: {"name":"skill_builder_rule","features":[],"context":"ui","setup":"let segs = [\"home\", \"docs\"];"} -->
    ```rust
    ui.gauge(0.6).label("60%").width(24).color(Color::Cyan);                     // good
    let r = ui.breadcrumb(&segs).separator(" › ").show();                        // capture response
+   if let Some(i) = r.clicked_segment { ui.text(format!("jump to {i}")); }
    ```
    **Removed in v0.20**: `gauge_w`, `gauge_colored`, `line_gauge_with`, `breadcrumb_sep`, `LineGaugeOpts`, `HighlightRange::single`, `label_owned`. Do not write these — AI training data may suggest them.
 
 2. **Floats are `f64`.** Public surface never takes/returns `f32`. `0.5` is `f64` natively, so `ui.gauge(0.5)` just works.
 
 3. **≤3 positional args.** When 4+ args appear, use an **opts struct** (`<Widget>Opts`) or a builder.
+   <!-- slt-check: {"name":"skill_opts_struct","features":[],"context":"ui","setup":"let (total, viewport) = (100, 20); let mut scroll = ScrollState::new();"} -->
    ```rust
-   GutterOpts::line_numbers(total, viewport)                                    // Opts struct
-   ui.scrollable_with_gutter(&mut scroll, opts, |ui, abs| { ... });
+   let opts = GutterOpts::line_numbers(total, viewport);                        // Opts struct
+   let _ = ui.scrollable_with_gutter(&mut scroll, opts, |ui, abs| { ui.text(format!("line {abs}")); });
    ```
 
 4. **Stateful widgets take `&mut <Widget>State`.** Never `&mut String`, `&mut Vec<T>`, `&mut usize`. Trivial-value exceptions: `slider(&mut f64)`, `checkbox(&mut bool)`, `toggle(&mut bool)`.
+   <!-- slt-check: {"name":"skill_state_rule","features":[],"context":"ui","setup":"let mut search = TextInputState::new(); let mut tabs = TabsState::new(vec![\"Files\", \"Settings\"]);"} -->
    ```rust
-   ui.text_input(&mut TextInputState);   // not &mut String
-   ui.tabs(&mut TabsState);              // not &mut usize
+   ui.text_input(&mut search);   // a TextInputState, not &mut String
+   ui.tabs(&mut tabs);           // a TabsState, not &mut usize
    ```
 
 5. **Responses.** Single-rect widgets return `Response`. Compound widgets return `<Widget>Response: Deref<Target = Response>` with `#[must_use]`. Never tuples.
+   <!-- slt-check: {"name":"skill_response_rule","features":[],"context":"ui","setup":"let segs = [\"home\", \"docs\"];"} -->
    ```rust
-   if ui.button("Save").clicked { ... }                                          // Response
-   if let Some(i) = ui.breadcrumb(&segs).show().clicked_segment { ... }          // BreadcrumbResponse
+   if ui.button("Save").clicked { /* save */ }                                   // Response
+   if let Some(i) = ui.breadcrumb(&segs).show().clicked_segment { ui.text(format!("jump to {i}")); } // BreadcrumbResponse
    ```
 
 6. **Return-type pattern.** Methods on `Context` return one of three shapes — picking the wrong one is the most common AI-generated compile error.
@@ -68,6 +77,7 @@ These are non-negotiable since v0.20. When generating new code, every public wid
    - Response builder (v0.26) — `button` → `Button`, `badge` → `Badge`, `stat` → `Stat`, `help` → `Help`, `separator` → `Separator`, `progress` / `progress_bar` → `ProgressBar`, `slider` → `Slider`, `line_chart` / `area_chart` → `LineChart`. Options chain (`.variant(v)`, `.colors(&c)`, `.color(c)`, `.step(s)`, `.key_color(c)`), the builder derefs to `Response`, `.show()` returns an owned `Response`. Builder args cannot borrow `ui`: `let c = ui.theme().success;` first.
    - Container helpers: `col` / `row` / `line` / `modal` → `Response`. `line_wrap` → `&mut Self`. `screen(name, &mut ScreenState, f)` returns `()`.
 
+   <!-- slt-check-skip: contrasts a deliberate compile error (Button has no .bold()) with the correct forms -->
    ```rust
    ui.button("Save").bold();           // ❌ Button has no .bold() — compile error
    if ui.button("Save").clicked { … }  // ✅ Response field via Deref
@@ -106,6 +116,7 @@ When a method belongs to two layers (`ui.bordered(B)` shortcut vs `ui.container(
 
 When unsure about a widget signature, find its family and match.
 
+<!-- slt-check-skip: signature cheat sheet; type names and `...` stand in for argument values -->
 ```rust
 // Stateful interactive widgets — &mut <Widget>State, returns Response
 ui.list(&mut ListState);              ui.tabs(&mut TabsState);
@@ -156,6 +167,7 @@ Hooks must be called in the same order every frame **unless** they are id-keyed.
 | `ui.use_memo(&deps, \|d\| compute(d))` | call order + deps | **No** | Cached compute, deps change → recompute |
 | `ui.use_effect(\|d\| { ... }, &deps)` | call order + deps | **No** | Side effect on deps change |
 
+<!-- slt-check-skip: WRONG/RIGHT contrast; the first line is the hook-order anti-pattern -->
 ```rust
 // WRONG — order-based hook in conditional drifts call order between frames
 if expanded { let count = ui.use_state(|| 0); }
@@ -173,19 +185,22 @@ for i in 0..items.len() {
 
 Stop threading `&theme`, `&tick`, `&mut toasts` through every render fn. `provide` injects a typed value scoped to a closure; nested code reads it back with `use_context`.
 
+<!-- slt-check: {"name":"skill_provide_context","features":["crossterm"],"context":"module"} -->
 ```rust
+#[derive(Clone, Copy)]
 struct AppCtx { theme: slt::Theme, tick: u64, user: &'static str }
 
-slt::run(|ui| {
-    let ctx = AppCtx { theme: *ui.theme(), tick: ui.tick(), user: "subin" };
-    ui.provide(ctx, |ui| {
-        render_header(ui);
-        render_card(ui);
-    });
-});
+fn main() -> std::io::Result<()> {
+    slt::run(|ui| {
+        let ctx = AppCtx { theme: *ui.theme(), tick: ui.tick(), user: "subin" };
+        ui.provide(ctx, |ui| {
+            render_card(ui);
+        });
+    })
+}
 
 fn render_card(ui: &mut slt::Context) {
-    let ctx = ui.use_context::<AppCtx>();           // panics if missing
+    let ctx = *ui.use_context::<AppCtx>();          // panics if missing; copy before the next `ui` call
     // let maybe = ui.try_use_context::<AppCtx>(); // returns Option<&T>
     ui.text(format!("hi {} (tick {})", ctx.user, ctx.tick));
 }
@@ -197,12 +212,13 @@ Reserve explicit parameters for **writes** (`&mut MyDocState`). Bound is `T: 'st
 
 `with_if(cond, modifier)` and `with(modifier)` collapse conditional branches into a single chain. Available on `Text` and `ContainerBuilder`. Beware: the `Text` closure receives a builder for the same element and returns `()`, ContainerBuilder's closure maps `Self -> Self`.
 
+<!-- slt-check: {"name":"skill_with_if","features":[],"context":"ui","setup":"let (is_error, is_focused) = (true, false); let theme = *ui.theme();"} -->
 ```rust
 // Text — closure receives a Text for the same element
 ui.text("Status").with_if(is_error, |t| { t.bold().fg(Color::Red); });
 
 // ContainerBuilder — closure receives Self by value
-ui.container().with_if(is_focused, |c| c.bg(theme.surface_hover)).col(|ui| ...);
+ui.container().with_if(is_focused, |c| c.bg(theme.surface_hover)).col(|ui| { ui.text("body"); });
 ```
 
 ## Custom widget pattern (Layer 3)
@@ -211,6 +227,7 @@ ui.container().with_if(is_focused, |c| c.bg(theme.surface_hover)).col(|ui| ...);
 - *Function* (`fn render_card(ui: &mut Context, data: &CardData)`): 90% of cases. Use for screens, sections, reusable layouts. Cheaper to write, no trait bounds, easier to test. Built-in widgets follow this shape internally (`impl Context` direct methods).
 - *`impl Widget`*: when the component (a) has its own state struct that the *caller* owns, and (b) you want `ui.widget(&mut w)` ergonomics matching built-ins. Required for third-party crates that export widgets through trait-bound APIs.
 
+<!-- slt-check: {"name":"skill_custom_widget","features":[],"context":"module"} -->
 ```rust
 struct Label<'a> { text: &'a str }
 
@@ -223,8 +240,10 @@ impl<'a> slt::Widget for Label<'a> {
     }
 }
 
-let mut label = Label { text: "hello" };
-ui.widget(&mut label);              // or call `label.ui(ui)` with `Widget` in scope
+fn render(ui: &mut slt::Context) {
+    let mut label = Label { text: "hello" };
+    ui.widget(&mut label);          // or call `label.ui(ui)` with `Widget` in scope
+}
 ```
 
 For mouse hit-testing call `ui.interaction()` (no arguments) immediately before the element that should own the hit rect; it returns a `Response`. For keyboard, `let focused = ui.register_focusable();`, iterate `ui.key_presses_when(focused)` (yields `(index, &KeyEvent)`), and mark handled keys with `ui.consume_event(index)` so later widgets and shortcuts ignore them.
@@ -344,8 +363,9 @@ Only Cargo-listed targets are runnable (`cargo run --example <name>`; 29 targets
 
 ## Testing pattern (headless)
 
+<!-- slt-check: {"name":"skill_testing_pattern","features":[],"context":"module"} -->
 ```rust
-use slt::{TestBackend, EventBuilder};
+use slt::{Context, EventBuilder, KeyCode, TestBackend, TextInputState};
 
 #[test]
 fn my_widget_renders() {
@@ -366,12 +386,16 @@ fn click_triggers() {
 
 // Multi-step (default, v0.26): one FnMut over plain &mut state, no RefCell.
 // step/press/type_text/run_with_events all keep focus between frames.
-let (mut a, mut b) = (TextInputState::new(), TextInputState::new());
-let mut app = |ui: &mut Context| { ui.text_input(&mut a); ui.text_input(&mut b); };
-tb.step(vec![], &mut app)
-    .press(KeyCode::Tab, &mut app)
-    .type_text("x", &mut app);
-assert_eq!(b.value, "x"); // after the closure's last use
+#[test]
+fn tab_then_type() {
+    let mut tb = TestBackend::new(30, 4);
+    let (mut a, mut b) = (TextInputState::new(), TextInputState::new());
+    let mut app = |ui: &mut Context| { ui.text_input(&mut a); ui.text_input(&mut b); };
+    tb.step(vec![], &mut app)
+        .press(KeyCode::Tab, &mut app)
+        .type_text("x", &mut app);
+    assert_eq!(b.value, "x"); // after the closure's last use
+}
 // Hover: EventBuilder::new().hover(x, y). Force a focus slot:
 // tb.render_with_events(events, 0, 0, |ui| ..).
 ```
