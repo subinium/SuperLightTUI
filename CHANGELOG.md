@@ -486,6 +486,30 @@
   51, table 1000x6 129 → 61. Frame time drops 1–11% (dashboard 15.3 → 13.6
   µs, table 177 → 169 µs, nested 182 → 180 µs; 5-round interleaved A/B
   medians).
+- No allocation of SLT's own on the steady-state frame path: container
+  commands store their arguments inline instead of boxing them (one
+  allocation per container per frame before; `Command` grows from 104 to
+  136 bytes, only a rare `title` is boxed), and `ui.list`, `ui.table`,
+  separators, progress bars and the virtual-list / pager hints format their
+  row text into strings recycled from the previous frame's layout tree (a
+  bounded per-session pool). Steady allocations per frame (matched harness):
+  10k `ui.list` 51 → 0, table 1000x6 61 → 0 (paged 63 → 0), 60 nested boxes
+  136 → 60, dashboard 24 → 21 (984 → 172 B). What remains is text the app
+  creates: its `format!` rows, and the `String` that `ui.text` makes from a
+  `&str`.
+- Mostly-ASCII text with a few non-ASCII glyphs (table rules, list markers,
+  dashes, box drawing, CJK) no longer runs the grapheme segmenter and bidi
+  class lookups over the whole string: printable-ASCII runs are written in
+  bulk, scalars that always form their own grapheme skip segmentation, bidi
+  lookups are prefiltered by code-point range, and widths are measured per
+  scalar where no width sequence can apply. Exhaustive tests check the
+  segmentation and bidi tables these shortcuts rely on, and differential
+  proptests check the output against the general path. Border edges are
+  drawn as runs. Matched harness, median µs per frame (0.26 base → now;
+  ratatui 0.30.2): dashboard 13.2 → 10.3 (110.2), 10k `ui.list` 72.3 → 23.0
+  (622.2), table 166.4 → 55.6 (998.2), 60 nested boxes 175.4 → 159.0
+  (344.2), idle 13.2 → 10.3 (110.3). Criterion `widget_table_50_rows`
+  103.8 → 40.9 µs.
 - Each text node's display width (each segment, for rich text) is measured
   once per frame, when the tree is built, and render and caret geometry
   reuse it (#494); before, render measured each plain text twice more and
@@ -500,7 +524,7 @@
   1,164,360 B (−2.9%; ratatui 0.30.2: 553,384 B), `examples/demo` 2,698,200
   → 2,070,704 B (−23%), `examples/widgets_tour` 1,715,256 → 1,466,920 B
   (−14%). Frame time is unchanged within noise. Breakdown, the rejected
-  `str_width` change and follow-ups: docs/PERFORMANCE.md "Binary size";
+  `str_width` change and follow-ups: docs/internals/performance.md "Binary size";
   re-measure with `bash bench/ratatui-compare/size.sh`.
 - `list` and unpaged `table` per-frame work is proportional to the visible
   rows instead of the item count (#487): a 10k-item list at 100x50 drops

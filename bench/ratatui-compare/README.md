@@ -97,7 +97,7 @@ bash size.sh                                                 # stripped hello-wo
 
 `size.sh` builds the #491 hello-world programs as separate crates under
 `target/size` with the default release profile and prints a markdown table
-for docs/PERFORMANCE.md ("Binary size"). Re-record it on every release.
+for docs/internals/performance.md ("Binary size"). Re-record it on every release.
 `SLT_HELLO_MAX_BYTES=<n>` makes it exit 1 when the stripped default SLT
 binary is larger; gate only on large deltas, since toolchain and linker
 updates move the numbers by a few KB.
@@ -121,10 +121,11 @@ cargo audit             # audits this crate's own Cargo.lock
 
 - visible-text equivalence per workload (see above);
 - SLT steady-state allocation calls and requested bytes per frame under fixed
-  ceilings (roughly 25-50% above the baseline; counts are per-thread and
-  identical in debug and release);
+  ceilings (zero for `ui.list` and both tables, ~10% above the baseline for
+  the workloads whose remaining allocations are their own `format!` / `&str`
+  text; counts are per-thread and identical in debug and release);
 - SLT first-frame bytes (baseline + ~5%) and steady bytes per frame (exactly the
-  baseline: 16 = BSU + ESU when idle, 44 for one changed cell);
+  baseline: 16 = BSU + ESU when idle, 36 for one changed cell);
 - an idle frame emits exactly BSU + ESU.
 
 Ceilings are upper bounds, so improvements pass. When a fix for #483-#491 lands,
@@ -135,100 +136,97 @@ reviewed diff. Not wired into CI by this change. To run it in CI:
 cd bench/ratatui-compare && cargo test --locked
 ```
 
-## Baseline (v0.25.0 + release/v0.26.0 base)
+## Baseline (v0.26)
 
-Recorded 2026-10-18 on `release/v0.26.0` at 2eb49b6 (v0.25.0 15fd63a plus a
-docs-only commit; no library change). The `-dirty` suffix in the header is the
-uncommitted root `workspace.exclude` line of this change.
+Recorded 2026-10-18 on `wp/perf-final` (release/v0.26.0 plus the command,
+string-pool, text-path and border-run commits), against the v0.26 base
+`df6690e` and the v0.25.0 baseline recorded earlier with this crate.
 
-- host: Apple M3 Pro (aarch64-macos), shared machine, load average 5.8-9.4
+- host: Apple M3 Pro (aarch64-macos), shared machine, load average ~5
 - rustc: rustc 1.98.0 (88d9e12ae 2026-08-18)
 - profile: release (`debug = 1`)
-- superlighttui: 2eb49b6710b9-dirty (v0.25.0-1-g2eb49b6) (default features)
+- superlighttui: default features
 - ratatui: 0.30.2
 - bench features: none (time), count-alloc (alloc)
 
-### Time, sink harness (median of three `time` runs, µs per frame)
+### Time, sink harness (median of three interleaved `time` runs, µs per frame)
 
-| Workload | SLT | ratatui 0.30.2 | SLT / ratatui | SLT range over 3 runs | issue #482 SLT / ratatui |
+| Workload | SLT v0.25.0 | SLT base `df6690e` | SLT v0.26 | ratatui 0.30.2 | SLT / ratatui |
 |---|---|---|---|---|---|
-| a. static dashboard 200x60 | 213.6 | 112.9 | 1.9x | 205.4-222.6 | 215 / 107 |
-| b. 10k `ui.list`, 100x50 | 1834.0 | 643.3 | 2.9x | 1790.0-1848.4 | 1832 / 648 |
-| b'. 10k `ui.virtual_list`, 100x50 | 262.8 | — | — | 258.1-267.7 | 258 / — |
-| c. table 1000x6, 200x60 | 1037.9 | 1014.7 | 1.0x | 1011.9-1078.0 | 1032 / 591 ¹ |
-| c'. table 1000x6, `page_size = 57` | 636.4 | — | — | 623.8-637.5 | 643 / — |
-| d. 60 nested bordered boxes, 240x80 | 1104.8 | 352.9 | 3.1x | 1080.9-1105.6 | 1255 / 358 |
-| e. one cell changes per frame, 200x60 | 218.1 | 112.6 | 1.9x | 210.8-219.3 | 221 / 108 |
-| f. idle (unchanged), 200x60 | 213.2 | 112.8 | 1.9x | 205.3-213.9 | 219 / 108 |
+| a. static dashboard 200x60 | 213.6 | 13.2 | **10.3** | 110.2 | 0.09x |
+| b. 10k `ui.list`, 100x50 | 1834.0 | 72.3 | **23.0** | 622.2 | 0.04x |
+| b'. 10k `ui.virtual_list`, 100x50 | 262.8 | 73.8 | **25.6** | — | — |
+| c. table 1000x6, 200x60 | 1037.9 | 166.4 | **55.6** | 998.2 ¹ | 0.06x |
+| c'. table 1000x6, `page_size = 57` | 636.4 | 163.8 | **55.0** | — | — |
+| d. 60 nested bordered boxes, 240x80 | 1104.8 | 175.4 | **159.0** | 344.2 | 0.46x |
+| e. one cell changes per frame, 200x60 | 218.1 | 13.2 | **10.2** | 110.6 | 0.09x |
+| f. idle (unchanged), 200x60 | 213.2 | 13.2 | **10.3** | 110.3 | 0.09x |
 
-¹ The prototype's ratatui table drew 6 `Fill` columns without rules; the
-equivalent table draws 11 cells per row (see Equivalence), so only the SLT
-number is comparable.
+¹ ratatui draws the table with the same rules as SLT (11 cells per row, see
+Equivalence), so it is slower than the prototype's 6 `Fill` columns.
 
-Every SLT median is within ±15% of the issue table (d is −12%). ratatui a/e/f
-are ~5% slower than in the issue because the progress bar is now a styled
-`Paragraph` line instead of a `Gauge`.
+SLT is faster than ratatui on every workload: ~2x on the nested boxes, where
+every row of the screen is written each frame, and 10-27x on the others.
 
-Per-case detail (median over the three runs; first-frame and steady bytes are
-identical in every run):
+Per-case detail (v0.26; first-frame and steady bytes are identical in every
+run):
 
-| case | first-frame bytes | steady bytes/frame | median µs | range of medians | p95 µs | flush mean µs |
-|---|---|---|---|---|---|---|
-| a_dashboard_200x60/slt/sink | 1008 | 16.0 | 213.6 | 205.4-222.6 | 221.7 | 170.7 |
-| a_dashboard_200x60/ratatui/sink | 1290 | 25.0 | 112.9 | 110.1-114.6 | 122.7 | 91.1 |
-| b_list10k_100x50/slt/sink | 2309 | 16.0 | 1834.0 | 1790.0-1848.4 | 1949.8 | 71.2 |
-| b_list10k_100x50/ratatui/sink | 3873 | 25.0 | 643.3 | 632.2-644.5 | 675.2 | 39.9 |
-| b_list10k_100x50(virtual_list)/slt/sink | 2300 | 16.0 | 262.8 | 258.1-267.7 | 274.0 | 70.2 |
-| c_table1000x6_200x60/slt/sink | 5292 | 16.0 | 1037.9 | 1011.9-1078.0 | 1070.7 | 175.2 |
-| c_table1000x6_200x60/ratatui/sink | 9568 | 25.0 | 1014.7 | 996.3-1026.2 | 1080.9 | 98.3 |
-| c_table1000x6_200x60(page_size=57)/slt/sink | 5238 | 16.0 | 636.4 | 623.8-637.5 | 657.2 | 174.3 |
-| d_nested60_240x80/slt/sink | 26430 | 16.0 | 1104.8 | 1080.9-1105.6 | 1129.3 | 306.4 |
-| d_nested60_240x80/ratatui/sink | 25879 | 25.0 | 352.9 | 350.3-355.6 | 373.8 | 200.4 |
-| e_onecell_200x60/slt/sink | 1008 | 44.0 | 218.1 | 210.8-219.3 | 227.4 | 175.3 |
-| e_onecell_200x60/ratatui/sink | 1290 | 32.0 | 112.6 | 112.6-112.8 | 122.1 | 90.2 |
-| f_idle_200x60/slt/sink | 1008 | 16.0 | 213.2 | 205.3-213.9 | 222.1 | 170.3 |
-| f_idle_200x60/ratatui/sink | 1290 | 25.0 | 112.8 | 110.2-112.9 | 122.5 | 91.2 |
-
-Flush is 75-80% of an SLT dashboard frame (~171 of ~214 µs) even when nothing
-changed and only 16 bytes go out, versus ~91 of ~113 µs for ratatui.
+| case | first-frame bytes | steady bytes/frame | median µs | flush mean µs |
+|---|---|---|---|---|
+| a_dashboard_200x60/slt/sink | 1000 | 16.0 | 10.3 | 1.8 |
+| a_dashboard_200x60/ratatui/sink | 1290 | 25.0 | 110.2 | 88.4 |
+| b_list10k_100x50/slt/sink | 2301 | 16.0 | 23.0 | 10.0 |
+| b_list10k_100x50/ratatui/sink | 3873 | 25.0 | 622.2 | 38.6 |
+| b_list10k_100x50(virtual_list)/slt/sink | 2292 | 16.0 | 25.6 | 9.9 |
+| c_table1000x6_200x60/slt/sink | 5284 | 16.0 | 55.6 | 21.7 |
+| c_table1000x6_200x60/ratatui/sink | 9568 | 25.0 | 998.2 | 95.6 |
+| c_table1000x6_200x60(page_size=57)/slt/sink | 5230 | 16.0 | 55.0 | 21.5 |
+| d_nested60_240x80/slt/sink | 26422 | 16.0 | 159.0 | 86.9 |
+| d_nested60_240x80/ratatui/sink | 25879 | 25.0 | 344.2 | 194.2 |
+| e_onecell_200x60/slt/sink | 1000 | 36.0 | 10.2 | 1.8 |
+| e_onecell_200x60/ratatui/sink | 1290 | 32.0 | 110.6 | 88.5 |
+| f_idle_200x60/slt/sink | 1000 | 16.0 | 10.3 | 1.8 |
+| f_idle_200x60/ratatui/sink | 1290 | 25.0 | 110.3 | 88.9 |
 
 ### Time, in-memory TestBackend (render only, median of three runs, µs)
 
-| Workload | SLT | ratatui | SLT / ratatui |
-|---|---|---|---|
-| a. dashboard | 120.2 | 112.9 | 1.1x |
-| b. 10k list | 1798.5 | 650.0 | 2.8x |
-| b'. virtual_list | 224.8 | — | — |
-| c. table | 935.3 | 1024.2 | 0.9x |
-| c'. paged table | 543.9 | — | — |
-| d. nested boxes | 929.0 | 356.9 | 2.6x |
-| e. one cell | 120.4 | 112.6 | 1.1x |
-| f. idle | 121.2 | 112.8 | 1.1x |
+| Workload | SLT base `df6690e` | SLT v0.26 | ratatui | SLT / ratatui |
+|---|---|---|---|---|
+| a. dashboard | 11.5 | 8.6 | 114.2 | 0.08x |
+| b. 10k list | 64.8 | 15.0 | 621.0 | 0.02x |
+| b'. virtual_list | 66.5 | 17.8 | — | — |
+| c. table | 149.5 | 39.0 | 990.6 | 0.04x |
+| c'. paged table | 147.2 | 38.4 | — | — |
+| d. nested boxes | 108.9 | 101.5 | 350.0 | 0.29x |
+| e. one cell | 11.6 | 8.7 | 114.0 | 0.08x |
+| f. idle | 11.6 | 8.7 | 114.2 | 0.08x |
 
 ### Allocations (`alloc`, 50 warm-up frames, mean over 200 frames)
 
-| Workload | SLT allocs/frame | SLT bytes/frame | ratatui allocs/frame | ratatui bytes/frame |
+| Workload | SLT v0.25.0 | SLT base `df6690e` | SLT v0.26 allocs / bytes | ratatui allocs / bytes |
 |---|---|---|---|---|
-| a. dashboard | 54 | 27 664 | 79 | 8 445 |
-| b. 10k list | 20 018 | 13 798 852 | 20 056 | 4 160 429 |
-| b'. virtual_list | 160 | 56 166 | — | — |
-| c. table | 9 038 | 1 148 024 | 25 104 | 5 948 401 |
-| c'. paged table | 551 | 71 013 | — | — |
-| d. nested boxes | 285 | 168 254 | 273 | 45 965 |
-| e. one cell | 56 | 27 674 | 79 | 8 445 |
-| f. idle | 54 | 27 664 | 79 | 8 445 |
+| a. dashboard | 54 / 27 664 | 24 / 984 | **21 / 172** | 79 / 8 445 |
+| b. 10k list | 20 018 / 13 798 852 | 51 / 2 054 | **0 / 0** | 20 056 / 4 160 429 |
+| b'. virtual_list | 160 / 56 166 | 102 / 2 262 | **98 / 2 064** | — |
+| c. table | 9 038 / 1 148 024 | 61 / 4 958 | **0 / 0** | 25 104 / 5 948 401 |
+| c'. paged table | 551 / 71 013 | 63 / 4 892 | **0 / 0** | — |
+| d. nested boxes | 285 / 168 254 | 136 / 11 902 | **60 / 350** | 273 / 45 965 |
+| e. one cell | 56 / 27 674 | 24 / 984 | **21 / 172** | 79 / 8 445 |
+| f. idle | 54 / 27 664 | 24 / 984 | **21 / 172** | 79 / 8 445 |
 
-Sink harness; the mem harness differs by at most two allocations and 10 bytes per frame.
+Sink harness; the SLT counts are identical in the mem harness (ratatui's mem
+arm makes one allocation and 5 bytes less per frame). What SLT still allocates is the workloads' own text: the
+dashboard's 20 `format!` rows plus its `"Header"` `&str` (which `ui.text`
+turns into a `String`), two `format!` growths per visible row in the
+virtual-list closure, and one `String` per nested-box label.
 
 ### Output bytes (`bytes`)
 
 Steady frames: SLT 16 bytes (BSU + ESU) when nothing changed versus ratatui 25
 (SGR resets plus hide-cursor). One changed cell (e, frame 3):
 
-- SLT, 44 bytes: `ESC[?2026h ESC[3;8H ESC[0m ESC[0m ESC[37m 3 ESC[0m ESC[0m ESC[?2026l`
+- SLT, 36 bytes: `ESC[?2026h ESC[3;8H ESC[0m ESC[37m 3 ESC[0m ESC[?2026l`
 - ratatui, 32 bytes: `ESC[3;8H 3 ESC[39m ESC[49m ESC[59m ESC[0m ESC[?25l`
-
-The doubled `ESC[0m` around the run is #489.
 
 ## Frame-kernel regression evidence (#483)
 
@@ -259,9 +257,16 @@ cargo bench --bench benchmarks -- 'buffer_set_string_200x50|full_render_dims/120
 ¹ Second run; the first was noisy under load (`buffer_set_string_200x50`
 335.73 [301.18, 376.93], `dashboard_200x60/slt` 134.05 [123.80, 145.49]).
 
-The regression is still fully present on the v0.26.0 base: all four numbers
-match 15fd63a within 3%. The kernel hotspots are tracked in #484-#486 and #493; this crate
-and its ceilings are the acceptance harness for them.
+At 2eb49b6 the regression was still fully present: all four numbers matched
+15fd63a within 3%. It is gone in v0.26 (same host and toolchain, criterion
+`--warm-up-time 1 --measurement-time 3`):
+
+| Bench | 0.26 base `df6690e` | v0.26 | vs 3eb59a9 |
+|---|---|---|---|
+| `buffer_set_string_200x50` | 10.13 | 8.22 | 0.10x |
+| `full_render_dims/120x40` | 13.16 | 7.88 | 0.20x |
+| `dashboard_200x60/slt` | 15.13 | 8.78 | 0.11x |
+| `flush/full_redraw_200x60` | 172.84 | 171.12 | 0.53x |
 
 ## Gaps against #482
 
@@ -273,5 +278,6 @@ Out of scope for this change, still open on #482:
   redraw).
 - Prototype modes not ported: `live`, `sizes`, `micro`, `loop`. The
   hello-world binary-size probe is `size.sh` (#491).
-- No CI job (gate on PRs, timing artifact on main) and docs/PERFORMANCE.md is
-  not regenerated from this output yet.
+- No CI job (gate on PRs, timing artifact on main), and
+  docs/internals/performance.md is updated by hand from this output, not
+  generated.
