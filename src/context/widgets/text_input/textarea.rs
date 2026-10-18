@@ -463,42 +463,4 @@ impl Context {
         response.changed = pre_lines.is_some_and(|before| state.lines != before);
         response
     }
-
-    /// Render a progress bar (20 chars wide). `ratio` is clamped to `0.0..=1.0`.
-    ///
-    /// Uses block characters (`█` filled, `░` empty). For a custom width use
-    /// [`Context::progress_bar`]. For an inline label use [`Context::gauge`].
-    ///
-    /// Returns a [`Response`] so callers can detect hover, attach a tooltip,
-    /// or implement click-to-set scrubbers. Prior to v0.20.0 this returned
-    /// `&mut Self`; ignoring the return value still compiles but the
-    /// `#[must_use]` attribute on `Response` warns at the call site.
-    pub fn progress(&mut self, ratio: f64) -> Response {
-        self.progress_bar(ratio, 20)
-    }
-
-    /// Render a progress bar with a custom character width.
-    ///
-    /// `ratio` is clamped to `0.0..=1.0`. `width` is the total number of
-    /// characters rendered.
-    pub fn progress_bar(&mut self, ratio: f64, width: u32) -> Response {
-        self.progress_bar_colored(ratio, width, self.theme.primary)
-    }
-
-    /// Render a progress bar with a custom fill color.
-    pub fn progress_bar_colored(&mut self, ratio: f64, width: u32, color: Color) -> Response {
-        let response = self.interaction();
-        let clamped = ratio.clamp(0.0, 1.0);
-        let filled = (clamped * width as f64).round() as u32;
-        let empty = width.saturating_sub(filled);
-        let mut bar = String::with_capacity(width as usize * 3);
-        for _ in 0..filled {
-            bar.push('█');
-        }
-        for _ in 0..empty {
-            bar.push('░');
-        }
-        self.styled(bar, Style::new().fg(color));
-        response
-    }
 }

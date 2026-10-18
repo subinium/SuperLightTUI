@@ -84,11 +84,9 @@ ui.container().theme(Theme::dark()).fill().col(|ui| { /* ... */ });
 **Owns**: rendering primitives — text, buttons, gauges, tables, charts,
 inputs.
 
-**Source**: `src/context/widgets_*/*.rs`. The directory encodes family:
-- `widgets_display/` — text, alerts, badges, code blocks
-- `widgets_input/` — text input, textarea, sliders, spinners
-- `widgets_interactive/` — tables, lists, tabs, palettes
-- `widgets_viz/` — charts, sparklines, heatmaps
+**Source**: `src/context/widgets/<family>.rs` (plus a `<family>/` directory
+when the family is large). The file name is the widget family; see
+[Widget Families](#widget-families) for the full table.
 
 **Stateless widgets** take primitive args:
 ```rust
@@ -110,7 +108,8 @@ ui.text_input(&mut input);
 **Pattern**: `pub struct <Widget>State { ... }` with `Default` impl. Field
 visibility is `pub` for trivial fields and `pub(crate)` for invariants.
 
-**Source**: `src/widgets/*.rs` (grouped by family).
+**Source**: `src/widgets/<family>.rs` — the same family names as the
+`Context` method files.
 
 **Examples**: `TextInputState`, `TextareaState`, `TabsState`,
 `ScrollState`, `SplitPaneState`, `TreeState`.
@@ -122,7 +121,9 @@ visibility is `pub` for trivial fields and `pub(crate)` for invariants.
 **Pattern**: every interactive widget returns `Response` or a compound
 `<Widget>Response: Deref<Target = Response>`.
 
-**Source**: `src/widgets/responses.rs` (compound types).
+**Source**: `src/widgets/<family>.rs`, next to the state of the family that
+returns them (e.g. `GaugeResponse` in `feedback.rs`, `SplitPaneResponse` in
+`layout.rs`).
 
 **Why Deref**: callers can write `r.hovered`, `r.rect` regardless of
 whether `r` is `Response` or `BreadcrumbResponse`. The compound fields
@@ -177,17 +178,46 @@ as `keymap_help_overlay`, and hook/side-effect methods.
 
 ## Adding a new widget — checklist
 
-1. **Family**: display, input, interactive, or viz?
+1. **Family**: pick one from [Widget Families](#widget-families).
 2. **Stateful**: needs persistence? If yes, create `<Widget>State` in
    `src/widgets/<family>.rs`.
 3. **Return shape**: simple `Response` or compound `<Widget>Response`?
 4. **Builder vs immediate**: see [API_DESIGN.md](API_DESIGN.md) rule 1
    (builder when ≥4 optional fields).
-5. **Implement** in `src/context/widgets_<family>/<file>.rs`.
+5. **Implement** in `src/context/widgets/<family>.rs` (or a file in its
+   `<family>/` directory) — the same family name as the state file.
 6. **Document** per [RUSTDOC_GUIDE.md](RUSTDOC_GUIDE.md) — 4-part
    docstring with at least one runnable example.
 7. **Audit**: run `scripts/api_audit.sh`. Update DESIGN_PRINCIPLES.md
    matrix if the new widget changes a cell's status.
+
+## Widget Families
+
+Every widget belongs to exactly one family. The family name is shared by
+the state file and the `Context` method file, so a widget's state and its
+render method are always found under the same name:
+
+| Family | State (`src/widgets/<family>.rs`) | Methods (`src/context/widgets/<family>.rs` + dir) |
+|---|---|---|
+| `text_input` | `TextInputState`, `Validator`, `AsyncValidation`, `ValidateTrigger`, `FormField`, `FormState`, `FormFieldResponse`, `TextareaState`, `NumberInputState` (validators in `widgets/validators.rs`) | `text_input`, `textarea`, `number_input`, `form`, `form_field`, `form_field_response`, `form_submit` |
+| `selection` | `SelectState`, `RadioState`, `MultiSelectState`, `TabsState`, `ButtonVariant`, `PickerMode`, `ColorPickerState` | `tabs`, `button`, `button_with`, `checkbox`, `toggle`, `select`, `radio`, `multi_select`, `color_picker` |
+| `collections` | `ListState`, `ListResponse`, `FilePickerState`, `FileEntry`, `TableState`, `TableColumn`, `PaginatorState`, `PaginatorStyle`, `TreeNode`, `TreeState`, `DirectoryTreeState`, `CalendarState`, `CalDate`, `CalendarSelect` | `list`, `list_reorderable`, `virtual_list`, `table`, `paginator`, `tree`, `directory_tree`, `calendar`, `file_picker` |
+| `feedback` | `ToastState`, `ToastMessage`, `ToastLevel`, `AlertLevel`, `SpinnerState`, `SpinnerPreset`, `SliderOpts`, `GaugeResponse` | `spinner`, `toast`, `slider`, `alert`, `confirm`, `progress`, `progress_bar`, `gauge`, `line_gauge` |
+| `rich` | `RichLogState`, `RichLogEntry`, `StreamingTextState`, `StreamingMarkdownState`, `ApprovalAction`, `ToolApprovalState`, `ContextItem` | `rich_log`, `markdown`, `streaming_text`, `streaming_markdown`, `tool_approval`, `context_bar`, `code_block` |
+| `commanding` | `ChordState`, `CommandPaletteState`, `PaletteCommand`, `ScreenState`, `ModeState` | `screen`, `push_screen` / `pop_screen` / `reset_screen`, `command_palette`, `key_chord`, `key_seq` |
+| `layout` | `ScrollState`, `HighlightRange`, `SplitPaneState`, `GridColumn`, `SplitPaneResponse`, `GutterResponse` | `col` / `row` / `line`, `separator`, `group`, `container`, `scrollable`, `scrollbar`, `bordered`, `grid`, `split_pane`, `scrollable_with_gutter` |
+| `display` | `Trend`, `BreadcrumbResponse` | `text` and style chains, `link`, `timer_display`, `help`, `badge`, `key_hint`, `stat`, `breadcrumb`, `accordion`, `definition_list`, `divider_text`, `empty_state` |
+| `overlay` | — | `modal`, `overlay`, `overlay_at(_offset)`, `modal_at(_offset)`, `tooltip`, `Anchor` |
+| `media` | — | `big_text`, `image`, `kitty_image(_fit)`, `sixel_image`, `iterm_image(_fit)` |
+| `viz` | — (bar data types in `context/bars.rs`, chart config in `crate::chart`) | `viz/bars.rs`, `viz/charts.rs`, `viz/heat_tree.rs`, `viz/canvas.rs`, `viz/qr.rs` |
+| `events` | — | keyboard / mouse / paste / scroll queries, theme, size, tick, quit, debug toggles |
+| `runtime` | `StaticOutput`, `SchedulerState` (non-widget runtime state) | `src/context/runtime.rs` |
+
+Borderline assignments: `ButtonVariant` is `selection` because only
+`button_with` consumes it; `Trend` is `display` (`stat_trend`);
+`SchedulerState` and `StaticOutput` are runtime state rather than widget
+state, so they live in `widgets/runtime.rs` next to `context/runtime.rs`;
+compound `*Response` types live with the family that returns them.
 
 ---
 
@@ -217,44 +247,75 @@ src/
 │   ├── helpers.rs              # Shared helper functions for widget impls, previous-frame geometry queries
 │   ├── async_tasks.rs          # In-frame async task API (spawn/poll, TaskHandle) — `async` feature
 │   ├── tests.rs, async_tasks_tests.rs, scheduler_tests.rs  # Context unit tests
-│   ├── widgets_display.rs      # Display/layout facade
-│   ├── widgets_display/
-│   │   ├── text.rs             # text, style chains, size/margin helpers
-│   │   ├── rich_output.rs      # big_text, image, streaming, tool approval, context bar
-│   │   ├── status.rs           # alert, breadcrumb, badge, stat, code_block, accordion, empty_state
-│   │   ├── gauge.rs            # gauge / line_gauge builders
-│   │   ├── gutter.rs           # scrollable_with_gutter, GutterOpts
-│   │   ├── split.rs            # split_pane / vsplit_pane
-│   │   ├── font8x8.rs          # 8x8 bitmap font for big_text
-│   │   ├── fallback_highlight.rs # keyword fallback highlighter, tree-sitter line renderer
-│   │   ├── media.rs            # image preparation caches, encoders, half-block / RGBA fallback
-│   │   ├── tooltip_wrap.rs     # tooltip word wrapping
-│   │   ├── tests.rs, line_wrap_tests.rs  # Display widget tests
-│   │   └── layout.rs           # screen, row/col, modal, overlay_at(_offset), tooltip, container, scrollable, form helpers
-│   ├── widgets_interactive.rs  # Interactive facade
-│   ├── widgets_interactive/
-│   │   ├── collections.rs      # grid, list, calendar, file picker
-│   │   ├── selection.rs        # table, tabs, button, checkbox, toggle, select, radio, multi_select
-│   │   ├── rich_markdown.rs    # rich_log, virtual_list, command palette, markdown, key_chord
-│   │   ├── events.rs           # keyboard, mouse, theme, size, quit helpers
-│   │   └── tree_widgets.rs     # tree widget internals
-│   ├── widgets_input.rs        # Input facade
-│   ├── widgets_input/
-│   │   ├── text_input.rs       # text input widget
-│   │   ├── feedback.rs         # spinner, toast, slider
-│   │   ├── textarea_progress.rs # textarea and progress widgets
-│   │   └── tests.rs            # Input widget tests
-│   └── widgets_viz.rs          # Charts, sparklines, heatmap, treemap, candlestick, stacked bar, canvas, QR
+│   ├── widgets.rs              # Widget-method facade: one `<family>` module per widget family (see Widget Families)
+│   └── widgets/
+│       ├── display.rs          # Display family facade
+│       ├── display/
+│       │   ├── text.rs         # text, link, timer_display, help_from_keymap, style chains, size/margin helpers
+│       │   ├── status.rs       # help, breadcrumb, accordion, definition_list, divider_text, badge, key_hint, stat, empty_state
+│       │   └── tests.rs        # Display widget tests
+│       ├── layout.rs           # separator, col/row/line/line_wrap, group, container, scrollable, scrollbar, bordered
+│       ├── layout/
+│       │   ├── grid.rs         # grid / grid_with
+│       │   ├── gutter.rs       # scrollable_with_gutter, GutterOpts
+│       │   ├── split.rs        # split_pane / vsplit_pane
+│       │   └── line_wrap_tests.rs
+│       ├── overlay.rs          # Anchor, modal*, overlay*, tooltip
+│       ├── overlay/
+│       │   └── tooltip_wrap.rs # tooltip word wrapping
+│       ├── commanding.rs       # screen stack, command_palette, key_chord / key_seq
+│       ├── text_input.rs       # text_input, form / form_field / form_submit
+│       ├── text_input/
+│       │   ├── textarea.rs     # textarea
+│       │   ├── number_input.rs # number_input
+│       │   └── tests.rs        # Text-input family tests
+│       ├── selection.rs        # tabs, button, checkbox, toggle, select, radio, multi_select, color_picker
+│       ├── collections.rs      # Collections family facade
+│       ├── collections/
+│       │   ├── list.rs         # list, list_reorderable, virtual_list(_variable)
+│       │   ├── table.rs        # table, paginator
+│       │   ├── tree.rs         # tree, directory_tree
+│       │   ├── calendar.rs     # calendar
+│       │   └── file_picker.rs  # file_picker
+│       ├── feedback.rs         # spinner, toast, slider, alert, confirm, progress / progress_bar
+│       ├── feedback/
+│       │   ├── gauge.rs        # gauge / line_gauge builders
+│       │   └── tests.rs        # Feedback family tests
+│       ├── rich.rs             # Rich-content family facade
+│       ├── rich/
+│       │   ├── rich_log.rs     # rich_log
+│       │   ├── markdown.rs     # markdown and inline-markdown helpers
+│       │   ├── streaming.rs    # streaming_text, streaming_markdown, tool_approval, context_bar
+│       │   ├── code_block.rs   # code_block builder
+│       │   ├── fallback_highlight.rs # keyword fallback highlighter, tree-sitter line renderer
+│       │   └── tests.rs        # Rich-content family tests
+│       ├── media.rs            # big_text, image, kitty_image, sixel_image, iterm_image
+│       ├── media/
+│       │   ├── prepare.rs      # image preparation caches, encoders, half-block / RGBA fallback
+│       │   ├── font8x8.rs      # 8x8 bitmap font for big_text
+│       │   └── tests.rs        # Media family tests
+│       ├── viz.rs              # Viz family facade + shared viz-root helpers
+│       ├── viz/
+│       │   ├── bars.rs         # bar_chart, grouped and stacked bars
+│       │   ├── charts.rs       # sparkline, line/area, candlestick(_hd), chart, scatter, histogram
+│       │   ├── heat_tree.rs    # heatmap, heatmap_halfblock, treemap, TreemapItem
+│       │   ├── canvas.rs       # canvas / try_canvas / canvas_with
+│       │   ├── qr.rs           # qr_code
+│       │   └── tests.rs        # Viz family tests
+│       └── events.rs           # keyboard, mouse, paste, scroll, theme, size, tick, quit, debug helpers
 │
-├── widgets.rs                  # Facade: private submodules below, glob re-exported (`pub use input::*;` …)
+├── widgets.rs                  # Facade: private family submodules below, glob re-exported (`pub use text_input::*;` …)
 │                               # so every state type stays at `slt::widgets::*`; `validators` is `pub mod`
 ├── widgets/
-│   ├── input.rs                # StaticOutput, TextInputState, Validator, AsyncValidation, FormField, FormState, ToastState, ToastMessage, ToastLevel, AlertLevel, TextareaState, SpinnerState, SliderOpts, NumberInputState
-│   ├── collections.rs          # ListState, FilePickerState, TabsState, TableState, PaginatorState, ScrollState, HighlightRange, SplitPaneState, GridColumn
-│   ├── feedback.rs             # RichLogState, RichLogEntry, CalendarState, ButtonVariant, Trend, SchedulerState
-│   ├── selection.rs            # SelectState, RadioState, MultiSelectState, TreeState, DirectoryTreeState, PaletteCommand
-│   ├── commanding.rs           # ChordState, CommandPaletteState, streaming states, ScreenState, ModeState, tool approval types, ContextItem
-│   ├── responses.rs            # FormFieldResponse, BreadcrumbResponse, GaugeResponse, SplitPaneResponse, GutterResponse
+│   ├── display.rs              # Trend, BreadcrumbResponse
+│   ├── layout.rs               # ScrollState, HighlightRange, SplitPaneState, GridColumn, SplitPaneResponse, GutterResponse
+│   ├── commanding.rs           # ChordState, CommandPaletteState, PaletteCommand, ScreenState, ModeState
+│   ├── text_input.rs           # TextInputState, Validator, AsyncValidation, ValidateTrigger, FormField, FormState, FormFieldResponse, TextareaState, NumberInputState
+│   ├── selection.rs            # SelectState, RadioState, MultiSelectState, TabsState, ButtonVariant, PickerMode, ColorPickerState
+│   ├── collections.rs          # ListState, ListResponse, FilePickerState, FileEntry, TableState, TableColumn, PaginatorState, TreeState, TreeNode, DirectoryTreeState, CalendarState, CalDate
+│   ├── feedback.rs             # ToastState, ToastMessage, ToastLevel, AlertLevel, SpinnerState, SpinnerPreset, SliderOpts, GaugeResponse
+│   ├── rich.rs                 # RichLogState, RichLogEntry, StreamingTextState, StreamingMarkdownState, ToolApprovalState, ApprovalAction, ContextItem
+│   ├── runtime.rs              # Non-widget runtime state: StaticOutput, SchedulerState
 │   ├── validators.rs           # Built-in FormField validators (`slt::validators`)
 │   └── tests.rs                # Widget state tests (`mod tests`)
 │
@@ -444,7 +505,7 @@ Key observations:
 - `terminal.rs` is isolated — it only knows about `buffer` and `event`
 - `layout.rs` is now only a facade; the real kernels live under `src/layout/`
 - `style`, `layout`, `anim` are largely independent of each other
-- Widget facades under `src/context/widgets_*.rs` now act as indexes for narrower implementation files
+- `src/context/widgets.rs` indexes the widget families; each family name matches a state file in `src/widgets/`
 
 - The `Backend` / `AppState` / `frame()` path in `src/lib.rs` is the low-level escape hatch when SLT does not own the event loop
 
@@ -461,7 +522,7 @@ Key observations:
 
 ### Re-export Rule
 
-**The public API is defined by `lib.rs` re-exports.** Users should never need deep imports like `slt::context::widgets_display::...`. If something is public, it must be re-exported from the crate root.
+**The public API is defined by `lib.rs` re-exports.** Users should never need deep imports like `slt::context::widgets::display::...`. If something is public, it must be re-exported from the crate root.
 
 ### Why This Matters for Semver
 

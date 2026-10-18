@@ -37,7 +37,7 @@
 # Historical bugs each new check defends against:
 #   V5 → examples/named_focus.rs shipped without `.grow(1)`,
 #        making the email/name/city inputs render as a single column.
-#   V6 → src/context/widgets_display/status.rs `code_block_lang`
+#   V6 → src/context/widgets/rich/code_block.rs `code_block_lang`
 #        previously wrapped the tree-sitter branch in `ui.line(...)`
 #        but called `render_highlighted_line(...)` bare in the
 #        non-highlight fallback, producing inconsistent line wrapping.
@@ -163,19 +163,20 @@ is_allowlisted_v1() {
 }
 
 # Collect Context-layer pub fn names. Context lives in core.rs, runtime.rs,
-# and the various widgets_*/*.rs files (those add `impl Context { ... }`
-# blocks).
+# and the widget family files under context/widgets/ (those add
+# `impl Context { ... }` blocks).
 ctx_files=(
     "${SRC}/context/core.rs"
     "${SRC}/context/runtime.rs"
 )
-for d in widgets_display widgets_input widgets_interactive widgets_viz; do
-    if [[ -d "${SRC}/context/${d}" ]]; then
-        while IFS= read -r f; do
-            ctx_files+=("$f")
-        done < <(find "${SRC}/context/${d}" -name '*.rs' -type f)
-    fi
-done
+if [[ -f "${SRC}/context/widgets.rs" ]]; then
+    ctx_files+=("${SRC}/context/widgets.rs")
+fi
+if [[ -d "${SRC}/context/widgets" ]]; then
+    while IFS= read -r f; do
+        ctx_files+=("$f")
+    done < <(find "${SRC}/context/widgets" -name '*.rs' -type f)
+fi
 
 ctx_methods=""
 for f in "${ctx_files[@]}"; do
@@ -220,9 +221,7 @@ echo "── V2: Mixed verbs in same widget file ──"
 # for the SAME widget name.
 
 v2_count=0
-for f in "${SRC}/context/widgets_display/"*.rs \
-         "${SRC}/context/widgets_input/"*.rs \
-         "${SRC}/context/widgets_interactive/"*.rs; do
+while IFS= read -r f; do
     [[ -f "$f" ]] || continue
 
     # Immediate fns: pub fn returning Response on `&mut self`.
@@ -247,7 +246,7 @@ for f in "${SRC}/context/widgets_display/"*.rs \
             v2_count=$((v2_count + 1))
         fi
     done <<< "${immediate_fns}"
-done
+done < <(find "${SRC}/context/widgets" -name '*.rs' -type f 2>/dev/null | sort)
 if [[ "${v2_count}" -eq 0 ]]; then
     echo "  ✅ none"
 fi
@@ -472,7 +471,7 @@ echo "── V6: Fallback path container nesting divergence ──"
 # then, this section is a manual-review reminder so the principle
 # stays visible in CI logs.
 echo "  V6 (informational): manual review required for fallback parity"
-echo "    (see status.rs::code_block_lang for the canonical pattern fixed in v0.20.x;"
+echo "    (see rich/code_block.rs::code_block_lang for the canonical pattern fixed in v0.20.x;"
 echo "     a future syntax-aware rule should mechanize this check)"
 
 # --- V7: Demo title wide-character drift (widget-tour demos) -----------------

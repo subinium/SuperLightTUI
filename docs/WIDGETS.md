@@ -502,24 +502,24 @@ Received in `ui.canvas(w, h, |cv| { ... })`. Coordinates are in pixel space (col
 
 | Path | Contents |
 |---|---|
-| `src/context/widgets_display.rs` | Display/layout module root |
-| `src/context/widgets_display/text.rs` | `text`, `styled`, `link`, `spacer`, `timer_display`, `help_from_keymap` |
-| `src/context/widgets_display/status.rs` | `alert`, `badge`, `stat`, `breadcrumb`, `accordion`, `code_block`, `divider_text`, `definition_list`, `empty_state`, `confirm`, `key_hint` |
-| `src/context/widgets_display/rich_output.rs` | `big_text`, `image`, `kitty_image`, `sixel_image`, `streaming_text`, `streaming_markdown`, `tool_approval`, `context_bar` |
-| `src/context/widgets_display/layout.rs` | `col`, `row`, `line`, `line_wrap`, `modal`, `overlay`, `tooltip`, `group`, `container`, `scrollable`, `scrollbar`, `bordered`, `screen`, `form`, `form_field`, `form_submit`, `separator`, `separator_colored` |
-| `src/context/widgets_input/text_input.rs` | `text_input`, `text_input_colored` |
-| `src/context/widgets_input/textarea_progress.rs` | `textarea`, `progress`, `progress_bar` |
-| `src/context/widgets_input/feedback.rs` | `spinner`, `toast`, `slider`, `notify` |
-| `src/context/widgets_interactive/selection.rs` | `table`, `tabs`, `button`, `checkbox`, `toggle`, `select`, `radio`, `multi_select` |
-| `src/context/widgets_interactive/collections.rs` | `grid`, `list`, `calendar`, `file_picker` |
-| `src/context/widgets_interactive/tree_widgets.rs` | `tree`, `directory_tree` |
-| `src/context/widgets_interactive/rich_markdown.rs` | `markdown`, `virtual_list`, `command_palette`, `rich_log`, `key_seq` |
-| `src/context/widgets_interactive/events.rs` | Key/mouse input, clipboard, theme, environment queries, `help`, `help_colored` |
-| `src/context/widgets_viz.rs` | `bar_chart`, `bar_chart_with`, `bar_chart_grouped`, `bar_chart_stacked`, `sparkline`, `candlestick`, `candlestick_hd`, `heatmap`, `heatmap_halfblock`, `treemap`, `histogram`, `chart`, `scatter`, `canvas`, `qr_code` |
+| `src/context/widgets.rs` | Widget-method facade (one module per family) |
+| `src/context/widgets/display/text.rs` | `text`, `styled`, `link`, `spacer`, `timer_display`, `help_from_keymap` |
+| `src/context/widgets/display/status.rs` | `help`, `help_colored`, `badge`, `stat`, `breadcrumb`, `accordion`, `divider_text`, `definition_list`, `empty_state`, `key_hint` |
+| `src/context/widgets/layout.rs` | `col`, `row`, `line`, `line_wrap`, `group`, `container`, `scrollable`, `scrollbar`, `bordered`, `separator`, `separator_colored` (+ `layout/grid.rs`, `layout/split.rs`, `layout/gutter.rs`) |
+| `src/context/widgets/overlay.rs` | `modal`, `overlay`, `overlay_at`, `modal_at`, `tooltip`, `Anchor` |
+| `src/context/widgets/commanding.rs` | `screen`, `push_screen`, `pop_screen`, `command_palette`, `key_chord`, `key_seq` |
+| `src/context/widgets/text_input.rs` | `text_input`, `text_input_colored`, `form`, `form_field`, `form_submit` (+ `text_input/textarea.rs`, `text_input/number_input.rs`) |
+| `src/context/widgets/feedback.rs` | `spinner`, `toast`, `slider`, `alert`, `confirm`, `progress`, `progress_bar` (+ `feedback/gauge.rs`) |
+| `src/context/widgets/selection.rs` | `tabs`, `button`, `checkbox`, `toggle`, `select`, `radio`, `multi_select`, `color_picker` |
+| `src/context/widgets/collections/` | `list.rs` (`list`, `virtual_list`), `table.rs` (`table`, `paginator`), `tree.rs` (`tree`, `directory_tree`), `calendar.rs`, `file_picker.rs` |
+| `src/context/widgets/rich/` | `rich_log.rs`, `markdown.rs`, `streaming.rs` (`streaming_text`, `streaming_markdown`, `tool_approval`, `context_bar`), `code_block.rs` |
+| `src/context/widgets/media.rs` | `big_text`, `image`, `kitty_image`, `sixel_image`, `iterm_image` |
+| `src/context/widgets/events.rs` | Key/mouse input, clipboard, theme, environment queries |
+| `src/context/widgets/viz/` | `bars.rs` (`bar_chart*`), `charts.rs` (`sparkline`, `line_chart`, `candlestick`, `chart`, `scatter`, `histogram`), `heat_tree.rs` (`heatmap`, `treemap`), `canvas.rs`, `qr.rs` |
 | `src/context/runtime.rs` | `use_state`, `use_memo`, `register_focusable`, `widget`, `error_boundary`, `notify`, `light_dark`, focus/scroll management |
 | `src/context/container.rs` | `ContainerBuilder`, `CanvasContext` |
 | `src/context/state.rs` | `Response`, `State<T>` |
 | `src/widgets.rs` | All `*State` types (facade) |
-| `src/widgets/` | Grouped state definitions: `input.rs`, `collections.rs`, `feedback.rs`, `selection.rs`, `commanding.rs` |
+| `src/widgets/` | State definitions, one file per family: `text_input.rs`, `selection.rs`, `collections.rs`, `feedback.rs`, `rich.rs`, `commanding.rs`, `layout.rs`, `display.rs`, `runtime.rs` |
 
 If you are contributing a new widget, read [CONTRIBUTING.md](../CONTRIBUTING.md), [DESIGN_PRINCIPLES.md](DESIGN_PRINCIPLES.md), and [ARCHITECTURE.md](ARCHITECTURE.md) first.

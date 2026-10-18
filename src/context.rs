@@ -1,8 +1,9 @@
 //! `Context` — the per-frame handle threaded into every render closure.
 //!
 //! This file defines the [`Context`] struct itself plus the dispatching
-//! facade that imports widget impl blocks from the `widgets_display`,
-//! `widgets_input`, `widgets_interactive`, and `widgets_viz` sub-modules.
+//! facade that imports widget impl blocks from the `widgets` sub-module,
+//! which groups them by widget family (`widgets/<family>.rs`, paired with
+//! the state file of the same name in [`crate::widgets`]).
 //! See [`crate`] root for the entry-point [`crate::run`] / [`crate::frame`]
 //! functions and `docs/ARCHITECTURE.md` for the 5-layer model that
 //! organizes which method lives where.
@@ -47,12 +48,8 @@ fn slt_warn(msg: &str) {
 #[allow(dead_code)]
 fn slt_warn(_msg: &str) {}
 
-mod widgets_display;
-mod widgets_input;
-mod widgets_interactive;
-mod widgets_viz;
-pub use widgets_display::{Anchor, Breadcrumb, CodeBlock, Gauge, GutterOpts, LineGauge};
-pub use widgets_viz::TreemapItem;
+mod widgets;
+pub use widgets::{Anchor, Breadcrumb, CodeBlock, Gauge, GutterOpts, LineGauge, TreemapItem};
 
 mod state;
 pub use state::*;
