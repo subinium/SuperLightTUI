@@ -218,7 +218,7 @@ Constraint translation:
 
 | ratatui / your code | SLT |
 |---|---|
-| `ListState` | `slt::ListState` (`ListState::new(items)`, `set_items`, `set_filter`, `selected_item`, `visible_indices`) |
+| `ListState` | `slt::ListState` (`ListState::new(items)`, `set_items`, `set_filter`, `selected_item`, `selected_index`, `remove_selected`, `visible_indices`) |
 | `TableState` | `slt::TableState` (`set_rows`, `toggle_sort`, `sort_by`, `set_filter`, `next_page`, `prev_page`) |
 | `TabsState` | `slt::TabsState` (`new(vec!["Files", "Settings"])`, `selected_label`) |
 | `ScrollbarState` / manual offset | `slt::ScrollState` + `ui.scrollable(&mut state).col(...)` or `ui.scrollable_with_gutter(...)` |

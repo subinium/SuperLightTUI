@@ -33,6 +33,19 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
 - Inside tmux with `default-terminal "screen-256color"`, SLT now identifies the
   multiplexer as tmux (it was GNU screen). Protocol policy for the two is the
   same; only OSC 52 passthrough wrapping differs.
+- `ListState::selected` and `TableState::selected` are deprecated (#455). Reads
+  become `selected_view_index()` (or `selected_index()` for the data index);
+  writes become `set_selected_view_index(i)` / `set_selected_index(i)`. Replace
+  `list.remove_item(list.selected)` and `table.remove_row(table.selected)` with
+  `remove_selected()`, and `table.rows()[table.selected]` with
+  `selected_row()`; the old forms act on the wrong row under a filter or sort.
+- `list` and unpaged `table` scroll themselves (#487) and are at most as tall
+  as the space their parent leaves below them. Lists that fit are unchanged.
+  If you wrapped a long `ui.list` in a `scrollable` to make it scroll, you can
+  drop the wrapper. To keep a footer visible under a long list, put the list
+  in `ui.container().grow(1).col(...)` (or give it `.h(n)` / `.max_h(n)`).
+
+---
 
 ## 1. v0.24.x → v0.25.0
 

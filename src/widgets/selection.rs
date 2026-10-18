@@ -15,7 +15,9 @@ use super::*;
 pub struct SelectState {
     /// Selectable option labels.
     items: Vec<String>,
-    /// Selected option index.
+    /// Selected option, as a data index into [`items`](SelectState::items).
+    /// The type-to-filter query only narrows the open dropdown; it never
+    /// changes what this index refers to.
     pub selected: usize,
     /// Whether the dropdown list is currently open.
     pub open: bool,
@@ -113,7 +115,7 @@ impl SelectState {
 pub struct RadioState {
     /// Radio option labels.
     pub items: Vec<String>,
-    /// Selected option index.
+    /// Selected option, as an index into [`items`](RadioState::items).
     pub selected: usize,
 }
 

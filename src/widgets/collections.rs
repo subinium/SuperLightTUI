@@ -13,13 +13,25 @@ use super::*;
 pub struct ListState {
     /// The list items as display strings.
     items: Vec<String>,
-    /// Index of the currently selected item in the filtered view.
+    /// Index of the currently selected item in the filtered **view**.
+    ///
+    /// This is not an index into [`items`](ListState::items): with a filter
+    /// active, `remove_item(list.selected)` removes a different item. Use
+    /// [`selected_index`](ListState::selected_index) (data index),
+    /// [`selected_view_index`](ListState::selected_view_index),
+    /// [`set_selected_index`](ListState::set_selected_index) and
+    /// [`remove_selected`](ListState::remove_selected) instead.
+    #[deprecated(
+        since = "0.26.0",
+        note = "view index, not a data index; use selected_index() / selected_view_index() / set_selected_index()"
+    )]
     pub selected: usize,
     /// Case-insensitive substring filter applied to list items.
     filter: String,
-    /// Top *item* index of the visible viewport for `virtual_list`. Defaults to
-    /// `0` and is clamped each frame so `selected` stays inside the viewport
-    /// without forcing the cursor to the bottom row. For the uniform
+    /// Top *item* index of the visible viewport for `list` and
+    /// `virtual_list`. Defaults to `0` and is clamped each frame so the
+    /// selection stays inside the viewport without forcing the cursor to the
+    /// bottom row. For the uniform
     /// fixed-height path this equals the top row; with per-item heights set
     /// (see [`set_item_heights`](ListState::set_item_heights)) the cumulative
     /// row offset is tracked separately in `viewport_row_offset`.
@@ -51,6 +63,8 @@ pub struct ListState {
 
 impl ListState {
     /// Create a list with the given items. The first item is selected initially.
+    // The struct literal initialises the deprecated `selected` storage (#455).
+    #[allow(deprecated)]
     pub fn new(items: Vec<impl Into<String>>) -> Self {
         let items: Vec<String> = items.into_iter().map(Into::into).collect();
         let item_search_cache: Vec<String> = items.iter().map(|s| s.to_lowercase()).collect();
@@ -123,7 +137,9 @@ impl ListState {
                 self.heights_dirty = true;
             }
         }
-        self.selected = self.selected.min(self.view_indices.len().saturating_sub(1));
+        *self.view_cursor_mut() = self
+            .view_cursor()
+            .min(self.view_indices.len().saturating_sub(1));
         self.viewport_offset = self
             .viewport_offset
             .min(self.view_indices.len().saturating_sub(1));
@@ -134,7 +150,7 @@ impl ListState {
         if index > self.items.len() {
             return false;
         }
-        let selected = self.view_indices.get(self.selected).copied();
+        let selected = self.view_indices.get(self.view_cursor()).copied();
         let item = item.into();
         self.item_search_cache.insert(index, item.to_lowercase());
         self.items.insert(index, item);
@@ -151,7 +167,7 @@ impl ListState {
         if index >= self.items.len() {
             return None;
         }
-        let selected = self.view_indices.get(self.selected).copied();
+        let selected = self.view_indices.get(self.view_cursor()).copied();
         let item = self.items.remove(index);
         self.item_search_cache.remove(index);
         if let Some(heights) = &mut self.item_heights {
@@ -309,8 +325,140 @@ impl ListState {
 
     /// Get the currently selected item text, or `None` if the list is empty.
     pub fn selected_item(&self) -> Option<&str> {
-        let data_idx = *self.view_indices.get(self.selected)?;
+        let data_idx = *self.view_indices.get(self.view_cursor())?;
         self.items.get(data_idx).map(String::as_str)
+    }
+
+    /// Data index (into [`items`](ListState::items)) of the selected item, or
+    /// `None` when the filtered view is empty.
+    ///
+    /// Equals `visible_indices()[selected_view_index()]`, so it is the index
+    /// to pass to [`remove_item`](ListState::remove_item),
+    /// [`item`](ListState::item) or [`move_item`](ListState::move_item).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::ListState;
+    ///
+    /// let mut list = ListState::new(vec!["apple", "banana", "cherry"]);
+    /// list.set_filter("cherry");
+    /// assert_eq!(list.selected_view_index(), 0);
+    /// assert_eq!(list.selected_index(), Some(2));
+    /// ```
+    ///
+    /// Available since `0.26.0`.
+    pub fn selected_index(&self) -> Option<usize> {
+        self.view_indices.get(self.view_cursor()).copied()
+    }
+
+    /// Position of the selected item in the filtered view (what the
+    /// deprecated `selected` field holds). `0` when the view is empty.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::ListState;
+    ///
+    /// let mut list = ListState::new(vec!["apple", "banana", "cherry"]);
+    /// assert!(list.set_selected_index(1));
+    /// list.set_filter("an");
+    /// assert_eq!(list.selected_view_index(), 0); // "banana" is the only row
+    /// ```
+    ///
+    /// Available since `0.26.0`.
+    pub fn selected_view_index(&self) -> usize {
+        self.view_cursor()
+    }
+
+    /// Select the item at position `view` of the filtered view (the write
+    /// counterpart of [`selected_view_index`](ListState::selected_view_index)).
+    /// Returns `false` (selection unchanged) when `view` is past the end.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::ListState;
+    ///
+    /// let mut list = ListState::new(vec!["apple", "banana", "cherry"]);
+    /// list.set_filter("an");
+    /// assert!(list.set_selected_view_index(0));
+    /// assert_eq!(list.selected_item(), Some("banana"));
+    /// assert!(!list.set_selected_view_index(1));
+    /// ```
+    ///
+    /// Available since `0.26.0`.
+    pub fn set_selected_view_index(&mut self, view: usize) -> bool {
+        if view >= self.view_indices.len() {
+            return false;
+        }
+        *self.view_cursor_mut() = view;
+        true
+    }
+
+    /// Select the item at data index `data`. Returns `false` (selection
+    /// unchanged) when the index is out of range or hidden by the filter.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::ListState;
+    ///
+    /// let mut list = ListState::new(vec!["apple", "banana", "cherry"]);
+    /// list.set_filter("a");
+    /// assert!(list.set_selected_index(1));
+    /// assert_eq!(list.selected_item(), Some("banana"));
+    /// assert!(!list.set_selected_index(2)); // "cherry" is filtered out
+    /// ```
+    ///
+    /// Available since `0.26.0`.
+    pub fn set_selected_index(&mut self, data: usize) -> bool {
+        // The filtered view keeps data order, so it is sorted ascending.
+        match self.view_indices.binary_search(&data) {
+            Ok(view) => {
+                *self.view_cursor_mut() = view;
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Remove and return the selected item — the one the user sees
+    /// highlighted — or `None` when the filtered view is empty.
+    ///
+    /// The selection stays at the same view position, so it moves to the next
+    /// visible item (or the new last one).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::ListState;
+    ///
+    /// let mut list = ListState::new(vec!["apple", "banana", "cherry"]);
+    /// list.set_filter("cherry");
+    /// assert_eq!(list.remove_selected().as_deref(), Some("cherry"));
+    /// assert_eq!(list.items(), ["apple", "banana"]);
+    /// ```
+    ///
+    /// Available since `0.26.0`.
+    pub fn remove_selected(&mut self) -> Option<String> {
+        let data = self.selected_index()?;
+        self.remove_item(data)
+    }
+
+    /// Storage accessors for the deprecated public `selected` field (#455):
+    /// crate code reads and writes the view cursor through these so the
+    /// deprecation only reaches downstream direct field access.
+    #[allow(deprecated)]
+    #[inline]
+    pub(crate) fn view_cursor(&self) -> usize {
+        self.selected
+    }
+
+    #[allow(deprecated)]
+    #[inline]
+    pub(crate) fn view_cursor_mut(&mut self) -> &mut usize {
+        &mut self.selected
     }
 
     /// Move the item at data index `from` to data index `to`, preserving
@@ -342,7 +490,7 @@ impl ListState {
 
         // Remember which data index is currently selected so selection can
         // follow the moved item (or stay on whatever item the user had).
-        let selected_data = self.view_indices.get(self.selected).copied();
+        let selected_data = self.view_indices.get(self.view_cursor()).copied();
 
         let item = self.items.remove(from);
         self.items.insert(to, item);
@@ -377,7 +525,7 @@ impl ListState {
                 data_idx
             };
             if let Some(view_pos) = self.view_indices.iter().position(|&i| i == new_data_idx) {
-                self.selected = view_pos;
+                *self.view_cursor_mut() = view_pos;
             }
         }
 
@@ -403,16 +551,16 @@ impl ListState {
             .viewport_offset
             .min(self.view_indices.len().saturating_sub(1));
         self.viewport_row_offset = 0;
-        if !self.view_indices.is_empty() && self.selected >= self.view_indices.len() {
-            self.selected = self.view_indices.len() - 1;
+        if !self.view_indices.is_empty() && self.view_cursor() >= self.view_indices.len() {
+            *self.view_cursor_mut() = self.view_indices.len() - 1;
         } else if self.view_indices.is_empty() {
-            self.selected = 0;
+            *self.view_cursor_mut() = 0;
         }
     }
 
     fn restore_selection(&mut self, raw: Option<usize>) {
         if let Some(view) = raw.and_then(|raw| self.view_indices.iter().position(|&i| i == raw)) {
-            self.selected = view;
+            *self.view_cursor_mut() = view;
         }
     }
 
@@ -420,10 +568,28 @@ impl ListState {
         self.item_search_cache = self.items.iter().map(|item| item.to_lowercase()).collect();
         if let Some(heights) = self.item_heights.as_mut() {
             heights.resize(self.items.len(), 1);
+            release_excess_capacity(heights);
         }
         self.heights_dirty = true;
         self.viewport_offset = self.viewport_offset.min(self.items.len().saturating_sub(1));
         self.rebuild_view();
+        // Bulk replacement (`set_items` / `clear_items`) is the only path that
+        // can shrink the list by orders of magnitude, so release index buffers
+        // sized for the old data here (#416). Filter changes keep capacity to
+        // avoid reallocating on every keystroke.
+        release_excess_capacity(&mut self.view_indices);
+        // `heights_dirty` is set, so the prefix sum is rebuilt before any read.
+        self.row_prefix.clear();
+        release_excess_capacity(&mut self.row_prefix);
+    }
+}
+
+/// Shrink `buf` when its capacity is far above its length, so a collection
+/// replaced by a much smaller one does not keep the old index buffers alive.
+fn release_excess_capacity<T>(buf: &mut Vec<T>) {
+    const SLACK: usize = 64;
+    if buf.capacity() > buf.len().saturating_mul(2).saturating_add(SLACK) {
+        buf.shrink_to(buf.len());
     }
 }
 
@@ -903,14 +1069,26 @@ pub enum TableColumn {
 ///
 /// Multi-row selection (Space / Shift+Up/Down / Ctrl+Space and modifier
 /// clicks) is tracked in [`multi_selected`](TableState::multi_selected); the
-/// `selected` field always remains the focused/cursor row.
+/// focused/cursor row ([`selected_view_index`](TableState::selected_view_index)) is
+/// tracked separately.
 #[derive(Debug, Clone)]
 pub struct TableState {
     /// Column header labels.
     headers: Vec<String>,
     /// Table rows, each a `Vec` of cell strings.
     rows: Vec<Vec<String>>,
-    /// Focused/cursor row (view index). Unchanged single-select semantics.
+    /// Focused/cursor row as a **view** index (after filter and sort).
+    ///
+    /// This is not an index into [`rows`](TableState::rows): with a filter or
+    /// sort active, `remove_row(table.selected)` removes a different row. Use
+    /// [`selected_index`](TableState::selected_index) (data index),
+    /// [`selected_view_index`](TableState::selected_view_index),
+    /// [`set_selected_index`](TableState::set_selected_index) and
+    /// [`remove_selected`](TableState::remove_selected) instead.
+    #[deprecated(
+        since = "0.26.0",
+        note = "view index, not a data index; use selected_index() / selected_view_index() / set_selected_index()"
+    )]
     pub selected: usize,
     /// Multi-row selection as view indices. Empty means no multi-selection.
     ///
@@ -938,12 +1116,17 @@ pub struct TableState {
     pub page_size: usize,
     /// Whether alternating row backgrounds are enabled.
     pub zebra: bool,
+    /// Top view row drawn by an unpaged `table` (#487). Clamped each frame so
+    /// the focused row stays inside the body viewport; ignored when paged.
+    pub(crate) viewport_offset: usize,
     view_indices: Vec<usize>,
     pub(super) row_search_cache: Vec<String>,
     pub(super) filter_tokens: Vec<String>,
 }
 
 impl Default for TableState {
+    // The struct literal initialises the deprecated `selected` storage (#455).
+    #[allow(deprecated)]
     fn default() -> Self {
         Self {
             headers: Vec::new(),
@@ -962,6 +1145,7 @@ impl Default for TableState {
             page: 0,
             page_size: 0,
             zebra: false,
+            viewport_offset: 0,
             view_indices: Vec::new(),
             row_search_cache: Vec::new(),
             filter_tokens: Vec::new(),
@@ -980,23 +1164,7 @@ impl TableState {
         let mut state = Self {
             headers,
             rows,
-            selected: 0,
-            multi_selected: HashSet::new(),
-            selection_anchor: None,
-            column_specs: Vec::new(),
-            column_widths: Vec::new(),
-            content_widths: Vec::new(),
-            widths_dirty: true,
-            resolved_width: 0,
-            sort_column: None,
-            sort_ascending: true,
-            filter: String::new(),
-            page: 0,
-            page_size: 0,
-            zebra: false,
-            view_indices: Vec::new(),
-            row_search_cache: Vec::new(),
-            filter_tokens: Vec::new(),
+            ..Self::default()
         };
         state.rebuild_row_search_cache();
         state.rebuild_view();
@@ -1085,7 +1253,9 @@ impl TableState {
             } else {
                 0
             };
-            self.selected = self.selected.min(self.view_indices.len().saturating_sub(1));
+            *self.view_cursor_mut() = self
+                .view_cursor()
+                .min(self.view_indices.len().saturating_sub(1));
             self.prune_selection();
         }
     }
@@ -1205,8 +1375,134 @@ impl TableState {
         if self.view_indices.is_empty() {
             return None;
         }
-        let data_idx = self.view_indices.get(self.selected)?;
+        let data_idx = self.view_indices.get(self.view_cursor())?;
         self.rows.get(*data_idx).map(|r| r.as_slice())
+    }
+
+    /// Data index (into [`rows`](TableState::rows)) of the focused row, or
+    /// `None` when the filtered view is empty.
+    ///
+    /// Maps through the current filter, sort and (absolute) page view, so it
+    /// is the index to pass to [`row`](TableState::row) or
+    /// [`remove_row`](TableState::remove_row).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::TableState;
+    ///
+    /// let mut table = TableState::new(vec!["Name"], vec![vec!["carol"], vec!["alice"]]);
+    /// table.sort_by(0); // alice, carol
+    /// assert_eq!(table.selected_view_index(), 0);
+    /// assert_eq!(table.selected_index(), Some(1)); // "alice" is data row 1
+    /// ```
+    ///
+    /// Available since `0.26.0`.
+    pub fn selected_index(&self) -> Option<usize> {
+        self.view_indices.get(self.view_cursor()).copied()
+    }
+
+    /// Position of the focused row in the filtered and sorted view (what the
+    /// deprecated `selected` field holds). Multi-selection
+    /// ([`is_row_selected`](TableState::is_row_selected)) and the
+    /// [`table_with`](crate::Context::table_with) renderer use the same space.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::TableState;
+    ///
+    /// let table = TableState::new(vec!["Name"], vec![vec!["a"], vec!["b"]]);
+    /// assert_eq!(table.selected_view_index(), 0);
+    /// ```
+    ///
+    /// Available since `0.26.0`.
+    pub fn selected_view_index(&self) -> usize {
+        self.view_cursor()
+    }
+
+    /// Focus the row at data index `data`, switching to its page when
+    /// pagination is enabled. Returns `false` (selection unchanged) when the
+    /// index is out of range or hidden by the filter.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::TableState;
+    ///
+    /// let mut table = TableState::new(vec!["Name"], vec![vec!["carol"], vec!["alice"]]);
+    /// table.sort_by(0);
+    /// assert!(table.set_selected_index(0)); // "carol"
+    /// assert_eq!(table.selected_view_index(), 1);
+    /// ```
+    ///
+    /// Available since `0.26.0`.
+    pub fn set_selected_index(&mut self, data: usize) -> bool {
+        match self.view_indices.iter().position(|&raw| raw == data) {
+            Some(view) => self.set_selected_view_index(view),
+            None => false,
+        }
+    }
+
+    /// Focus the row at position `view` of the filtered and sorted view,
+    /// switching to its page when pagination is enabled. Returns `false`
+    /// (selection unchanged) when `view` is past the end.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::TableState;
+    ///
+    /// let mut table = TableState::new(vec!["Name"], vec![vec!["carol"], vec!["alice"]]);
+    /// table.sort_by(0);
+    /// assert!(table.set_selected_view_index(1));
+    /// assert_eq!(table.selected_row(), Some(&["carol".to_string()][..]));
+    /// ```
+    ///
+    /// Available since `0.26.0`.
+    pub fn set_selected_view_index(&mut self, view: usize) -> bool {
+        if view >= self.view_indices.len() {
+            return false;
+        }
+        *self.view_cursor_mut() = view;
+        if let Some(page) = view.checked_div(self.page_size) {
+            self.page = page;
+        }
+        true
+    }
+
+    /// Remove and return the focused row — the one the user sees
+    /// highlighted — or `None` when the filtered view is empty.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::TableState;
+    ///
+    /// let mut table = TableState::new(vec!["Name"], vec![vec!["carol"], vec!["alice"]]);
+    /// table.set_filter("alice");
+    /// assert_eq!(table.remove_selected(), Some(vec!["alice".to_string()]));
+    /// assert_eq!(table.row_count(), 1);
+    /// ```
+    ///
+    /// Available since `0.26.0`.
+    pub fn remove_selected(&mut self) -> Option<Vec<String>> {
+        let data = self.selected_index()?;
+        self.remove_row(data)
+    }
+
+    /// Storage accessors for the deprecated public `selected` field (#455);
+    /// see [`ListState::view_cursor`].
+    #[allow(deprecated)]
+    #[inline]
+    pub(crate) fn view_cursor(&self) -> usize {
+        self.selected
+    }
+
+    #[allow(deprecated)]
+    #[inline]
+    pub(crate) fn view_cursor_mut(&mut self) -> &mut usize {
+        &mut self.selected
     }
 
     /// Set the per-column width policy.
@@ -1294,7 +1590,7 @@ impl TableState {
 
     /// Clear the multi-selection set and the range anchor.
     ///
-    /// The focused [`selected`](TableState::selected) cursor row is unaffected.
+    /// The focused cursor row ([`selected_view_index`](TableState::selected_view_index)) is unaffected.
     ///
     /// Available since v0.21.0.
     ///
@@ -1410,7 +1706,9 @@ impl TableState {
             self.page = 0;
         }
 
-        self.selected = self.selected.min(self.view_indices.len().saturating_sub(1));
+        *self.view_cursor_mut() = self
+            .view_cursor()
+            .min(self.view_indices.len().saturating_sub(1));
         self.prune_selection();
         self.widths_dirty = true;
     }
@@ -2467,22 +2765,22 @@ mod list_state_reorder_tests {
     #[test]
     fn move_item_forward_reorders_and_keeps_selection() {
         let mut state = ListState::new(vec!["a", "b", "c", "d"]);
-        state.selected = 0; // "a"
+        assert!(state.set_selected_view_index(0)); // "a"
         assert!(state.move_item(0, 2));
         assert_eq!(state.items, vec!["b", "c", "a", "d"]);
         // Selection follows the moved item.
         assert_eq!(state.selected_item(), Some("a"));
-        assert_eq!(state.selected, 2);
+        assert_eq!(state.selected_view_index(), 2);
     }
 
     #[test]
     fn move_item_backward_reorders_and_keeps_selection() {
         let mut state = ListState::new(vec!["a", "b", "c", "d"]);
-        state.selected = 3; // "d"
+        assert!(state.set_selected_view_index(3)); // "d"
         assert!(state.move_item(3, 1));
         assert_eq!(state.items, vec!["a", "d", "b", "c"]);
         assert_eq!(state.selected_item(), Some("d"));
-        assert_eq!(state.selected, 1);
+        assert_eq!(state.selected_view_index(), 1);
     }
 
     #[test]
@@ -2509,10 +2807,10 @@ mod list_state_reorder_tests {
     #[test]
     fn move_item_noop_when_from_equals_to() {
         let mut state = ListState::new(vec!["a", "b", "c"]);
-        state.selected = 1;
+        assert!(state.set_selected_view_index(1));
         assert!(!state.move_item(1, 1));
         assert_eq!(state.items, vec!["a", "b", "c"]);
-        assert_eq!(state.selected, 1);
+        assert_eq!(state.selected_view_index(), 1);
     }
 
     #[test]
@@ -2535,11 +2833,11 @@ mod list_state_reorder_tests {
         // Moving an item that is not selected should keep selection on the
         // same logical item.
         let mut state = ListState::new(vec!["a", "b", "c", "d"]);
-        state.selected = 3; // "d"
+        assert!(state.set_selected_view_index(3)); // "d"
         assert!(state.move_item(0, 1)); // swap a/b; "d" stays last
         assert_eq!(state.items, vec!["b", "a", "c", "d"]);
         assert_eq!(state.selected_item(), Some("d"));
-        assert_eq!(state.selected, 3);
+        assert_eq!(state.selected_view_index(), 3);
     }
 }
 
@@ -2556,7 +2854,7 @@ mod v024_collection_state_tests {
         for initial in [vec![1, 10, 2], vec![1, 10]] {
             let mut state = ListState::new(vec!["a", "b", "c"]).with_item_heights(initial);
             let last = state.item_height(2);
-            state.selected = 1;
+            assert!(state.set_selected_view_index(1));
             state.remove_item(0);
             assert_eq!(heights(&state), [10, last]);
             assert_eq!(state.selected_item(), Some("b"));
@@ -2603,7 +2901,7 @@ mod v024_collection_state_tests {
     fn table_unsorted_append_preserves_selection_and_width_cache() {
         let mut state = TableState::new(vec!["H"], vec![vec!["one"], vec!["two"]]);
         state.select_single(1);
-        state.selected = 1;
+        assert!(state.set_selected_view_index(1));
         state.push_row(vec!["longer"]);
         assert!(!state.is_dirty());
         assert_eq!(state.column_widths(), [6]);
@@ -2631,6 +2929,178 @@ mod v024_collection_state_tests {
                 + state.row_prefix.capacity() * std::mem::size_of::<u32>()
                 + state.item_heights.as_ref().unwrap().capacity() * std::mem::size_of::<u32>();
             eprintln!("COLLECTION_RETAINED n={count} owned_capacity_bytes={bytes}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod v026_selection_index_tests {
+    //! Issue #455: selected-item reads and removal use the data index of the
+    //! row the user sees highlighted, with or without a filter or sort.
+    use super::*;
+
+    fn fruit() -> ListState {
+        ListState::new(vec!["apple", "banana", "cherry"])
+    }
+
+    #[test]
+    fn remove_selected_under_filter_removes_the_highlighted_item() {
+        let mut list = fruit();
+        list.set_filter("cherry");
+        assert_eq!(list.selected_item(), Some("cherry"));
+        assert_eq!(list.remove_selected().as_deref(), Some("cherry"));
+        assert_eq!(list.items(), ["apple", "banana"]);
+        // Nothing left in the filtered view.
+        assert_eq!(list.remove_selected(), None);
+        assert_eq!(list.items(), ["apple", "banana"]);
+    }
+
+    #[test]
+    fn selected_index_maps_view_to_data_in_every_view_state() {
+        let mut list = fruit();
+        assert!(list.set_selected_index(2));
+        assert_eq!(list.selected_view_index(), 2);
+        assert_eq!(list.selected_index(), Some(list.visible_indices()[2]));
+
+        list.set_filter("an"); // banana only
+        assert_eq!(list.selected_view_index(), 0);
+        assert_eq!(list.selected_index(), Some(1));
+        assert_eq!(
+            list.selected_index(),
+            Some(list.visible_indices()[list.selected_view_index()])
+        );
+
+        list.set_filter("zzz");
+        assert_eq!(list.selected_index(), None);
+
+        let empty = ListState::new(Vec::<String>::new());
+        assert_eq!(empty.selected_index(), None);
+        assert_eq!(empty.selected_view_index(), 0);
+    }
+
+    #[test]
+    fn set_selected_index_selects_only_visible_items() {
+        let mut list = fruit();
+        list.set_filter("a"); // apple, banana
+        assert!(list.set_selected_index(1));
+        assert_eq!(list.selected_item(), Some("banana"));
+        assert!(!list.set_selected_index(2), "cherry is filtered out");
+        assert_eq!(list.selected_item(), Some("banana"));
+        assert!(!list.set_selected_index(99));
+    }
+
+    fn people() -> TableState {
+        TableState::new(
+            vec!["Name", "Age"],
+            vec![vec!["carol", "31"], vec!["alice", "45"], vec!["bob", "27"]],
+        )
+    }
+
+    fn row(cells: &[&str]) -> Vec<String> {
+        cells.iter().map(|cell| cell.to_string()).collect()
+    }
+
+    #[test]
+    fn table_remove_selected_under_filter_removes_the_highlighted_row() {
+        let mut table = people();
+        table.set_filter("bob");
+        assert_eq!(table.selected_row(), Some(&row(&["bob", "27"])[..]));
+        assert_eq!(table.remove_selected(), Some(row(&["bob", "27"])));
+        assert_eq!(table.row_count(), 2);
+        assert!(table.rows().iter().all(|r| r[0] != "bob"));
+    }
+
+    #[test]
+    fn table_remove_selected_under_sort_removes_the_highlighted_row() {
+        let mut table = people();
+        table.sort_by(0); // alice, bob, carol
+        assert!(table.set_selected_index(2)); // bob (data index 2)
+        assert_eq!(table.selected_view_index(), 1);
+        assert_eq!(table.selected_index(), Some(2));
+        assert_eq!(table.remove_selected(), Some(row(&["bob", "27"])));
+        let names: Vec<&str> = table.rows().iter().map(|r| r[0].as_str()).collect();
+        assert_eq!(names, ["carol", "alice"]);
+    }
+
+    #[test]
+    fn table_set_selected_index_moves_to_the_rows_page() {
+        let mut table = TableState::new(
+            vec!["N"],
+            (0..10).map(|i| vec![i.to_string()]).collect::<Vec<_>>(),
+        );
+        table.page_size = 3;
+        assert!(table.set_selected_index(7));
+        assert_eq!(table.page, 2);
+        assert_eq!(table.selected_index(), Some(7));
+        table.set_filter("zzz");
+        assert!(!table.set_selected_index(7));
+        assert_eq!(table.selected_index(), None);
+    }
+
+    #[test]
+    fn set_items_to_a_smaller_list_releases_index_buffers() {
+        // #416: replacing 10k items with 2 used to keep ~10k-entry
+        // view/prefix/height buffers alive for the life of the state.
+        let mut list = ListState::new((0..10_000).map(|i| i.to_string()).collect::<Vec<_>>())
+            .with_item_heights(vec![2; 10_000]);
+        list.ensure_row_prefix();
+        list.set_items(vec!["a", "b"]);
+        assert!(list.view_indices.capacity() <= 66, "view kept its capacity");
+        assert!(list.row_prefix.capacity() <= 66, "prefix kept its capacity");
+        assert!(
+            list.item_heights
+                .as_ref()
+                .is_some_and(|h| h.capacity() <= 66),
+            "heights kept their capacity"
+        );
+        assert_eq!(list.visible_indices(), [0, 1]);
+        list.ensure_row_prefix();
+        assert_eq!(list.row_prefix(), [0, 2, 4]);
+        // Filter churn keeps capacity (no reallocation per keystroke).
+        let mut big = ListState::new((0..1_000).map(|i| i.to_string()).collect::<Vec<_>>());
+        big.set_filter("999");
+        assert!(big.view_indices.capacity() >= 1_000);
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
+
+        #[test]
+        fn remove_selected_always_removes_selected_item(
+            items in proptest::collection::vec("[a-c]{1,3}", 0..12),
+            filter in "[a-c]{0,2}",
+            pick in 0usize..16,
+        ) {
+            let mut list = ListState::new(items.clone());
+            list.set_filter(filter.clone());
+            let visible = list.visible_indices().len().max(1);
+            if let Some(&data) = list.visible_indices().get(pick % visible) {
+                proptest::prop_assert!(list.set_selected_index(data));
+            }
+            let expected = list.selected_item().map(str::to_string);
+            proptest::prop_assert_eq!(
+                list.selected_index(),
+                list.visible_indices().get(list.selected_view_index()).copied()
+            );
+            let removed = list.remove_selected();
+            proptest::prop_assert_eq!(&removed, &expected);
+            proptest::prop_assert_eq!(
+                list.len(),
+                items.len() - usize::from(expected.is_some())
+            );
+
+            let mut table = TableState::new(
+                vec!["C"],
+                items.iter().map(|item| vec![item.clone()]).collect::<Vec<_>>(),
+            );
+            table.sort_by(0);
+            table.set_filter(filter);
+            let visible = table.visible_indices().len().max(1);
+            if let Some(&data) = table.visible_indices().get(pick % visible) {
+                proptest::prop_assert!(table.set_selected_index(data));
+            }
+            let expected = table.selected_row().map(<[String]>::to_vec);
+            proptest::prop_assert_eq!(table.remove_selected(), expected);
         }
     }
 }

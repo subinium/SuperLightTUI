@@ -729,21 +729,25 @@ let mut log = slt::RichLogState::new();
 let mut log = slt::RichLogState::new_unbounded();
 ```
 
-### `ListState.selected` / `TableState.selected` are view indices
+### Delete the selected list item or table row
 
-`selected` is a position in the **filtered** (and, for tables, sorted) view,
-but `remove_item` / `remove_row` take a **data** index into the underlying
-items. With a filter active, `list.remove_item(list.selected)` deletes the
-wrong item. Map through `visible_indices()` first:
+The highlighted row is a position in the **filtered** (and, for tables,
+sorted) view, while `remove_item` / `remove_row` take a **data** index into the
+underlying items. Use the selection helpers, which map between the two:
 
 ```rust
-if let Some(&data_idx) = list.visible_indices().get(list.selected) {
-    let _ = list.remove_item(data_idx);
-}
-if let Some(&data_idx) = table.visible_indices().get(table.selected) {
-    let _ = table.remove_row(data_idx);
+let _ = list.remove_selected(); // the item the user sees highlighted
+let _ = table.remove_selected(); // the row the user sees highlighted
+
+// Need the data index itself (e.g. to delete from your own model)?
+if let Some(data_idx) = list.selected_index() {
+    let _ = list.item(data_idx);
 }
 ```
+
+The `selected` fields are deprecated since 0.26 because they hold the view
+index: `list.remove_item(list.selected)` deletes the wrong item while a filter
+is active.
 
 See [STATE_APIS.md](STATE_APIS.md#two-index-spaces-view-vs-data) for the full view-vs-data rule.
 
