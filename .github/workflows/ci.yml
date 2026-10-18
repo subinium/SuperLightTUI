@@ -78,7 +78,6 @@ jobs:
       # must be classified; maintained ones compile with #![deny(warnings)].
       - name: Compile every maintained doc snippet (warnings denied)
         run: python3 scripts/check_doc_examples.py --toolchain stable
-      - run: python3 -m unittest discover -s scripts -p smoke_wasm_release_test.py
       - run: python3 -m unittest discover -s scripts -p smoke_native_release_test.py
 
   platform-test:
@@ -158,40 +157,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo check -p superlighttui --no-default-features
-
-  check-wasm:
-    name: Check (WASM backend)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@wasm-pack
-      - uses: browser-actions/setup-chrome@v2
-      - uses: nanasess/setup-chromedriver@v2
-      - name: Install CJK fonts for browser pixel checks
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y fonts-noto-cjk
-          fc-match 'monospace:lang=ko'
-      - run: cargo check -p slt-wasm --all-features --target wasm32-unknown-unknown
-      - run: cargo clippy -p slt-wasm --all-features --target wasm32-unknown-unknown -- -D warnings
-      - run: cargo test -p slt-wasm --all-features
-      - run: chrome --version || google-chrome --version
-      - run: chromedriver --version
-      - run: CHROMEDRIVER="$(command -v chromedriver)" wasm-pack test --headless --chrome crates/slt-wasm
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: crates/slt-wasm/examples/browser/package-lock.json
-      - run: npm ci --prefix crates/slt-wasm/examples/browser
-      - run: wasm-pack build crates/slt-wasm/examples/browser --target web --dev -- --features browser-tests
-      - run: CHROME_EXECUTABLE="$(command -v chrome || command -v google-chrome)" npm test --prefix crates/slt-wasm/examples/browser
-      - run: cargo package --workspace --no-default-features --target wasm32-unknown-unknown --target-dir "$(mktemp -d "$RUNNER_TEMP/slt-package.XXXXXX")" --locked
 
   feature-check:
     name: Feature Combinations

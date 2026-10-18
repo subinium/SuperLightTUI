@@ -22,7 +22,7 @@ Run the full Core Gate AND Extended Gate locally BEFORE pushing. The branch must
 - [ ] `typos`
 - [ ] `bash scripts/api_audit.sh --strict`
 - [ ] `cargo check -p superlighttui --no-default-features`
-- [ ] `cargo check -p slt-wasm --target wasm32-unknown-unknown`
+- [ ] `cargo check -p slt-wasm --target wasm32-unknown-unknown` (local only; not in CI while WASM is deferred)
 - [ ] `cargo hack check -p superlighttui --each-feature --no-dev-deps`
 - [ ] `cargo audit`
 - [ ] `cargo deny check`
@@ -114,7 +114,7 @@ python3 scripts/check_doc_examples.py   # compiles every maintained doc snippet,
 # 8. No-default-features (catches missing #[cfg] gates)
 cargo check -p superlighttui --no-default-features
 
-# 9. WASM target
+# 9. WASM target (local only; not in CI while WASM is deferred)
 cargo check -p slt-wasm --target wasm32-unknown-unknown
 
 # 10. Feature combinations (needs cargo-hack: cargo install cargo-hack)
@@ -138,7 +138,7 @@ cargo deny check
 | Typos | `typos` | Yes |
 | API Audit | `bash scripts/api_audit.sh --strict` + `python3 scripts/check_doc_examples.py` | Yes |
 | Check (no-default) | `cargo check -p superlighttui --no-default-features` | Yes |
-| Check (WASM) | `cargo check -p slt-wasm --target wasm32-unknown-unknown` | Yes |
+| Check (WASM) | `cargo check -p slt-wasm --target wasm32-unknown-unknown` | No (removed from CI while WASM is deferred; run locally before touching `crates/slt-wasm`) |
 | Feature Combinations | `cargo hack check --each-feature --no-dev-deps` | Yes |
 | Audit | `cargo audit` | Yes |
 | Deny Check | `cargo deny check {advisories,bans,licenses,sources}` | Yes (advisories soft) |
