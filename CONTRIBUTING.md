@@ -1,11 +1,11 @@
 # Contributing to SLT
 
 Before contributing, read:
-- **[`docs/DESIGN_PRINCIPLES.md`](docs/DESIGN_PRINCIPLES.md)** — Why things are the way they are
-- **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — How the code is organized
-- **[`docs/WIDGETS.md`](docs/WIDGETS.md)** — Which APIs and state types live where
-- **[`docs/TESTING.md`](docs/TESTING.md)** — How to verify widget and layout behavior
-- **[`docs/BACKENDS.md`](docs/BACKENDS.md)** — Low-level backend and run-loop contracts
+- **[`docs/internals/design-principles.md`](docs/internals/design-principles.md)** — Why things are the way they are
+- **[`docs/internals/architecture.md`](docs/internals/architecture.md)** — How the code is organized
+- **[`docs/reference/widgets.md`](docs/reference/widgets.md)** — Which APIs and state types live where
+- **[`docs/guide/08-testing.md`](docs/guide/08-testing.md)** — How to verify widget and layout behavior
+- **[`docs/internals/custom-backends.md`](docs/internals/custom-backends.md)** — Low-level backend and run-loop contracts
 
 ## Getting Started
 
@@ -73,11 +73,11 @@ cargo check --examples --all-features
 Follow this checklist when adding a new widget:
 
 1. **State struct** in `widgets.rs` — name it `{Widget}State`, implement `Default`
-2. **State placement** in the matching `src/widgets/*.rs` group file, then surfaced through `src/widgets.rs`
-3. **Rendering method** on `Context` in the matching `src/context/widgets_*/` subfile (`widgets_input/`, `widgets_display/`, `widgets_interactive/`, or `widgets_viz.rs`)
+2. **State placement** in the matching `src/widgets/<family>.rs` family file (see the Widget Families table in `docs/internals/architecture.md`), then surfaced through `src/widgets.rs`
+3. **Rendering method** on `Context` in `src/context/widgets/<family>.rs` (or its `<family>/` directory) — the same family name as the state file
 4. **Re-export** in `lib.rs`
 5. **Doc comment** (`///`) on the public method with usage example
-6. **Response pattern** — interactive and independently framed display widgets return `Response`; style-chain text helpers return `&mut Self`
+6. **Response pattern** — interactive and independently framed display widgets return `Response`; text elements (`text`, `styled`, `link`, `timer_display`) return the scoped `Text<'_>` builder
 7. **Focus** — call `register_focusable()` if the widget accepts keyboard input
 8. **Events** — consume handled key events so they don't bubble
 9. **Theme** — use `self.theme.*` for default colors
@@ -85,7 +85,7 @@ Follow this checklist when adding a new widget:
 
 ## Error Handling
 
-See [`docs/DESIGN_PRINCIPLES.md` — Error Handling](docs/DESIGN_PRINCIPLES.md#6-error-handling) for the full policy.
+See [`docs/internals/design-principles.md` — Error Handling](docs/internals/design-principles.md#r6--error-handling) for the full policy.
 
 Summary:
 - Use `io::Result` for fallible operations
@@ -94,7 +94,7 @@ Summary:
 
 ## Architecture
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full module map and data flow.
+See [`docs/internals/architecture.md`](docs/internals/architecture.md) for the full module map and data flow.
 
 ```
 User closure → Context collects Commands → build_tree() → flexbox compute → render to Buffer → diff → flush
@@ -122,4 +122,4 @@ downstream consumer from crates.io.
 
 Core: `unicode-width`, `unicode-segmentation`, `smallvec`, `compact_str`. Terminal I/O: `crossterm` (default feature). Optional: `tokio` (async), `serde`, `image`, `qrcode`, `flate2` (kitty-compress), tree-sitter syntax features.
 
-Do not add new dependencies without discussion. See [`docs/DESIGN_PRINCIPLES.md` — Dependencies](docs/DESIGN_PRINCIPLES.md#9-dependencies).
+Do not add new dependencies without discussion. See [`docs/internals/design-principles.md` — Dependencies](docs/internals/design-principles.md#r9--dependencies).

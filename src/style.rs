@@ -7,6 +7,8 @@ mod color;
 mod theme;
 #[cfg(feature = "serde")]
 mod theme_io;
+#[cfg(feature = "crossterm")]
+pub(crate) use color::effective_color_depth;
 pub use color::{Color, ColorDepth, ColorParseError};
 pub use theme::{Spacing, SyntaxPalette, Theme, ThemeBuilder, ThemeColor};
 #[cfg(feature = "theme-watch")]
@@ -436,8 +438,7 @@ pub struct Constraints {
 /// Compile-time regression guard for `Constraints` size.
 ///
 /// The unified `WidthSpec`/`HeightSpec` representation is required to fit
-/// in 24 bytes (12 + 12) — half the size of the v0.19 representation
-/// (36 bytes). Layout state stores this struct on every `LayoutNode`, so
+/// in 24 bytes (12 + 12). Layout state stores this struct on every `LayoutNode`, so
 /// the cache footprint compounds.
 const _ASSERT_CONSTRAINTS_SIZE: () = assert!(
     std::mem::size_of::<Constraints>() == 24,
@@ -445,7 +446,7 @@ const _ASSERT_CONSTRAINTS_SIZE: () = assert!(
 );
 
 impl Constraints {
-    // ─── builder methods (preserved from v0.19, dispatch into enum) ───
+    // ─── builder methods (dispatch into the width / height enums) ───
 
     /// Set the minimum width constraint.
     ///
@@ -653,7 +654,7 @@ impl Constraints {
     //
     // # Compatibility
     //
-    // Public for downstream callers that adopted these from v0.19. New code
+    // Public for downstream callers that set the bounds directly. New code
     // that owns a `Constraints` value should prefer the chainable builders
     // (`Constraints::default().min_w(10).max_w(40)`).
 
@@ -1076,7 +1077,27 @@ impl Style {
 /// ui.container().apply(&CARD).col(|ui| { ... });
 /// ui.container().apply(&CARD).apply(&DANGER).col(|ui| { ... });
 /// ```
+///
+/// `ContainerStyle` is `Copy` and every builder method returns a new value,
+/// so a builder call used as a statement changes nothing and is rejected
+/// under `#[deny(unused_must_use)]`:
+///
+/// ```compile_fail
+/// #![deny(unused_must_use)]
+/// let card = slt::ContainerStyle::new();
+/// card.p(1); // error: unused `ContainerStyle` that must be used
+/// ```
+///
+/// Bind the result instead:
+///
+/// ```
+/// #![deny(unused_must_use)]
+/// let card = slt::ContainerStyle::new();
+/// let card = card.p(1);
+/// assert_eq!(card.padding.map(|p| p.top), Some(1));
+/// ```
 #[derive(Debug, Clone, Copy, Default)]
+#[must_use = "builder methods return a new value; bind or pass it"]
 pub struct ContainerStyle {
     /// Border style for the container.
     pub border: Option<Border>,
@@ -1138,6 +1159,28 @@ pub struct ContainerStyle {
     ///
     /// Use [`ContainerStyle::extending`] to create a style that inherits.
     pub extends: Option<&'static ContainerStyle>,
+    /// Background while hovered (CSS `:hover`).
+    pub hover_bg: Option<Color>,
+    /// Default child text color while hovered.
+    pub hover_fg: Option<Color>,
+    /// Border color while hovered.
+    pub hover_border_fg: Option<Color>,
+    /// Background while the container is the focused slot (CSS `:focus`).
+    pub focus_bg: Option<Color>,
+    /// Default child text color while focused.
+    pub focus_fg: Option<Color>,
+    /// Border color while focused.
+    pub focus_border_fg: Option<Color>,
+    /// Background while focus is inside the container (CSS `:focus-within`).
+    pub focus_within_bg: Option<Color>,
+    /// Border color while focus is inside the container.
+    pub focus_within_border_fg: Option<Color>,
+    /// Background while pressed (CSS `:active`).
+    pub active_bg: Option<Color>,
+    /// Default child text color while pressed.
+    pub active_fg: Option<Color>,
+    /// Border color while pressed.
+    pub active_border_fg: Option<Color>,
 }
 
 impl ContainerStyle {
@@ -1172,6 +1215,17 @@ impl ContainerStyle {
             theme_text_color: None,
             theme_border_fg: None,
             extends: None,
+            hover_bg: None,
+            hover_fg: None,
+            hover_border_fg: None,
+            focus_bg: None,
+            focus_fg: None,
+            focus_border_fg: None,
+            focus_within_bg: None,
+            focus_within_border_fg: None,
+            active_bg: None,
+            active_fg: None,
+            active_border_fg: None,
         }
     }
 
@@ -1450,6 +1504,73 @@ impl ContainerStyle {
         self.theme_border_fg = Some(color);
         self
     }
+
+    /// Background while hovered (CSS `:hover`). See
+    /// [`ContainerBuilder::hover_bg`](crate::ContainerBuilder::hover_bg).
+    pub const fn hover_bg(mut self, color: Color) -> Self {
+        self.hover_bg = Some(color);
+        self
+    }
+
+    /// Default child text color while hovered.
+    pub const fn hover_fg(mut self, color: Color) -> Self {
+        self.hover_fg = Some(color);
+        self
+    }
+
+    /// Border color while hovered.
+    pub const fn hover_border_fg(mut self, color: Color) -> Self {
+        self.hover_border_fg = Some(color);
+        self
+    }
+
+    /// Background while the container is the focused slot (CSS `:focus`).
+    pub const fn focus_bg(mut self, color: Color) -> Self {
+        self.focus_bg = Some(color);
+        self
+    }
+
+    /// Default child text color while focused.
+    pub const fn focus_fg(mut self, color: Color) -> Self {
+        self.focus_fg = Some(color);
+        self
+    }
+
+    /// Border color while focused.
+    pub const fn focus_border_fg(mut self, color: Color) -> Self {
+        self.focus_border_fg = Some(color);
+        self
+    }
+
+    /// Background while focus is inside the container (CSS `:focus-within`).
+    pub const fn focus_within_bg(mut self, color: Color) -> Self {
+        self.focus_within_bg = Some(color);
+        self
+    }
+
+    /// Border color while focus is inside the container.
+    pub const fn focus_within_border_fg(mut self, color: Color) -> Self {
+        self.focus_within_border_fg = Some(color);
+        self
+    }
+
+    /// Background while pressed (CSS `:active`).
+    pub const fn active_bg(mut self, color: Color) -> Self {
+        self.active_bg = Some(color);
+        self
+    }
+
+    /// Default child text color while pressed.
+    pub const fn active_fg(mut self, color: Color) -> Self {
+        self.active_fg = Some(color);
+        self
+    }
+
+    /// Border color while pressed.
+    pub const fn active_border_fg(mut self, color: Color) -> Self {
+        self.active_border_fg = Some(color);
+        self
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -1459,6 +1580,7 @@ impl ContainerStyle {
 ///
 /// Literal [`Color`] fields and [`ThemeColor`] fields can be set independently.
 /// Resolution order: `theme_*` field > literal field > theme default.
+#[must_use = "builder methods return a new value; bind or pass it"]
 pub struct WidgetColors {
     /// Foreground color override.
     pub fg: Option<Color>,
@@ -1591,6 +1713,7 @@ impl WidgetColors {
 #[derive(Debug, Clone, Copy, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(default))]
+#[must_use = "builder methods return a new value; bind or pass it"]
 pub struct WidgetTheme {
     /// Default colors for buttons.
     pub button: WidgetColors,

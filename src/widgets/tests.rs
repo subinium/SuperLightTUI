@@ -1,3 +1,5 @@
+//! Unit tests for widget state types.
+
 use super::*;
 
 #[test]
@@ -60,7 +62,7 @@ fn toast_message_default_values() {
 fn list_state_default_values() {
     let state = ListState::default();
     assert!(state.is_empty());
-    assert_eq!(state.selected, 0);
+    assert_eq!(state.selected_view_index(), 0);
     assert_eq!(state.filter(), "");
     assert!(state.visible_indices().is_empty());
     assert_eq!(state.selected_item(), None);
@@ -117,7 +119,7 @@ fn table_state_default_values() {
     let state = TableState::default();
     assert!(state.headers().is_empty());
     assert!(state.is_empty());
-    assert_eq!(state.selected, 0);
+    assert_eq!(state.selected_view_index(), 0);
     assert_eq!(state.sort_column, None);
     assert!(state.sort_ascending);
     assert_eq!(state.filter(), "");
@@ -202,7 +204,7 @@ fn tabs_state_new_sets_labels() {
 fn list_state_new_selected_item_points_to_first_item() {
     let state = ListState::new(vec!["alpha", "beta"]);
     assert_eq!(state.items(), ["alpha", "beta"]);
-    assert_eq!(state.selected, 0);
+    assert_eq!(state.selected_view_index(), 0);
     assert_eq!(state.visible_indices(), &[0, 1]);
     assert_eq!(state.selected_item(), Some("alpha"));
 }
@@ -211,11 +213,11 @@ fn list_state_new_selected_item_points_to_first_item() {
 fn list_mutation_methods_keep_filter_cache_coherent() {
     let mut state = ListState::new(vec!["alpha", "beta", "alphabet"]);
     state.set_filter("alpha");
-    state.selected = 1;
+    assert!(state.set_selected_view_index(1));
 
     state.set_items(vec!["gamma"]);
     assert!(state.visible_indices().is_empty());
-    assert_eq!(state.selected, 0);
+    assert_eq!(state.selected_view_index(), 0);
 
     state.push_item("alpha-new");
     assert_eq!(state.visible_indices(), &[1]);
@@ -765,25 +767,4 @@ fn form_state_validate_with_cross_field_rule() {
     assert!(ok);
     assert_eq!(form.fields[1].error, None);
     assert!(form.errors().is_empty());
-}
-
-#[test]
-#[allow(deprecated)]
-fn form_state_deprecated_positional_validate_still_works() {
-    let mut form = FormState::new()
-        .field(FormField::new("A"))
-        .field(FormField::new("B"));
-    let validators: &[FormValidator] = &[
-        |v| {
-            if v.is_empty() {
-                Err("a empty".into())
-            } else {
-                Ok(())
-            }
-        },
-        |_| Ok(()),
-    ];
-    assert!(!form.validate(validators));
-    assert_eq!(form.fields[0].error.as_deref(), Some("a empty"));
-    assert_eq!(form.fields[1].error, None);
 }

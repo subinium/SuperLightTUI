@@ -1,3 +1,6 @@
+//! Flexbox layout: main-axis sizing with grow / shrink / basis, gaps, wrap,
+//! justify and align for rows and columns.
+
 use super::*;
 
 /// Inline capacity for per-call layout scratch buffers.
@@ -19,7 +22,10 @@ fn clamp_i128_to_u32(value: i128) -> u32 {
 /// Each call to these functions creates four of these on the stack (min sizes
 /// and allocated sizes for the main axis — plus an extra pair when a column
 /// is scrollable). When a container has `<= INLINE_CAP` children the entire
-/// scratch lives on the stack; otherwise the overflow spills to the heap.
+/// scratch lives on the stack; otherwise the overflow spills to a heap `Vec`
+/// borrowed from a per-thread pool and returned on drop (#488), so a wide
+/// container (a dashboard column with 20+ rows) allocates nothing per frame
+/// in steady state.
 ///
 /// Because every buffer is created inside a single function body and read
 /// within that same body (before any recursive `compute` call for child nodes
@@ -31,6 +37,54 @@ pub(super) struct U32Stack {
     overflow: Option<Vec<u32>>,
 }
 
+/// Most overflow vectors kept in the per-thread pool.
+const SCRATCH_POOL_MAX: usize = 32;
+
+/// Overflow vectors above this capacity are freed instead of pooled, so one
+/// huge container does not pin its scratch for the rest of the session.
+const SCRATCH_RETAIN_MAX_CAPACITY: usize = 1 << 16;
+
+thread_local! {
+    static SCRATCH_POOL: std::cell::RefCell<Vec<Vec<u32>>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// An empty overflow vector with room for `n` values, pooled when possible.
+fn take_scratch(n: usize) -> Vec<u32> {
+    let pooled = SCRATCH_POOL
+        .try_with(|pool| pool.try_borrow_mut().ok().and_then(|mut pool| pool.pop()))
+        .ok()
+        .flatten();
+    match pooled {
+        Some(mut scratch) => {
+            scratch.clear();
+            scratch.reserve(n);
+            scratch
+        }
+        None => Vec::with_capacity(n),
+    }
+}
+
+impl Drop for U32Stack {
+    fn drop(&mut self) {
+        let Some(scratch) = self.overflow.take() else {
+            return;
+        };
+        if scratch.capacity() > SCRATCH_RETAIN_MAX_CAPACITY {
+            return;
+        }
+        // During thread teardown the pool may already be gone; dropping the
+        // vector is the correct fallback.
+        let _ = SCRATCH_POOL.try_with(|pool| {
+            if let Ok(mut pool) = pool.try_borrow_mut()
+                && pool.len() < SCRATCH_POOL_MAX
+            {
+                pool.push(scratch);
+            }
+        });
+    }
+}
+
 impl U32Stack {
     #[inline]
     fn with_capacity(n: usize) -> Self {
@@ -38,7 +92,7 @@ impl U32Stack {
             inline: [0; INLINE_CAP],
             len: 0,
             overflow: if n > INLINE_CAP {
-                Some(Vec::with_capacity(n))
+                Some(take_scratch(n))
             } else {
                 None
             },
@@ -54,8 +108,8 @@ impl U32Stack {
                     self.inline[self.len] = v;
                     self.len += 1;
                 } else {
-                    // Promotion: spill inline values + this one into a fresh Vec.
-                    let mut heap = Vec::with_capacity(self.len + 1);
+                    // Promotion: spill inline values + this one into a Vec.
+                    let mut heap = take_scratch(self.len + 1);
                     heap.extend_from_slice(&self.inline[..self.len]);
                     heap.push(v);
                     self.overflow = Some(heap);
@@ -107,8 +161,7 @@ impl Iterator for U32StackIter<'_> {
 /// Resolve `Pct` and `Ratio` width/height variants against a parent area
 /// into concrete `Fixed` widths/heights.
 ///
-/// Single match per axis (the v0.20 successor to the previous three
-/// `if let Some(pct)` blocks). [`WidthSpec::Auto`] / [`WidthSpec::Fixed`] /
+/// Single match per axis. [`WidthSpec::Auto`] / [`WidthSpec::Fixed`] /
 /// [`WidthSpec::MinMax`] pass through unchanged. A `Ratio` with `den == 0`
 /// is treated as no constraint (`Auto`).
 #[inline]
@@ -211,7 +264,7 @@ fn compute_body(node: &mut LayoutNode, area: Rect, depth: usize) {
             );
             if node.is_scrollable {
                 // Extracted to keep `compute_body`'s stack frame small: the
-                // `[u16; INLINE_CAP]` save-buffer lives in the callee, not in
+                // grow save-buffer lives in the callee, not in
                 // every recursion frame (matters for deep non-scrollable trees,
                 // see `tree::MAX_LAYOUT_DEPTH`).
                 layout_scrollable_row(node, viewport_area, depth);
@@ -246,13 +299,13 @@ fn compute_body(node: &mut LayoutNode, area: Rect, depth: usize) {
         // (or sets explicit `.w(area_w).h(area_h)` via constraints producing a
         // child whose min size already equals the area), the wrapper must
         // take the full area so flexbox `justify` / `align` inside the inner
-        // container has space to push against. Previously the wrapper was
-        // always shrunk to content min-size and centered, so:
+        // container has space to push against. A wrapper shrunk to content
+        // min-size and centered would break both of these:
         //   - `overlay(|ui| ui.container().grow(1).align(End).justify(End)…)`
-        //     never reached the bottom-right (no slack to push into).
-        //   - `overlay(|ui| ui.container().grow(1).draw(…))` rendered nothing
-        //     (raw_draw with no constraints had min-size 0×0, so the wrapper
-        //     became 0×0 and `lib.rs` skipped the empty-rect callback).
+        //     would never reach the bottom-right (no slack to push into).
+        //   - `overlay(|ui| ui.container().grow(1).draw(…))` would render
+        //     nothing (raw_draw with no constraints has min-size 0×0, so the
+        //     wrapper would be 0×0 and the empty-rect callback skipped).
         //
         // Heuristic: if any direct child requests grow, fill the full area.
         // Otherwise preserve the historic shrink-and-center behavior so plain
@@ -276,8 +329,8 @@ fn compute_body(node: &mut LayoutNode, area: Rect, depth: usize) {
 
 /// Lay out a scrollable `Direction::Column` into `viewport_area`.
 ///
-/// Extracted from `compute_body` so its `[u16; INLINE_CAP]` grow-save buffer
-/// does not inflate the recursion frame for deep non-scrollable trees. The
+/// Extracted from `compute_body` so its grow-save [`U32Stack`] does not
+/// inflate the recursion frame for deep non-scrollable trees. The
 /// body is byte-identical to the pre-extraction inline branch: zero children's
 /// `grow`, measure the natural content height, lay out into an over-tall
 /// virtual area on overflow (else restore `grow` and lay out into the
@@ -285,20 +338,10 @@ fn compute_body(node: &mut LayoutNode, area: Rect, depth: usize) {
 #[inline(never)]
 fn layout_scrollable_column(node: &mut LayoutNode, viewport_area: Rect, depth: usize) {
     // Inline-first scratch for saving `grow` values per child. Most scrollable
-    // containers have few children; fall back to a Vec only for wide ones.
-    let mut saved_inline: [u16; INLINE_CAP] = [0; INLINE_CAP];
-    let mut saved_overflow: Option<Vec<u16>> = None;
-    let child_count = node.children.len();
-    if child_count > INLINE_CAP {
-        let mut v = Vec::with_capacity(child_count);
-        for c in &node.children {
-            v.push(c.grow);
-        }
-        saved_overflow = Some(v);
-    } else {
-        for (i, c) in node.children.iter().enumerate() {
-            saved_inline[i] = c.grow;
-        }
+    // containers have few children; wide ones borrow a pooled overflow Vec.
+    let mut saved_grow = U32Stack::with_capacity(node.children.len());
+    for c in &node.children {
+        saved_grow.push(u32::from(c.grow));
     }
     for child in &mut node.children {
         child.grow = 0;
@@ -324,17 +367,8 @@ fn layout_scrollable_column(node: &mut LayoutNode, viewport_area: Rect, depth: u
         );
         layout_column(node, virtual_area, depth);
     } else {
-        match &saved_overflow {
-            Some(over) => {
-                for (child, &grow) in node.children.iter_mut().zip(over.iter()) {
-                    child.grow = grow;
-                }
-            }
-            None => {
-                for (i, child) in node.children.iter_mut().enumerate() {
-                    child.grow = saved_inline[i];
-                }
-            }
+        for (child, grow) in node.children.iter_mut().zip(saved_grow.iter()) {
+            child.grow = u16::try_from(grow).unwrap_or(u16::MAX);
         }
         layout_column(node, viewport_area, depth);
     }
@@ -352,19 +386,9 @@ fn layout_scrollable_column(node: &mut LayoutNode, viewport_area: Rect, depth: u
 /// reason as the column path.
 #[inline(never)]
 fn layout_scrollable_row(node: &mut LayoutNode, viewport_area: Rect, depth: usize) {
-    let mut saved_inline: [u16; INLINE_CAP] = [0; INLINE_CAP];
-    let mut saved_overflow: Option<Vec<u16>> = None;
-    let child_count = node.children.len();
-    if child_count > INLINE_CAP {
-        let mut v = Vec::with_capacity(child_count);
-        for c in &node.children {
-            v.push(c.grow);
-        }
-        saved_overflow = Some(v);
-    } else {
-        for (i, c) in node.children.iter().enumerate() {
-            saved_inline[i] = c.grow;
-        }
+    let mut saved_grow = U32Stack::with_capacity(node.children.len());
+    for c in &node.children {
+        saved_grow.push(u32::from(c.grow));
     }
     for child in &mut node.children {
         child.grow = 0;
@@ -389,17 +413,8 @@ fn layout_scrollable_row(node: &mut LayoutNode, viewport_area: Rect, depth: usiz
         );
         layout_row(node, virtual_area, depth);
     } else {
-        match &saved_overflow {
-            Some(over) => {
-                for (child, &grow) in node.children.iter_mut().zip(over.iter()) {
-                    child.grow = grow;
-                }
-            }
-            None => {
-                for (i, child) in node.children.iter_mut().enumerate() {
-                    child.grow = saved_inline[i];
-                }
-            }
+        for (child, grow) in node.children.iter_mut().zip(saved_grow.iter()) {
+            child.grow = u16::try_from(grow).unwrap_or(u16::MAX);
         }
         layout_row(node, viewport_area, depth);
     }

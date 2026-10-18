@@ -21,7 +21,7 @@ fn main() -> std::io::Result<()> {
     let long_text = "SuperLightTUI focuses on immediate-mode ergonomics while still needing the hot path to stay lean under repeated wrapped layout work. ".repeat(6);
 
     slt::run_with(
-        RunConfig::default().mouse(true).kitty_keyboard(true),
+        RunConfig::default().kitty_keyboard(true),
         |ui: &mut Context| {
             if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
                 ui.quit();
@@ -30,8 +30,7 @@ fn main() -> std::io::Result<()> {
             let theme = *ui.theme();
             let textarea_rows = ui.height().saturating_sub(18).clamp(5, 8);
 
-            let _ = ui
-                .bordered(Border::Rounded)
+            ui.bordered(Border::Rounded)
                 .title("Interactive Perf Demo")
                 .p(1)
                 .grow(1)
@@ -45,15 +44,15 @@ fn main() -> std::io::Result<()> {
                     });
 
                     ui.text("Text input cursor path").bold().fg(Color::Cyan);
-                    let _ = ui.text_input(&mut input);
+                    ui.text_input(&mut input);
 
-                    let _ = ui.separator();
+                    ui.separator();
                     ui.text("Wrapped text path").bold().fg(Color::Yellow);
                     ui.text(long_text.clone()).wrap();
 
-                    let _ = ui.separator();
+                    ui.separator();
                     ui.text("Textarea cursor path").bold().fg(Color::Green);
-                    let _ = ui.textarea(&mut textarea, textarea_rows);
+                    ui.textarea(&mut textarea, textarea_rows);
                 });
         },
     )

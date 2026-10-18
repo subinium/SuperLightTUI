@@ -59,8 +59,7 @@ fn main() -> std::io::Result<()> {
                 ui.set_theme(tf.theme);
             }
 
-            let _ = ui
-                .bordered(Border::Rounded)
+            ui.bordered(Border::Rounded)
                 .p(1)
                 .title("Theme Hot Reload")
                 .col(|ui: &mut Context| {

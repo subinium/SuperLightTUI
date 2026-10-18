@@ -1,3 +1,7 @@
+//! Core [`Context`] methods that are not widgets: frame setup from events,
+//! focus traversal, hooks (`use_state`, `use_memo`, effects), notifications
+//! and key gating.
+
 use super::*;
 
 impl Context {
@@ -8,6 +12,7 @@ impl Context {
         state: &mut FrameState,
         theme: Theme,
     ) -> Self {
+        let pointer = PointerFrame::begin(state);
         let hook_states = &mut state.hook_states;
         let named_states = std::mem::take(&mut state.named_states);
         // Issue #215: hand off the keyed-state map for this frame. Same
@@ -52,17 +57,15 @@ impl Context {
             .or(diagnostics.frame_started)
             .unwrap_or_else(crate::clock::Instant::now);
         let mut mouse_pos = layout_feedback.last_mouse_pos;
-        let mut click_pos = None;
-        let mut right_click_pos = None;
-        let mut double_click_pos = None;
+        // Issue #439: keep every press of the frame; each one is resolved to
+        // its own topmost, innermost target by `response_for`.
+        let mut presses: smallvec::SmallVec<[Press; 2]> = smallvec::SmallVec::new();
         let mut scroll_pos = None;
         let mut scroll_delta_frame: i32 = 0;
-        for event in &events {
+        for (event_index, event) in events.iter().enumerate() {
             if matches!(event, Event::FocusLost) {
                 mouse_pos = None;
-                click_pos = None;
-                right_click_pos = None;
-                double_click_pos = None;
+                presses.clear();
                 scroll_pos = None;
                 scroll_delta_frame = 0;
                 layout_feedback.last_click_at = None;
@@ -72,8 +75,7 @@ impl Context {
                 mouse_pos = Some((mouse.x, mouse.y));
                 match mouse.kind {
                     MouseKind::Down(MouseButton::Left) => {
-                        click_pos = Some((mouse.x, mouse.y));
-                        // v0.21.1: a left click on the same cell as the previous
+                        // A left click on the same cell as the previous
                         // click, within `DOUBLE_CLICK_WINDOW`, is a double-click.
                         // Clear the tracker after firing so a third click starts
                         // a fresh pair (no triple-counting).
@@ -83,20 +85,32 @@ impl Context {
                                 frame_now.duration_since(t) <= crate::DOUBLE_CLICK_WINDOW
                             });
                         if is_double {
-                            double_click_pos = Some(pos);
                             layout_feedback.last_click_at = None;
                             layout_feedback.last_click_pos = None;
                         } else {
                             layout_feedback.last_click_at = Some(frame_now);
                             layout_feedback.last_click_pos = Some(pos);
                         }
+                        presses.push(Press {
+                            event_index,
+                            pos,
+                            button: MouseButton::Left,
+                            modifiers: mouse.modifiers,
+                            double: is_double,
+                        });
                     }
-                    MouseKind::Down(MouseButton::Right) => {
-                        // Issue #208: capture last right-click position so
-                        // `response_for` can hit-test against per-widget rects.
-                        right_click_pos = Some((mouse.x, mouse.y));
+                    MouseKind::Down(button) => {
+                        // Issue #208 / #442: right and middle presses are kept
+                        // and hit-tested per widget like left presses.
+                        presses.push(Press {
+                            event_index,
+                            pos: (mouse.x, mouse.y),
+                            button,
+                            modifiers: mouse.modifiers,
+                            double: false,
+                        });
                     }
-                    // v0.21.1: accumulate net vertical wheel delta + the cursor
+                    // Accumulate net vertical wheel delta + the cursor
                     // position, hover-gated per-widget by `response_for`.
                     MouseKind::ScrollUp => {
                         scroll_pos = Some((mouse.x, mouse.y));
@@ -111,10 +125,52 @@ impl Context {
             }
         }
 
+        // #452: `RunConfig::hover_timeout` clears a stale hover when no mouse
+        // event arrived for the configured time (terminals send no leave).
+        if pointer.hover_timed_out(
+            frame_now,
+            events.iter().any(|event| matches!(event, Event::Mouse(_))),
+        ) {
+            mouse_pos = None;
+            layout_feedback.last_mouse_pos = None;
+        }
+
         let mut focus_index = focus.focus_index;
-        if let Some((mx, my)) = click_pos {
+        let last_left_press = presses
+            .iter()
+            .rev()
+            .find(|press| press.button == MouseButton::Left)
+            .map(|press| press.pos);
+        if let Some((mx, my)) = last_left_press {
+            // #459: a press on overlay content (a select dropdown, a popover,
+            // a modal) only focuses widgets inside the overlay panel it hit,
+            // never the base widget drawn underneath.
+            let overlay_cover = super::pointer::overlay_panel_at(
+                &layout_feedback.prev_hit_map,
+                &pointer.hit_meta,
+                &pointer.hit_flags_prev,
+                (mx, my),
+                (width, height),
+            );
             let mut best: Option<(usize, u64)> = None;
             for &(fid, rect) in &layout_feedback.prev_focus_rects {
+                // Issue #458: clicking a disabled widget never focuses it.
+                if focus
+                    .identity
+                    .slots
+                    .get(fid)
+                    .is_some_and(|slot| slot.disabled)
+                {
+                    continue;
+                }
+                if overlay_cover.is_some_and(|cover| {
+                    rect.x < cover.x
+                        || rect.y < cover.y
+                        || rect.right() > cover.right()
+                        || rect.bottom() > cover.bottom()
+                }) {
+                    continue;
+                }
                 if mx >= rect.x && mx < rect.right() && my >= rect.y && my < rect.bottom() {
                     let area = rect.width as u64 * rect.height as u64;
                     if best.is_none_or(|(_, ba)| area < ba) {
@@ -140,6 +196,20 @@ impl Context {
                 still_pending = Some(name);
             }
         }
+
+        // Issue #453: hand the previous frame's slot metadata to this frame
+        // and resolve which slot owns text entry as focus starts (after the
+        // click / `focus_by_name` retargeting above, so a click that moves
+        // focus out of a text field releases its keys in the same batch).
+        let focus_target = if focus.prev_focus_count > 0 {
+            focus_index % focus.prev_focus_count
+        } else {
+            focus_index
+        };
+        let focus_identity =
+            focus
+                .identity
+                .begin_frame(focus_target, focus_index, focus.prev_focus_index);
 
         // Reuse `commands_buf` capacity from the previous frame (issue #150).
         // `mem::take` swaps an empty Vec into `state.commands_buf`; we then
@@ -188,6 +258,7 @@ impl Context {
 
         let mut ctx = Self {
             commands,
+            string_pool: state.layout_arena.take_strings(),
             geometry_cursor: 0,
             geometry_stack,
             geometry_pending_interaction: None,
@@ -217,9 +288,7 @@ impl Context {
             prev_group_rects: std::mem::take(&mut layout_feedback.prev_group_rects),
             prev_focus_groups: std::mem::take(&mut layout_feedback.prev_focus_groups),
             mouse_pos,
-            click_pos,
-            right_click_pos,
-            double_click_pos,
+            pointer: pointer.with_presses(presses),
             scroll_pos,
             scroll_delta_frame,
             prev_modal_active: focus.prev_modal_active,
@@ -255,12 +324,16 @@ impl Context {
                 modal_restore_index: focus.modal_restore_index,
                 last_text_idx: None,
                 focus_count: 0,
+                text_entry_claim: None,
+                focus_key_match: None,
                 last_focusable_id: None,
                 pending_focusable_id: None,
                 interaction_count: 0,
                 scroll_count: 0,
                 group_count: 0,
                 group_stack,
+                group_hover_stack: smallvec::SmallVec::new(),
+                disabled_depth: 0,
                 overlay_depth: 0,
                 modal_active: false,
                 modal_focus_start: 0,
@@ -288,12 +361,16 @@ impl Context {
             focus_name_map_prev,
             focus_name_map,
             pending_focus_name: still_pending,
+            focus_identity,
+            text_pointer_capture: false,
+            accessible: state.accessible,
             // Issue #248: sample a single wall-clock "now" for every timer
-            // method called this frame. v0.21.1: reuse the `frame_now` sampled
+            // method called this frame. Reuse the `frame_now` sampled
             // above (also used for double-click timing) so the frame has one
             // coherent clock reading.
             frame_instant: frame_now,
             scheduler,
+            frame_request: std::cell::Cell::new(None),
             // Issue #234: async task registry round-tripped like `scheduler`.
             #[cfg(feature = "async")]
             async_tasks,
@@ -363,7 +440,10 @@ impl Context {
     /// Note: this intentionally reads `prev_focus_count` (the settled count
     /// from the last completed frame) rather than `focus_count` (the
     /// still-incrementing counter for the current frame).
-    #[allow(clippy::misnamed_getters)]
+    #[expect(
+        clippy::misnamed_getters,
+        reason = "returns the settled count from the last frame, not the live focus_count field"
+    )]
     pub fn focus_count(&self) -> usize {
         self.rollback.focus_count_origin
     }
@@ -371,8 +451,36 @@ impl Context {
     /// Advance keyboard focus one step, honoring an active modal's focus trap.
     /// `forward` selects next vs previous; both wrap. Shared by
     /// [`focus_next`](Self::focus_next) / [`focus_prev`](Self::focus_prev) and
-    /// the `Tab`/`Shift+Tab` handler in `process_focus_keys` (v0.21.1).
+    /// the `Tab`/`Shift+Tab` handler in `process_focus_keys`.
     pub(crate) fn advance_focus(&mut self, forward: bool) {
+        self.advance_focus_over(forward, false);
+    }
+
+    /// [`advance_focus`](Self::advance_focus), skipping slots registered as
+    /// disabled (#458). `this_frame` selects the slot table: the frame's own
+    /// (end-of-frame Tab handling) or the previous frame's (mid-frame calls).
+    fn advance_focus_over(&mut self, forward: bool, this_frame: bool) {
+        let start = self.focus_index;
+        let limit = self.prev_focus_count.max(1);
+        for _ in 0..limit {
+            self.advance_focus_step(forward);
+            let slots = if this_frame {
+                &self.focus_identity.slots
+            } else {
+                &self.focus_identity.prev_slots
+            };
+            if !slots
+                .get(self.focus_index)
+                .is_some_and(|slot| slot.disabled)
+            {
+                return;
+            }
+        }
+        // Every candidate is disabled: leave focus where it was.
+        self.focus_index = start;
+    }
+
+    fn advance_focus_step(&mut self, forward: bool) {
         self.rollback.focus_origin = None;
         self.rollback.focus_generation = self.rollback.focus_generation.wrapping_add(1);
         if self.prev_modal_active && self.prev_modal_focus_count > 0 {
@@ -544,7 +652,7 @@ impl Context {
         self.prev_modal_focus_start = self.rollback.modal_focus_start;
         self.prev_modal_focus_count = self.rollback.modal_focus_count;
         for forward in actions {
-            self.advance_focus(forward);
+            self.advance_focus_over(forward, true);
         }
         (
             self.prev_focus_count,
@@ -749,6 +857,7 @@ impl Context {
     pub(crate) fn next_interaction_id(&mut self) -> usize {
         let id = self.reserve_interaction_slot();
         self.commands.push(Command::InteractionMarker(id));
+        self.bind_slot_key(id);
         id
     }
 
@@ -779,6 +888,25 @@ impl Context {
         self.response_for(id)
     }
 
+    /// Issue #458: the response of a slot rendered inside a disabled scope:
+    /// geometry only, no pointer, focus or value signals.
+    pub(crate) fn disabled_response(&self, interaction_id: usize) -> Response {
+        Response {
+            rect: self
+                .prev_hit_map
+                .get(interaction_id)
+                .copied()
+                .unwrap_or_default(),
+            disabled: true,
+            ..Response::default()
+        }
+    }
+
+    /// Issue #458: held-button ("`:active`") state of interaction slot `id`.
+    pub(crate) fn slot_active(&self, id: usize) -> bool {
+        self.rollback.disabled_depth == 0 && self.interaction_allowed() && self.slot_held(id)
+    }
+
     /// Compute and consume the `(gained_focus, lost_focus)` edge flags for the
     /// widget most recently registered via [`register_focusable`].
     ///
@@ -790,14 +918,28 @@ impl Context {
     /// Shared by [`begin_widget_interaction`](Self::begin_widget_interaction)
     /// and the widgets that assemble their `Response` by hand rather than
     /// through it (`text_input`, `slider`, `number_input`) — issue #208 left
-    /// those three reporting `gained_focus`/`lost_focus` as always-false; this
-    /// closes that gap (v0.21.1).
+    /// those three reporting `gained_focus`/`lost_focus` as always-false; every
+    /// focusable widget must route through here.
     pub(crate) fn focus_transitions(&mut self, focused: bool) -> (bool, bool) {
         if let Some(this_id) = self.rollback.last_focusable_id.take() {
-            let was_focused = self
-                .prev_focus_index
-                .map(|prev| prev == this_id)
-                .unwrap_or(false);
+            // Issue #454: when the previously focused slot had an identity,
+            // compare identities so inserting or removing focusables before
+            // this one does not report a spurious gain or loss. A key never
+            // seen last frame (state rebuilt each frame) keeps the positional
+            // comparison.
+            let this_key = self
+                .focus_identity
+                .slots
+                .get(this_id)
+                .and_then(|slot| slot.key);
+            let was_focused = match (self.focus_identity.prev_focused_key, this_key) {
+                (Some(prev), Some(key)) if self.focus_identity.seen_last_frame(key) => prev == key,
+                (Some(_), None) => false,
+                _ => self
+                    .prev_focus_index
+                    .map(|prev| prev == this_id)
+                    .unwrap_or(false),
+            };
             (focused && !was_focused, !focused && was_focused)
         } else {
             (false, false)
@@ -870,13 +1012,18 @@ impl Context {
             .iter()
             .enumerate()
             .filter_map(move |(i, event)| {
-                if !self.interaction_allowed() || self.consumed[i] {
+                if !self.interaction_allowed() || self.is_disabled() || self.consumed[i] {
                     return None;
                 }
 
                 let Event::Mouse(mouse) = event else {
                     return None;
                 };
+                // #439: a press that landed on overlay content does not reach
+                // base-layer widgets drawn underneath it.
+                if self.press_blocked_by_overlay(i) {
+                    return None;
+                }
 
                 if mouse.x < rect.x
                     || mouse.x >= rect.right()
@@ -895,7 +1042,12 @@ impl Context {
         interaction_id: usize,
     ) -> Option<(Rect, Vec<(usize, &crate::event::MouseEvent)>)> {
         let rect = self.prev_hit_map.get(interaction_id).copied()?;
-        let clicks = self.left_clicks_in_rect(rect).collect();
+        // #439: composite widgets (list, table, tabs, ...) see a press only
+        // when it resolved to their slot or to one of their descendants.
+        let clicks = self
+            .left_clicks_in_rect(rect)
+            .filter(|(i, _)| self.press_reaches_slot(*i, interaction_id))
+            .collect();
         Some((rect, clicks))
     }
 
@@ -942,6 +1094,97 @@ impl Context {
     /// instead of allocating a fresh one. That keeps the name binding
     /// pointed at the widget the user sees rather than at a dummy slot.
     pub fn register_focusable(&mut self) -> bool {
+        self.register_focusable_slot(crate::runtime::FocusSlotMeta::default())
+    }
+
+    /// Register a focusable slot whose focus follows a stable `key` instead of
+    /// its position in the frame.
+    ///
+    /// Behaves like [`register_focusable`](Self::register_focusable) and
+    /// returns whether the slot currently has focus. When focusables are
+    /// inserted, removed or reordered between frames, focus stays on the slot
+    /// registered with the same key, the way a browser keeps focus on the same
+    /// element. Use any `Hash` value that identifies the widget (an item id, a
+    /// `&str`, a tuple). Keys only need to be unique among the focusables of
+    /// one frame. Tab order is still declaration order.
+    ///
+    /// Built-in [`text_input`](Self::text_input) and
+    /// [`textarea`](Self::textarea) key their slot by their state, so they
+    /// already behave this way.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let items = ["alpha", "beta", "gamma"];
+    /// for item in items {
+    ///     let focused = ui.register_focusable_keyed(item);
+    ///     let label = if focused { format!("> {item}") } else { format!("  {item}") };
+    ///     ui.text(label);
+    /// }
+    /// # });
+    /// ```
+    pub fn register_focusable_keyed(&mut self, key: impl std::hash::Hash) -> bool {
+        self.register_focusable_slot(crate::runtime::FocusSlotMeta {
+            key: Some(crate::runtime::hashed_focus_key(key)),
+            text_entry: None,
+            chords: 0,
+            disabled: false,
+        })
+    }
+
+    /// Issue #454: the identity key of the focused slot.
+    ///
+    /// Returns the key of the slot focused so far in this frame, or, before
+    /// the focused widget has registered, the key of the slot focus started
+    /// on. `None` when that slot is positional (registered with
+    /// [`register_focusable`](Self::register_focusable)). Compare against
+    /// [`TextInputState::focus_key`](crate::widgets::TextInputState::focus_key)
+    /// or [`TextareaState::focus_key`](crate::widgets::TextareaState::focus_key)
+    /// in tests and debugging overlays.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::{TestBackend, widgets::TextInputState};
+    ///
+    /// let mut tb = TestBackend::new(30, 5);
+    /// let mut input = TextInputState::new();
+    /// let mut focused = None;
+    /// tb.render(|ui| {
+    ///     let _ = ui.text_input(&mut input);
+    ///     focused = ui.focused_key();
+    /// });
+    /// assert_eq!(focused, Some(input.focus_key()));
+    /// ```
+    pub fn focused_key(&self) -> Option<u64> {
+        match self.rollback.focused_widget_id {
+            Some(id) => self.focus_identity.slots.get(id).and_then(|slot| slot.key),
+            None => self.focus_identity.expected_key,
+        }
+    }
+
+    /// Issue #453: register a text-entry focus slot. While it owns focus,
+    /// [`key`](Self::key) / [`key_code`](Self::key_code) and friends do not
+    /// report the keys the widget edits with. Issue #454: `key` is the
+    /// widget state's focus identity.
+    pub(crate) fn register_text_entry_focusable(
+        &mut self,
+        kind: crate::runtime::TextEntryKind,
+        key: u64,
+    ) -> bool {
+        self.register_focusable_slot(crate::runtime::FocusSlotMeta {
+            key: Some(key),
+            text_entry: Some(kind),
+            chords: 0,
+            disabled: false,
+        })
+    }
+
+    fn register_focusable_slot(&mut self, mut meta: crate::runtime::FocusSlotMeta) -> bool {
+        // Issue #458: a disabled widget keeps its slot (later indices do not
+        // shift when it toggles) but never takes focus.
+        meta.disabled = self.rollback.disabled_depth > 0;
         if !self.interaction_allowed() {
             self.rollback.last_focusable_id = None;
             // Drop any pending reservation: the suppressed widget never
@@ -970,7 +1213,119 @@ impl Context {
         if freshly_allocated {
             self.commands.push(Command::FocusMarker(id));
         }
+        self.record_focus_slot(id, meta, freshly_allocated);
+        // Pointer capture identity: the widget's next interaction slot
+        // carries its focus key (or the name a reserved slot was bound to).
+        self.pointer.pending_key = self.focus_identity.slots.get(id).and_then(|slot| slot.key);
+        if meta.disabled {
+            return false;
+        }
         self.focus_slot_is_current(id)
+    }
+
+    /// Record `meta` for slot `id`. A fresh slot replaces anything a
+    /// rolled-back subtree left at that index; a reused reservation (from
+    /// `register_focusable_named`) merges the widget's metadata into it.
+    fn record_focus_slot(&mut self, id: usize, meta: crate::runtime::FocusSlotMeta, fresh: bool) {
+        let slots = &mut self.focus_identity.slots;
+        if fresh || slots.len() <= id {
+            slots.truncate(id);
+            slots.resize(id, crate::runtime::FocusSlotMeta::default());
+            slots.push(meta);
+        } else {
+            // A name bound by `register_focusable_named` is the user's
+            // explicit identity for the slot, so it wins over a state key.
+            let slot = &mut slots[id];
+            slot.key = slot.key.or(meta.key);
+            slot.text_entry = meta.text_entry.or(slot.text_entry);
+            slot.disabled |= meta.disabled;
+        }
+    }
+
+    /// Issue #454: whether focus currently follows the identity key recorded
+    /// as the frame started.
+    ///
+    /// Any explicit focus move this frame (`set_focus_index`, Tab, group
+    /// navigation, a modal or screen rebasing `focus_index`) switches back to
+    /// the positional rule, as does an open or closing modal, whose focus trap
+    /// manages slot numbers itself.
+    fn focus_follows_key(&self) -> bool {
+        self.focus_identity.expected_key.is_some()
+            && self.rollback.focus_generation == 0
+            && self.focus_index == self.focus_identity.origin_index
+            && !self.prev_modal_active
+            && !self.rollback.modal_active
+    }
+
+    /// Issue #454: resolve focus for slot `id` by identity. Returns `None`
+    /// when the positional rule should decide instead.
+    fn focus_slot_by_key(&mut self, id: usize, positional_target: usize) -> Option<bool> {
+        if !self.focus_follows_key() {
+            return None;
+        }
+        if let Some(matched) = self.rollback.focus_key_match {
+            return Some(matched == id);
+        }
+        let key = self.focus_identity.slots.get(id).and_then(|slot| slot.key);
+        let claim = match key {
+            Some(key) if Some(key) == self.focus_identity.expected_key => true,
+            // A key never seen last frame is a widget whose state is rebuilt
+            // each frame (or a brand-new widget): it cannot be the expected
+            // one, so the positional rule decides, exactly as before 0.26.
+            Some(key) if !self.focus_identity.seen_last_frame(key) => positional_target == id,
+            // Positional slots and other known widgets are not the widget
+            // focus belongs to.
+            _ => false,
+        };
+        if claim {
+            self.rollback.focus_key_match = Some(id);
+            self.focus_index = id;
+            self.focus_identity.origin_index = id;
+        }
+        Some(claim)
+    }
+
+    /// Issue #453: the text-entry kind that currently owns unmodified keys.
+    ///
+    /// A slot focused earlier in this frame decides; before any slot has
+    /// registered, the slot that held focus as the frame started decides.
+    /// An open command palette claims text entry without a slot.
+    pub(crate) fn text_entry_owner(&self) -> Option<(crate::runtime::TextEntryKind, u8)> {
+        if let Some(kind) = self.rollback.text_entry_claim {
+            return Some((kind, 0));
+        }
+        match self.rollback.focused_widget_id {
+            Some(id) => self
+                .focus_identity
+                .slots
+                .get(id)
+                .and_then(|slot| slot.text_entry.map(|kind| (kind, slot.chords))),
+            None => self.focus_identity.prev_text_entry,
+        }
+    }
+
+    /// Issue #465: record which chords the text widget in slot `id` handles
+    /// as of the end of its event processing.
+    pub(crate) fn set_focus_slot_chords(&mut self, id: Option<usize>, chords: u8) {
+        if let Some(slot) = id.and_then(|id| self.focus_identity.slots.get_mut(id)) {
+            slot.chords = chords;
+        }
+    }
+
+    /// Issue #453: hand this frame's slot metadata back to `FrameState`.
+    pub(crate) fn finish_focus_identity(&mut self, focus: &mut crate::runtime::FocusState) {
+        // Issue #454: the widget focus belonged to is gone and nothing took
+        // its place. Fall back to the nearest surviving slot (clamped, not
+        // wrapped) so focus lands next to where it was.
+        let count = self.rollback.focus_count;
+        if self.focus_follows_key() && self.rollback.focused_widget_id.is_none() && count > 0 {
+            self.focus_index = self.focus_index.min(count - 1);
+        }
+        focus.identity.end_frame(
+            &mut self.focus_identity,
+            self.rollback.focus_count,
+            self.rollback.text_entry_claim,
+        );
     }
 
     /// Create persistent state that survives across frames.
@@ -1001,99 +1356,48 @@ impl Context {
         State::from_idx(idx)
     }
 
-    /// Component-local persistent state keyed by a stable id.
+    /// Deprecated alias for [`use_state_keyed`](Self::use_state_keyed).
     ///
-    /// Unlike [`use_state`](Self::use_state), this is **not order-dependent** —
-    /// the value is looked up by `id` instead of call position. Safe to call
-    /// inside conditional branches or reusable component functions.
-    ///
-    /// Returns a `State<T>` handle. Access with `state.get(ui)` /
-    /// `state.get_mut(ui)`. Persists across frames.
-    ///
-    /// # Scoping
-    ///
-    /// Keys are `&'static str` and live in a single global namespace per
-    /// `Context` (no automatic per-component scoping). Two calls with the same
-    /// `id` in the same frame share the same value, regardless of where they
-    /// occur in the tree. Pick unique ids — for example, prefix with a
-    /// component name (`"counter::value"`).
-    ///
-    /// # Naming
-    ///
-    /// The no-suffix form takes an `init` closure, matching
-    /// [`use_state`](Self::use_state)`(init)` and
-    /// [`use_state_keyed`](Self::use_state_keyed)`(id, init)`. Use
-    /// [`use_state_named_default`](Self::use_state_named_default) for the
-    /// `T: Default` shorthand.
-    ///
-    /// # Example
+    /// Since 0.26 named and keyed hooks share one map: `use_state_named("x",
+    /// ..)` and `use_state_keyed("x", ..)` return handles to the same slot,
+    /// and [`remove_state_keyed`](Self::remove_state_keyed) /
+    /// [`retain_state_keyed`](Self::retain_state_keyed) see named ids too.
+    /// The `&'static str` id is only copied into the map on first insert.
     ///
     /// ```no_run
     /// fn counter(ui: &mut slt::Context) {
-    ///     let count = ui.use_state_named("counter::value", || 0i32);
+    ///     // Old: ui.use_state_named("counter::value", || 0i32)
+    ///     let count = ui.use_state_keyed("counter::value", || 0i32);
     ///     ui.text(format!("Count: {}", count.get(ui)));
-    ///     if ui.button("+1").clicked {
-    ///         *count.get_mut(ui) += 1;
-    ///     }
     /// }
     /// ```
+    #[deprecated(
+        since = "0.26.0",
+        note = "use `use_state_keyed(id, init)`; named and keyed ids now share one slot map"
+    )]
     pub fn use_state_named<T: 'static>(
         &mut self,
         id: &'static str,
         init: impl FnOnce() -> T,
     ) -> State<T> {
-        self.named_states
-            .entry(id)
-            .or_insert_with(|| Box::new(init()));
+        if !self.keyed_states.contains_key(id) {
+            self.keyed_states.insert(id.to_owned(), Box::new(init()));
+        }
         State::from_named(id)
     }
 
-    /// Like [`use_state_named`](Self::use_state_named), but uses
-    /// [`Default::default()`] to initialize the value on first call.
-    ///
-    /// Mirrors [`use_state_keyed_default`](Self::use_state_keyed_default): the
-    /// `_default` suffix means "no init closure, `T: Default` required".
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # slt::run(|ui: &mut slt::Context| {
-    /// let value = ui.use_state_named_default::<i32>("counter::value");
-    /// ui.text(format!("{}", value.get(ui)));
-    /// # });
-    /// ```
-    pub fn use_state_named_default<T: 'static + Default>(&mut self, id: &'static str) -> State<T> {
-        self.use_state_named(id, T::default)
-    }
-
-    /// Deprecated alias for [`use_state_named`](Self::use_state_named).
-    ///
-    /// **Deprecated since 0.21.0**: the `_named` family now follows the
-    /// "no-suffix = init closure" convention so it matches
-    /// [`use_state`](Self::use_state) and
-    /// [`use_state_keyed`](Self::use_state_keyed). The init-closure form is now
-    /// spelled `use_state_named(id, init)`; the `T: Default` shorthand is
-    /// [`use_state_named_default`](Self::use_state_named_default).
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # slt::run(|ui: &mut slt::Context| {
-    /// // Old: ui.use_state_named_with("counter::value", || 0i32)
-    /// let count = ui.use_state_named("counter::value", || 0i32);
-    /// ui.text(format!("{}", count.get(ui)));
-    /// # });
-    /// ```
+    /// Deprecated alias for
+    /// [`use_state_keyed_default`](Self::use_state_keyed_default).
     #[deprecated(
-        since = "0.21.0",
-        note = "Renamed to `use_state_named` — the no-suffix form now takes the init closure, matching `use_state` / `use_state_keyed`."
+        since = "0.26.0",
+        note = "use `use_state_keyed_default(id)`; named and keyed ids now share one slot map"
     )]
-    pub fn use_state_named_with<T: 'static>(
-        &mut self,
-        id: &'static str,
-        init: impl FnOnce() -> T,
-    ) -> State<T> {
-        self.use_state_named(id, init)
+    pub fn use_state_named_default<T: 'static + Default>(&mut self, id: &'static str) -> State<T> {
+        #[expect(
+            deprecated,
+            reason = "deprecated wrapper forwards to the deprecated use_state_named"
+        )]
+        self.use_state_named(id, T::default)
     }
 
     /// Smoothly animate between `0.0` and `1.0` driven by a boolean.
@@ -1105,10 +1409,11 @@ impl Context {
     /// ≈ 200 ms at 60 Hz). Use [`Context::animate_value`] for custom duration
     /// or non-binary targets.
     ///
-    /// State is stored in the per-context named-state map under `id`. The
-    /// id is `&'static str` (single global namespace per context), matching
-    /// [`Context::use_state_named`]. Pick a unique key per call site — two
-    /// `animate_bool` calls with the same id share state.
+    /// State is stored in an internal per-context map under `id`. The id is
+    /// `&'static str`, in one namespace shared by the `animate_*` hooks
+    /// (separate from [`use_state_keyed`](Self::use_state_keyed) ids). Pick a
+    /// unique key per call site — two `animate_bool` calls with the same id
+    /// share state.
     ///
     /// On the first call, the value snaps to the target with no visible
     /// transition (so widgets that mount in their final state don't pop).
@@ -1145,8 +1450,7 @@ impl Context {
     /// # Panics
     ///
     /// Panics if `id` is already bound in the named-state map to a value of a
-    /// different type (e.g. a [`use_state_named`](Self::use_state_named) call
-    /// reused the same id), since the stored entry then fails to downcast to
+    /// different type (e.g. another `animate_*` hook reused the same id), since the stored entry then fails to downcast to
     /// the internal animation state:
     ///
     /// ```text
@@ -1165,7 +1469,7 @@ impl Context {
     /// Use this shorthand when you want zero boilerplate and linear easing
     /// is acceptable. For custom easing, a non-static key, or
     /// non-tick-based control, construct a [`crate::Tween`] explicitly via
-    /// [`Context::use_state_named`](Self::use_state_named).
+    /// [`Context::use_state_keyed`](Self::use_state_keyed).
     ///
     /// # See also
     ///
@@ -1188,6 +1492,132 @@ impl Context {
         state.sample(target, duration_ticks, tick)
     }
 
+    /// Ask for another frame on the next tick (issue #490).
+    ///
+    /// Only matters with [`RunConfig::idle_redraw(false)`](crate::RunConfig::idle_redraw),
+    /// where an idle loop renders nothing until something can change. Call
+    /// it on every frame that shows something time-dependent SLT does not
+    /// know about (the wall clock, a value another thread updates, a custom
+    /// animation driven by [`tick`](Self::tick)) so the next frame arrives
+    /// at the normal `tick_rate`. Built-in animations, spinners, toasts,
+    /// timers and tooltips already request their own frames. The request
+    /// covers one frame; call it again while the change continues. With the
+    /// default `idle_redraw(true)` every tick renders anyway.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use slt::*;
+    /// # TestBackend::new(40, 3).render(|ui| {
+    /// let loading = true;
+    /// if loading {
+    ///     ui.text(format!("frame {}", ui.tick()));
+    ///     ui.request_frame();
+    /// }
+    /// # });
+    /// ```
+    pub fn request_frame(&self) {
+        self.request_frame_at(self.frame_instant);
+    }
+
+    /// Ask for another frame once `delay` has passed (issue #490).
+    ///
+    /// Like [`request_frame`](Self::request_frame), but an idle loop sleeps
+    /// until `delay` after this frame started instead of rendering on the
+    /// next tick: a clock that changes once a second requests
+    /// `Duration::from_secs(1)` and costs one frame per second. Several
+    /// requests in one frame keep the earliest. Precision is bounded by the
+    /// input poll: the frame starts no later than the next `tick_rate`
+    /// boundary after the deadline.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use slt::*;
+    /// use std::time::Duration;
+    /// # TestBackend::new(40, 3).render(|ui| {
+    /// ui.text("12:00:00");
+    /// ui.request_frame_after(Duration::from_secs(1));
+    /// # });
+    /// ```
+    pub fn request_frame_after(&self, delay: std::time::Duration) {
+        if let Some(at) = self.frame_instant.checked_add(delay) {
+            self.request_frame_at(at);
+        }
+    }
+
+    fn request_frame_at(&self, at: crate::clock::Instant) {
+        let earliest = match self.frame_request.get() {
+            Some(current) => current.min(at),
+            None => at,
+        };
+        self.frame_request.set(Some(earliest));
+    }
+
+    /// [`animate_bool`](Self::animate_bool) keyed by a runtime string, for one
+    /// transition per row, item or element (#458).
+    ///
+    /// The key lives in the same namespace as
+    /// [`use_state_keyed`](Self::use_state_keyed) (so
+    /// [`remove_state_keyed`](Self::remove_state_keyed) and
+    /// [`retain_state_keyed`](Self::retain_state_keyed) compact it); do not
+    /// reuse a key for a different state type.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `id` already holds keyed state of another type.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # slt::TestBackend::new(20, 4).render(|ui| {
+    /// for id in ["a", "b"] {
+    ///     let row = ui.row(|ui| {
+    ///         ui.text(id);
+    ///     });
+    ///     let glow = ui.animate_bool_keyed(format!("row-hover-{id}"), row.hovered);
+    ///     assert!((0.0..=1.0).contains(&glow));
+    /// }
+    /// # });
+    /// ```
+    pub fn animate_bool_keyed(&mut self, id: impl Into<String>, value: bool) -> f64 {
+        let target = if value { 1.0 } else { 0.0 };
+        self.animate_value_keyed(id, target, crate::anim::DEFAULT_ANIMATE_TICKS)
+    }
+
+    /// [`animate_value`](Self::animate_value) keyed by a runtime string (#458).
+    /// See [`animate_bool_keyed`](Self::animate_bool_keyed) for the key rules.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `id` already holds keyed state of another type.
+    pub fn animate_value_keyed(
+        &mut self,
+        id: impl Into<String>,
+        target: f64,
+        duration_ticks: u64,
+    ) -> f64 {
+        let tick = self.tick;
+        let key: String = id.into();
+        if !self.keyed_states.contains_key(key.as_str()) {
+            self.keyed_states.insert(
+                key.clone(),
+                Box::new(crate::anim::AnimState::new(target, tick)),
+            );
+        }
+        let Some(entry) = self.keyed_states.get_mut(key.as_str()) else {
+            return target;
+        };
+        let state = entry
+            .downcast_mut::<crate::anim::AnimState>()
+            .unwrap_or_else(|| {
+                panic!(
+                    "animate_value_keyed: key {key:?} is already used for a different state type"
+                )
+            });
+        state.sample(target, duration_ticks, tick)
+    }
+
     /// One-shot frame-clock timer (issue #248).
     ///
     /// Returns `true` exactly once — on the first frame at or after `dur` has
@@ -1201,9 +1631,8 @@ impl Context {
     /// deadline is observed on the next frame after it elapses), so durations
     /// well below the frame cadence are not meaningful.
     ///
-    /// The id lives in the same per-context namespace as
-    /// [`use_state_named`](Self::use_state_named): pick a unique key per call
-    /// site.
+    /// The id lives in the per-context namespace shared by the `animate_*`
+    /// hooks: pick a unique key per call site.
     ///
     /// # Example
     /// ```no_run
@@ -1423,6 +1852,8 @@ impl Context {
     /// Useful for progress UIs ("retrying in 3s…") that want the raw elapsed
     /// duration rather than a fire/no-fire signal. Measured against the same
     /// frame instant the timer methods use.
+    /// A call also [requests the next frame](Self::request_frame), so the
+    /// display keeps counting under `RunConfig::idle_redraw(false)`.
     ///
     /// # Example
     /// ```no_run
@@ -1443,6 +1874,8 @@ impl Context {
             .get(id)
             .or_else(|| self.scheduler.keyed.get(id))
             .map(|slot| slot.started)?;
+        // #490: a displayed elapsed time changes every tick.
+        self.request_frame();
         Some(self.frame_instant.saturating_duration_since(started))
     }
 
@@ -1671,10 +2104,9 @@ impl Context {
     /// later `ui.*` calls — read the value on demand with `.get(ui)` /
     /// `.copied(ui)`.
     ///
-    /// Before v0.21.0 this returned `&T`, a live borrow of `&mut Context` that
-    /// could not be held across subsequent `ui.*` mutations. That form is now
-    /// [`use_memo_ref`](Self::use_memo_ref) (deprecated). Migrate
-    /// `let x = *ui.use_memo(&d, f);` to `let x = ui.use_memo(&d, f).copied(ui);`.
+    /// Read a `Copy` value with `ui.use_memo(&d, f).copied(ui)`; the handle
+    /// never borrows `&mut Context`, so it can be held across later `ui.*`
+    /// calls.
     ///
     /// [`use_state`]: Self::use_state
     ///
@@ -1753,85 +2185,6 @@ impl Context {
         Memo::from_idx(idx)
     }
 
-    /// Deprecated `&T`-returning form of [`use_memo`](Self::use_memo).
-    ///
-    /// **Deprecated since 0.21.0**: [`use_memo`](Self::use_memo) now returns a
-    /// [`Memo<T>`] handle that does not borrow `ui`, so it composes with later
-    /// `ui.*` calls. This alias preserves the original behaviour (returning a
-    /// `&T` borrow of `ui`) for callers that cannot migrate immediately; the
-    /// borrow keeps `ui` immutably borrowed until the reference is dropped.
-    ///
-    /// Migrate `let x = *ui.use_memo_ref(&d, f);` to
-    /// `let x = ui.use_memo(&d, f).copied(ui);` (or `.get(ui)` for a reference).
-    ///
-    /// # Panics
-    ///
-    /// Panics if the hook slot at this call position was previously used for a
-    /// different hook (a rules-of-hooks / call-order violation), since the
-    /// type-erased slot then fails to downcast to `(D, T)`:
-    ///
-    /// ```text
-    /// Hook type mismatch at index {idx}: expected {type}. Hooks must be called in the same order every frame.
-    /// ```
-    ///
-    /// # Example
-    /// ```no_run
-    /// # slt::run(|ui: &mut slt::Context| {
-    /// # #[allow(deprecated)]
-    /// let doubled = *ui.use_memo_ref(&21i32, |c| c * 2);
-    /// ui.text(format!("{doubled}"));
-    /// # });
-    /// ```
-    #[deprecated(
-        since = "0.21.0",
-        note = "use_memo now returns a Memo<T> handle; call `.get(ui)` / `.copied(ui)`"
-    )]
-    pub fn use_memo_ref<T: 'static, D: PartialEq + Clone + 'static>(
-        &mut self,
-        deps: &D,
-        compute: impl FnOnce(&D) -> T,
-    ) -> &T {
-        let idx = self.rollback.hook_cursor;
-        self.rollback.hook_cursor += 1;
-
-        // First call at this slot: allocate fresh state.
-        if idx >= self.hook_states.len() {
-            let value = compute(deps);
-            self.hook_states.push(Box::new((deps.clone(), value)));
-            return self.hook_states[idx]
-                .downcast_ref::<(D, T)>()
-                .map(|(_, v)| v)
-                .expect("freshly inserted slot must downcast to its own type");
-        }
-
-        // Slot already exists: it must be the same `(D, T)` shape we used last
-        // frame, or the caller broke the rules-of-hooks contract.
-        //
-        // Single downcast on the cache-hit path (closes #133): use
-        // `downcast_mut` to update deps/value in place when they change, and
-        // return `&stored.1` directly — eliminating the redundant second
-        // `downcast_ref` that ran on every call regardless of cache state.
-        match self.hook_states[idx].downcast_mut::<(D, T)>() {
-            Some(stored) => {
-                if stored.0 != *deps {
-                    // Keep the cache pair panic-atomic. Committing deps before
-                    // compute would make a caught panic look like a cache hit
-                    // on the retry while retaining the old value.
-                    let next_deps = deps.clone();
-                    let next_value = compute(deps);
-                    stored.0 = next_deps;
-                    stored.1 = next_value;
-                }
-                &stored.1
-            }
-            None => panic!(
-                "Hook type mismatch at index {}: expected {}. Hooks must be called in the same order every frame.",
-                idx,
-                std::any::type_name::<(D, T)>()
-            ),
-        }
-    }
-
     /// Returns `light` color if current theme is light mode, `dark` color if dark mode.
     pub fn light_dark(&self, light: Color, dark: Color) -> Color {
         if self.theme.is_dark { dark } else { light }
@@ -1896,12 +2249,12 @@ impl Context {
     }
 
     // ----------------------------------------------------------------
-    // v0.20.0 hooks: keyed state, effects, named focus, key gating
+    // Hooks: keyed state, effects, named focus, key gating
     // ----------------------------------------------------------------
 
     /// Component-local persistent state keyed by a runtime string.
     ///
-    /// Unlike [`use_state_named`](Self::use_state_named), `id` can be a
+    /// `id` can be a `&'static str` or a
     /// runtime value such as `format!("row-{i}")`. The key is converted to
     /// `String` once per call. The hot path (key already present) performs
     /// **zero string allocations beyond the [`Into<String>`] conversion at
@@ -2101,10 +2454,24 @@ impl Context {
         self.rollback.focus_count += 1;
         self.rollback.last_focusable_id = Some(id);
         self.commands.push(Command::FocusMarker(id));
+        // Issue #454: the name is the slot's stable identity.
+        self.record_focus_slot(
+            id,
+            crate::runtime::FocusSlotMeta {
+                key: Some(crate::runtime::hashed_focus_key(name)),
+                text_entry: None,
+                chords: 0,
+                disabled: self.rollback.disabled_depth > 0,
+            },
+            true,
+        );
         // First-write-wins on duplicate names within a single frame —
         // a second `register_focusable_named("dup")` keeps the first
         // slot bound to the name and orphans its own slot's name binding.
         self.focus_name_map.entry(name.to_string()).or_insert(id);
+        // Pointer capture identity follows the name too (custom widgets that
+        // render a container right after naming their focus slot).
+        self.pointer.pending_key = Some(crate::runtime::hashed_focus_key(name));
         // Reserve `id` for the very next `register_focusable()` call to
         // reuse, so widgets like `text_input` placed immediately after
         // share the named slot rather than allocating a fresh one.
@@ -2114,6 +2481,9 @@ impl Context {
         // its name in `focus_name_map`, just without a widget attached).
         self.rollback.pending_focusable_id = Some(id);
         // Same focus-index prediction as `register_focusable`.
+        if self.rollback.disabled_depth > 0 {
+            return false;
+        }
         self.focus_slot_is_current(id)
     }
 
@@ -2135,6 +2505,17 @@ impl Context {
             .is_some_and(|guard| guard.blocked_generation == Some(self.rollback.focus_generation))
         {
             return false;
+        }
+        let positional_target = if self.prev_focus_count > 0 {
+            self.focus_index % self.prev_focus_count
+        } else {
+            self.focus_index
+        };
+        if let Some(focused) = self.focus_slot_by_key(id, positional_target) {
+            if focused {
+                self.rollback.focused_widget_id = Some(id);
+            }
+            return focused;
         }
         let target = if self.prev_modal_active
             && self.prev_modal_focus_count > 0

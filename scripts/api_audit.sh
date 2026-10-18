@@ -2,7 +2,7 @@
 # api_audit.sh — heuristic API consistency audit for SuperLightTUI.
 #
 # Reports (does not fix) the high-frequency violations called out in
-# docs/DESIGN_PRINCIPLES.md plus three v0.20 demo-bug regressions:
+# docs/internals/design-principles.md plus three v0.20 demo-bug regressions:
 #
 #   V1 — Two paths to the same thing
 #         Same method on Context AND ContainerBuilder.
@@ -14,8 +14,8 @@
 #         another is <= 6 chars. Often correct, but worth a glance.
 #   V4 — Public API missing rustdoc
 #         pub fn / pub struct / pub enum without /// directly above.
-#   V5 — Outer container missing grow/fill (v0.20+ demos)
-#         examples/v020_*.rs whose entry-point function ships an
+#   V5 — Outer container missing grow/fill (widget-tour demos)
+#         The FEATURE_DEMOS examples whose entry-point function ships an
 #         outermost `.bordered(...)` / `.container()` chain that lacks
 #         `.grow(N)` or `.fill()` before the `.col(|ui|`/`.row(|ui|`
 #         closure. Without one of those, the inner area collapses to
@@ -27,17 +27,28 @@
 #         not, producing inconsistent indentation/wrapping. v0.20 ships
 #         this as informational only — see the section below for the
 #         v0.21 dylint-based plan.
-#   V7 — Demo title wide-character drift (v0.20+ demos)
-#         `.title("…")` strings inside examples/v020_*.rs that contain
+#   V7 — Demo title wide-character drift (widget-tour demos)
+#         `.title("…")` strings inside the FEATURE_DEMOS examples that contain
 #         non-ASCII codepoints not in the per-check allowlist. Wide
 #         glyphs (em-dash U+2014, en-dash U+2013, ideographs, etc.)
 #         cause border-misalignment in terminals that report a
 #         single-cell width for them.
+#   V8 — `_with` without a closure (#460)
+#         A non-deprecated `pub fn *_with` whose signature has no
+#         `Fn` / `FnMut` / `FnOnce` parameter. `_with` means "plus a
+#         closure"; values go through builder methods.
+#   V9 — `_colored` shape (#460)
+#         A non-deprecated `pub fn *_colored` that is new (not in the frozen
+#         allowlist) or does not take `&WidgetColors`.
+#   V10 — v0.26 rename table (#463)
+#         A removed or renamed name (docs/reference/migration.md "0.25 → 0.26") that
+#         came back as a non-deprecated `pub fn` on the same type, or
+#         `Context::line` not returning `Response`.
 #
 # Historical bugs each new check defends against:
-#   V5 → examples/v020_named_focus.rs shipped without `.grow(1)`,
+#   V5 → examples/named_focus.rs shipped without `.grow(1)`,
 #        making the email/name/city inputs render as a single column.
-#   V6 → src/context/widgets_display/status.rs `code_block_lang`
+#   V6 → src/context/widgets/rich/code_block.rs `code_block_lang`
 #        previously wrapped the tree-sitter branch in `ui.line(...)`
 #        but called `render_highlighted_line(...)` bare in the
 #        non-highlight fallback, producing inconsistent line wrapping.
@@ -45,12 +56,12 @@
 #        an em-dash (U+2014) in the title, breaking border alignment
 #        on terminals that render it as a 1-cell glyph.
 #
-# Output is human-readable plus an exit code. In v0.23, CI gates on V1, V2,
-# V4, V5, and V7; V3 and V6 remain informational.
+# Output is human-readable plus an exit code. Since v0.26, CI gates on V1, V2,
+# V4, V5, V7, V8, V9 and V10; V3 and V6 remain informational.
 #
 # Run from repo root:
 #   scripts/api_audit.sh
-#   scripts/api_audit.sh --strict   # exit 1 on V1/V2/V4/V5/V7
+#   scripts/api_audit.sh --strict   # exit 1 on V1/V2/V4/V5/V7-V10
 #
 # This is intentionally heuristic — false positives are expected and
 # allowlisted via the per-check "allowlist" sections below. The point is
@@ -61,6 +72,44 @@ set -uo pipefail
 REPO_ROOT="${SLT_AUDIT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 SRC="${REPO_ROOT}/src"
 EXAMPLES="${REPO_ROOT}/examples"
+
+# Examples covered by V5 and V7: the `widgets_tour` parts plus the
+# standalone feature showcase, regression panel, and report examples. This is
+# an explicit list rather than a glob because other examples (for example the
+# CJK demos embedded in `text_tour`) legitimately use wide-character titles.
+FEATURE_DEMOS=(
+    breadcrumb_response
+    ctrl_c_passthrough
+    dx_shortcuts
+    feature_showcase
+    gauge
+    gutter_highlights
+    keymap_help
+    modal_trap
+    named_focus
+    perf_audit
+    progress_response
+    regression_panel
+    spacing_scale
+    split_pane
+    static_log
+    testing_report
+    theme_subtree
+    use_effect
+    use_state_keyed
+    widgets_tour
+    widthspec
+)
+
+# Print the existing FEATURE_DEMOS files under ${EXAMPLES}, one per line.
+list_feature_demos() {
+    local name
+    for name in "${FEATURE_DEMOS[@]}"; do
+        if [[ -f "${EXAMPLES}/${name}.rs" ]]; then
+            printf '%s\n' "${EXAMPLES}/${name}.rs"
+        fi
+    done
+}
 
 if [[ ! -d "${SRC}" ]]; then
     echo "api_audit: src/ not found at ${SRC}" >&2
@@ -82,38 +131,17 @@ echo "── V1: Two-path methods (Context vs ContainerBuilder) ──"
 # Allowlist — methods intentionally overloaded between Context's immediate
 # text/widget modifiers and ContainerBuilder's deferred container modifiers.
 # Any new overlap must be reviewed and added explicitly.
+#
+# v0.26 (#457): the text style/size/margin modifiers moved to the `Text`
+# builder and their Context versions are deprecated, so they no longer count.
 V1_ALLOWLIST=(
-    "align"
-    "bg"
-    "col"
-    "col_gap"
-    "color"
-    "group_hover_bg"
-    "grow"
-    "h"
-    "m"
-    "max_h"
-    "max_w"
-    "mb"
-    "min_h"
-    "min_w"
-    "ml"
-    "mr"
-    "mt"
-    "mx"
-    "my"
-    "row"
-    "row_gap"
-    "text"           # Context: unbordered shortcut; Builder: inside-builder form
+    "col"            # Context: plain column; Builder: styled column
+    "color"          # Context: theme token lookup; CanvasContext (container.rs): pen color
+    "row"            # same as col
     "theme"          # Context: getter; Builder: per-subtree override
     "width"          # Context: terminal width; Builder: w() (different name already)
     "height"         # same as width
-    "push_container" # internal helper used in both layers
-    "line"           # Context: row-shorthand; ContainerBuilder: not present (false pos)
-    "w"
-    "with"
-    "with_if"
-    "wrap"
+    "line"           # Context: row-shorthand; Builder: styled inline row
 )
 
 is_allowlisted_v1() {
@@ -125,25 +153,42 @@ is_allowlisted_v1() {
 }
 
 # Collect Context-layer pub fn names. Context lives in core.rs, runtime.rs,
-# and the various widgets_*/*.rs files (those add `impl Context { ... }`
-# blocks).
+# and the widget family files under context/widgets/ (those add
+# `impl Context { ... }` blocks).
 ctx_files=(
     "${SRC}/context/core.rs"
     "${SRC}/context/runtime.rs"
 )
-for d in widgets_display widgets_input widgets_interactive widgets_viz; do
-    if [[ -d "${SRC}/context/${d}" ]]; then
-        while IFS= read -r f; do
-            ctx_files+=("$f")
-        done < <(find "${SRC}/context/${d}" -name '*.rs' -type f)
-    fi
-done
+if [[ -f "${SRC}/context/widgets.rs" ]]; then
+    ctx_files+=("${SRC}/context/widgets.rs")
+fi
+if [[ -d "${SRC}/context/widgets" ]]; then
+    while IFS= read -r f; do
+        ctx_files+=("$f")
+    done < <(find "${SRC}/context/widgets" -name '*.rs' -type f)
+fi
 
+# Only `pub fn`s inside top-level `impl Context {` blocks count: builder types
+# defined in the same files (`Text`, `Gauge`, ...) are separate paths, and
+# `#[deprecated]` Context methods are on their way out (issue #457 deprecated
+# the "modify the last text" modifiers in favour of the `Text` builder).
 ctx_methods=""
 for f in "${ctx_files[@]}"; do
     [[ -f "$f" ]] || continue
-    ctx_methods+=$(grep -hE '^[[:space:]]*pub[[:space:]]+fn[[:space:]]+[[:alnum:]_]+' "$f" 2>/dev/null \
-        | sed -E 's/.*pub[[:space:]]+fn[[:space:]]+([[:alnum:]_]+).*/\1/' || true)
+    ctx_methods+=$(awk '
+        /^impl Context \{/ { in_ctx = 1; deprecated = 0; next }
+        /^\}/ { in_ctx = 0; next }
+        !in_ctx { next }
+        /^[[:space:]]*#\[deprecated/ { deprecated = 1; next }
+        /^[[:space:]]*(pub(\([a-z]+\))?[[:space:]]+)?fn[[:space:]]/ {
+            if (!deprecated && $0 ~ /^[[:space:]]*pub[[:space:]]+fn[[:space:]]+[[:alnum:]_]+/) {
+                sub(/^[[:space:]]*pub[[:space:]]+fn[[:space:]]+/, "")
+                sub(/[^[:alnum:]_].*/, "")
+                print
+            }
+            deprecated = 0
+        }
+    ' "$f" 2>/dev/null || true)
     ctx_methods+=$'\n'
 done
 ctx_methods=$(printf '%s' "${ctx_methods}" | sort -u)
@@ -182,9 +227,7 @@ echo "── V2: Mixed verbs in same widget file ──"
 # for the SAME widget name.
 
 v2_count=0
-for f in "${SRC}/context/widgets_display/"*.rs \
-         "${SRC}/context/widgets_input/"*.rs \
-         "${SRC}/context/widgets_interactive/"*.rs; do
+while IFS= read -r f; do
     [[ -f "$f" ]] || continue
 
     # Immediate fns: pub fn returning Response on `&mut self`.
@@ -209,7 +252,7 @@ for f in "${SRC}/context/widgets_display/"*.rs \
             v2_count=$((v2_count + 1))
         fi
     done <<< "${immediate_fns}"
-done
+done < <(find "${SRC}/context/widgets" -name '*.rs' -type f 2>/dev/null | sort)
 if [[ "${v2_count}" -eq 0 ]]; then
     echo "  ✅ none"
 fi
@@ -242,7 +285,7 @@ if [[ "${#v3_files[@]}" -gt 0 ]]; then
     for f in "${v3_files[@]}"; do
         echo "  V3 (info): $(basename "$f") has both long (>20) and short (<=6) public method names"
     done
-    echo "    (informational — see NAMING.md \"Length Conventions\")"
+    echo "    (informational — see docs/internals/design-principles.md \"Length Conventions\")"
     warnings=$((warnings + ${#v3_files[@]}))
 else
     echo "  ✅ none"
@@ -315,12 +358,12 @@ if [[ "${v4_count}" -eq 0 ]]; then
 fi
 violations=$((violations + v4_count))
 
-# --- V5: Outer container missing grow/fill (v0.20+ demos) --------------------
+# --- V5: Outer container missing grow/fill (widget-tour demos) ---------------
 
 echo
-echo "── V5: Outer container missing grow/fill (v020_*.rs) ──"
+echo "── V5: Outer container missing grow/fill (widget-tour demos) ──"
 
-# Heuristic. For each examples/v020_*.rs file:
+# Heuristic. For each FEATURE_DEMOS file:
 #   1. Locate the entry-point function: prefer `pub fn render(`, then
 #      `fn body(`, then `fn main(` (with `slt::run` inside).
 #   2. Extract its body by tracking `{`/`}` depth from the opening line.
@@ -337,7 +380,7 @@ echo "── V5: Outer container missing grow/fill (v020_*.rs) ──"
 # (e.g. width-bounded showcase with an outer scroll container). Add
 # basenames here to suppress flagging.
 V5_ALLOWLIST=(
-    "v020_test_utils.rs"   # not a runnable demo — exercises test harness only
+    "testing_report.rs"   # not a runnable demo — exercises test harness only
 )
 
 is_allowlisted_v5() {
@@ -408,7 +451,7 @@ if [[ -d "${EXAMPLES}" ]]; then
             echo "  V5: ${base} — outer chain lacks .grow(N) or .fill() before .col(|ui|/.row(|ui|"
             v5_count=$((v5_count + 1))
         fi
-    done < <(find "${EXAMPLES}" -maxdepth 1 -name 'v020_*.rs' -type f 2>/dev/null | sort)
+    done < <(list_feature_demos)
 fi
 
 if [[ "${v5_count}" -eq 0 ]]; then
@@ -434,15 +477,15 @@ echo "── V6: Fallback path container nesting divergence ──"
 # then, this section is a manual-review reminder so the principle
 # stays visible in CI logs.
 echo "  V6 (informational): manual review required for fallback parity"
-echo "    (see status.rs::code_block_lang for the canonical pattern fixed in v0.20.x;"
+echo "    (see rich/code_block.rs::code_block_lang for the canonical pattern fixed in v0.20.x;"
 echo "     a future syntax-aware rule should mechanize this check)"
 
-# --- V7: Demo title wide-character drift (v0.20+ demos) ----------------------
+# --- V7: Demo title wide-character drift (widget-tour demos) -----------------
 
 echo
-echo "── V7: Demo title wide-character drift (v020_*.rs) ──"
+echo "── V7: Demo title wide-character drift (widget-tour demos) ──"
 
-# Heuristic. For each `.title("…")` call inside examples/v020_*.rs,
+# Heuristic. For each `.title("…")` call inside a FEATURE_DEMOS file,
 # inspect the literal between the first pair of double quotes and
 # flag any byte ≥ 0x80 (UTF-8 lead/cont byte) that isn't part of an
 # allowlisted multi-byte sequence.
@@ -494,7 +537,7 @@ if [[ -d "${EXAMPLES}" ]]; then
                 v7_count=$((v7_count + 1))
             fi
         done < <(LC_ALL=C grep -nE '\.title\("' "$f" 2>/dev/null || true)
-    done < <(find "${EXAMPLES}" -maxdepth 1 -name 'v020_*.rs' -type f 2>/dev/null | sort)
+    done < <(list_feature_demos)
 fi
 
 if [[ "${v7_count}" -eq 0 ]]; then
@@ -502,11 +545,225 @@ if [[ "${v7_count}" -eq 0 ]]; then
 fi
 violations=$((violations + v7_count))
 
+# --- V8-V10 shared: public fn inventory --------------------------------------
+#
+# One record per `pub fn` / `pub const fn` under src/ (pub(crate) and
+# pub(super) excluded), tab-separated:
+#   file:line <TAB> impl type ("-" outside an impl) <TAB> name <TAB>
+#   deprecated (0/1) <TAB> signature up to the body, on one line
+# A `#[deprecated` attribute applies to the next fn; any other item resets it.
+pub_fn_inventory() {
+    find "${SRC}" -name '*.rs' -type f 2>/dev/null | sort | while IFS= read -r f; do
+        awk -v file="$f" '
+            function flush() {
+                gsub(/[[:space:]]+/, " ", sig)
+                printf "%s:%d\t%s\t%s\t%d\t%s\n", file, sig_line, impl_type, name, dep, sig
+                capturing = 0; dep = 0; sig = ""
+            }
+            /^impl[[:space:]<]/ {
+                line = $0
+                if (line ~ / for /) { sub(/.* for[[:space:]]+/, "", line) }
+                else { sub(/^impl(<[^>]*>)?[[:space:]]+/, "", line) }
+                sub(/[^A-Za-z0-9_].*/, "", line)
+                impl_type = line
+                next
+            }
+            /^}/ { impl_type = "-"; dep = 0; next }
+            capturing {
+                sig = sig " " $0
+                if ($0 ~ /\{[[:space:]]*$/ || $0 ~ /;[[:space:]]*$/ || $0 ~ /\{.*\}[[:space:]]*$/) flush()
+                next
+            }
+            /^[[:space:]]*#\[deprecated/ { dep = 1; next }
+            /^[[:space:]]*pub[[:space:]]+(const[[:space:]]+)?fn[[:space:]]+[A-Za-z0-9_]+/ {
+                name = $0
+                sub(/^[[:space:]]*pub[[:space:]]+(const[[:space:]]+)?fn[[:space:]]+/, "", name)
+                sub(/[^A-Za-z0-9_].*/, "", name)
+                sig = $0; sig_line = NR; capturing = 1
+                if ($0 ~ /\{[[:space:]]*$/ || $0 ~ /;[[:space:]]*$/ || $0 ~ /\{.*\}[[:space:]]*$/) flush()
+                next
+            }
+            /^[[:space:]]*(pub(\([a-z]+\))?[[:space:]]+)?(struct|enum|type|const|static|use|mod|trait|fn)[[:space:]]/ { dep = 0 }
+            BEGIN { impl_type = "-" }
+        ' "$f"
+    done
+}
+
+PUB_FNS=$(pub_fn_inventory)
+
+# --- V8: `_with` takes a closure ------------------------------------------------
+
+echo
+echo "── V8: \`_with\` suffix reserved for an extra closure parameter ──"
+
+# docs/internals/design-principles.md#naming-conventions: `_with` means "same as the base call plus a closure
+# parameter" (`error_boundary_with`, `table_with`, `canvas_with`,
+# `bar_chart_with`). Variants that add a value (a variant enum, an options
+# struct, a column list) are deprecated in 0.26 in favour of builder methods
+# (#460). Allowlist: entry points and test helpers whose `_with` means
+# "with this config / these modifiers" (out of scope for #460).
+V8_ALLOWLIST=(
+    "run_with"          # RunConfig entry point
+    "run_async_with"    # RunConfig entry point
+    "run_inline_with"   # RunConfig entry point
+    "run_static_with"   # RunConfig entry point
+    "key_with"          # EventBuilder: key + modifiers
+    "click_with"        # EventBuilder: click + modifiers
+)
+
+is_allowlisted_v8() {
+    local m="$1"
+    for allow in "${V8_ALLOWLIST[@]}"; do
+        [[ "$m" == "$allow" ]] && return 0
+    done
+    return 1
+}
+
+v8_count=0
+while IFS=$'\t' read -r loc impl name dep sig; do
+    [[ -z "$name" || "$dep" == "1" ]] && continue
+    [[ "$name" == *_with ]] || continue
+    is_allowlisted_v8 "$name" && continue
+    if ! [[ "$sig" =~ Fn(Once|Mut)?[[:space:]]*\( ]]; then
+        echo "  V8: ${loc} — ${name}() ends in _with but takes no closure; use a builder method instead (docs/internals/design-principles.md#naming-conventions)"
+        v8_count=$((v8_count + 1))
+    fi
+done <<< "${PUB_FNS}"
+if [[ "${v8_count}" -eq 0 ]]; then
+    echo "  ✅ none (allowlist size: ${#V8_ALLOWLIST[@]})"
+fi
+violations=$((violations + v8_count))
+
+# --- V9: `_colored` means a trailing &WidgetColors ---------------------------
+
+echo
+echo "── V9: \`_colored\` suffix = base call + trailing &WidgetColors ──"
+
+# docs/internals/design-principles.md#naming-conventions: since 0.26 `_colored` has one shape, the base widget's
+# arguments plus `&WidgetColors`, and only the stateful widgets below keep
+# it. Single-color variants are builder methods (`.color(c)`), and a new
+# widget takes colors through its builder, so a new `_colored` name fails.
+V9_ALLOWLIST=(
+    "checkbox_colored"
+    "color_picker_colored"
+    "list_colored"
+    "list_reorderable_colored"
+    "paginator_colored"
+    "radio_colored"
+    "select_colored"
+    "table_colored"
+    "tabs_colored"
+    "text_input_colored"
+    "toggle_colored"
+)
+
+is_allowlisted_v9() {
+    local m="$1"
+    for allow in "${V9_ALLOWLIST[@]}"; do
+        [[ "$m" == "$allow" ]] && return 0
+    done
+    return 1
+}
+
+v9_count=0
+while IFS=$'\t' read -r loc impl name dep sig; do
+    [[ -z "$name" || "$dep" == "1" ]] && continue
+    [[ "$name" == *_colored ]] || continue
+    if ! is_allowlisted_v9 "$name"; then
+        echo "  V9: ${loc} — new ${name}(); configure colors through the widget's builder (.color / .colors) instead"
+        v9_count=$((v9_count + 1))
+    elif ! [[ "$sig" =~ \&[[:space:]]*(crate::|style::)?WidgetColors ]]; then
+        echo "  V9: ${loc} — ${name}() must take a trailing &WidgetColors"
+        v9_count=$((v9_count + 1))
+    fi
+done <<< "${PUB_FNS}"
+if [[ "${v9_count}" -eq 0 ]]; then
+    echo "  ✅ none (allowlist size: ${#V9_ALLOWLIST[@]})"
+fi
+violations=$((violations + v9_count))
+
+# --- V10: v0.26 removed / renamed names stay gone -----------------------------
+
+echo
+echo "── V10: v0.26 rename table (removed or renamed names) ──"
+
+# Issue #463 removed the items deprecated in 0.20-0.22 and renamed the
+# overlapping meanings; #460 moved `_with` / `_colored` variants to builders.
+# None of these may come back as a non-deprecated `pub fn` on the listed
+# type. `Type::name -> replacement`, matching docs/reference/migration.md.
+V10_TABLE=(
+    "Context::use_state_named -> use_state_keyed"
+    "Context::use_state_named_default -> use_state_keyed_default"
+    "Context::use_state_named_with -> use_state_keyed"
+    "Context::use_memo_ref -> use_memo"
+    "Context::key_seq -> key_chord"
+    "Context::col_gap -> container().gap(n).col(f)"
+    "Context::row_gap -> container().gap(n).row(f)"
+    "Context::wrap -> text(..).wrap()"
+    "Context::align -> text(..).align(a)"
+    "Context::code_block_lang -> code_block(c).lang(l)"
+    "Context::code_block_numbered -> code_block(c).numbered()"
+    "Context::code_block_numbered_lang -> code_block(c).lang(l).numbered()"
+    "Context::gradient_stops -> text(..).gradient_stops_f64(..)"
+    "Context::bg_gradient_stops -> text(..).bg_gradient_stops_f64(..)"
+    "Context::button_with -> button(l).variant(v)"
+    "Context::button_colored -> button(l).colors(&c)"
+    "Context::slider_with -> slider(l, &mut v, r).step(s)"
+    "Context::slider_with_step -> slider(l, &mut v, r).step(s)"
+    "Context::grid_with -> grid_columns(cols, f)"
+    "Context::separator_colored -> separator().color(c)"
+    "Context::badge_colored -> badge(l).color(c)"
+    "Context::stat_colored -> stat(l, v).color(c)"
+    "Context::progress_bar_colored -> progress_bar(r, w).color(c)"
+    "Context::line_chart_colored -> line_chart(d, w, h).color(c)"
+    "Context::area_chart_colored -> area_chart(d, w, h).color(c)"
+    "Context::help_colored -> help(b).key_color(k).text_color(t)"
+    "ContainerBuilder::pad -> p"
+    "ContainerBuilder::min_width -> min_w"
+    "ContainerBuilder::max_width -> max_w"
+    "ContainerBuilder::min_height -> min_h"
+    "ContainerBuilder::max_height -> max_h"
+    "Color::luminance -> luminance_f64"
+    "Color::blend -> blend_f64"
+    "Color::lighten -> lighten_f64"
+    "Color::darken -> darken_f64"
+    "Color::contrast_ratio -> contrast_ratio_f64"
+    "Color::from_hsl -> from_hsl_f64"
+    "Color::from_hsv -> from_hsv_f64"
+    "Color::rotate_hue -> rotate_hue_f64"
+    "Theme::overlay -> overlay_f64"
+    "AppState::fps -> fps_f64"
+    "ScrollState::progress -> progress_ratio"
+    "FormState::validate -> FormField::validate + validate_all"
+    "FilePickerState::selected -> selected_file"
+)
+
+v10_count=0
+while IFS=$'\t' read -r loc impl name dep sig; do
+    [[ -z "$name" || "$dep" == "1" ]] && continue
+    for entry in "${V10_TABLE[@]}"; do
+        key="${entry%% -> *}"
+        if [[ "${impl}::${name}" == "$key" ]]; then
+            echo "  V10: ${loc} — ${key} was removed/renamed in 0.26; use ${entry#* -> }"
+            v10_count=$((v10_count + 1))
+        fi
+    done
+    # `Context::line` returns `Response` like `ContainerBuilder::line` (#463).
+    if [[ "${impl}" == "Context" && "${name}" == "line" && ! "$sig" =~ -\>[[:space:]]*Response ]]; then
+        echo "  V10: ${loc} — Context::line must return Response (matches ContainerBuilder::line)"
+        v10_count=$((v10_count + 1))
+    fi
+done <<< "${PUB_FNS}"
+if [[ "${v10_count}" -eq 0 ]]; then
+    echo "  ✅ none (table size: ${#V10_TABLE[@]})"
+fi
+violations=$((violations + v10_count))
+
 # --- Summary -----------------------------------------------------------------
 
 echo
 echo "── Summary ──"
-echo "Violations (V1+V2+V4+V5+V7):  ${violations}"
+echo "Violations (V1+V2+V4+V5+V7-V10): ${violations}"
 echo "Warnings   (V3+V6 info):     ${warnings}"
 echo
 
@@ -517,7 +774,7 @@ fi
 
 echo "⚠️  Reported ${violations} violation(s)."
 if [[ "${STRICT}" -eq 1 ]]; then
-    echo "    --strict mode: exiting 1 (CI gates V1/V2/V4/V5/V7)."
+    echo "    --strict mode: exiting 1 (CI gates V1/V2/V4/V5/V7/V8/V9/V10)."
     exit 1
 fi
 echo "    Run 'scripts/api_audit.sh --strict' to apply the CI gate locally."

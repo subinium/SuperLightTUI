@@ -6,7 +6,6 @@
 //! Tests run under `#[tokio::test]` and inject the runtime handle into the
 //! `TestBackend` via the test-only `set_async_runtime` helper (mirroring what
 //! `run_async_loop` does once before its loop).
-#![allow(clippy::unwrap_used)]
 
 use super::AsyncTasks;
 use crate::test_utils::TestBackend;

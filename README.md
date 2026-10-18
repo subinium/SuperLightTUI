@@ -13,7 +13,7 @@
 [![Downloads Badge]][Crate]
 [![License Badge]][License]
 
-[Docs Index] · [Quick Start] · [Widget Guide] · [Patterns Guide] · [Examples Guide] · [Backends Guide] · [Architecture Guide]
+[Docs Index] · [Quick Start] · [Widget Guide] · [Patterns Guide] · [Examples Guide] · [Runtime Modes Guide] · [Architecture Guide]
 
 **English** · [中文](docs/README.zh-CN.md) · [Español](docs/README.es.md) · [日本語](docs/README.ja.md) · [한국어](docs/README.ko.md)
 
@@ -29,6 +29,7 @@ State is plain Rust variables; there is no app trait, message enum, or retained 
 cargo add superlighttui
 ```
 
+<!-- slt-check: {"name": "readme_hello", "features": ["crossterm"], "context": "module"} -->
 ```rust
 fn main() -> std::io::Result<()> {
     slt::run(|ui: &mut slt::Context| {
@@ -40,17 +41,19 @@ fn main() -> std::io::Result<()> {
 5 lines. No `App` trait. No `Model`/`Update`/`View`. No manual event loop.
 Ctrl+C exits cleanly by default (opt out with `RunConfig::handle_ctrl_c(false)`).
 
-Mouse capture is **opt-in**. Plain `slt::run` is keyboard-driven: Tab/Shift+Tab move
-focus and Enter/Space activate the focused button. For click, hover, wheel scroll,
-and drag, start the loop with `RunConfig::default().mouse(true)`:
+The mouse is **on by default**. Plain `slt::run` reports clicks, wheel scroll, and
+drags (split handles, scrollbar thumbs, text selection); over SSH it falls back to
+clicks and the wheel only. Tab/Shift+Tab move focus and Enter/Space activate the
+focused button either way:
 
+<!-- slt-check: {"name": "readme_click_counter", "features": ["crossterm"], "context": "module"} -->
 ```rust
-use slt::{Context, RunConfig};
+use slt::Context;
 
 fn main() -> std::io::Result<()> {
     let mut clicks = 0;
 
-    slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
+    slt::run(|ui: &mut Context| {
         ui.text(format!("clicked {clicks} times")).bold();
         if ui.button("Click me").clicked {
             clicks += 1;
@@ -58,6 +61,11 @@ fn main() -> std::io::Result<()> {
     })
 }
 ```
+
+Hover styling and tooltips need every pointer move, so they are opt-in:
+`slt::run_with(RunConfig::default().mouse_mode(MouseMode::Hover), |ui| { ... })`.
+While the mouse is captured, most terminals still select text natively with
+Shift-drag; `MouseMode::Off` turns the mouse off entirely.
 
 MSRV: Rust 1.88. Default features enable the `crossterm` backend and `bidi`.
 
@@ -88,6 +96,7 @@ There are four ideas most apps start with:
 3. Styling is method chaining.
 4. Interactive widgets usually return `Response`.
 
+<!-- slt-check: {"name": "readme_grammar", "features": [], "context": "ui"} -->
 ```rust
 ui.bordered(Border::Rounded).title("Status").p(1).gap(1).col(|ui| {
     ui.text("SLT").bold().fg(Color::Cyan);
@@ -103,11 +112,12 @@ ui.bordered(Border::Rounded).title("Status").p(1).gap(1).col(|ui| {
 ```
 
 That is the core mental model. Everything else is depth, not a second framework.
-`clicked` fires on Enter/Space when the button is focused, and on mouse click when
-the loop runs with `RunConfig::default().mouse(true)`.
+`clicked` fires on Enter/Space when the button is focused, and on mouse click (the
+mouse is on by default).
 
 ## A Real App
 
+<!-- slt-check: {"name": "readme_real_app", "features": ["crossterm"], "context": "module"} -->
 ```rust
 use slt::{Border, Color, Context, KeyCode};
 
@@ -144,13 +154,13 @@ The same closure runs across several entry points. Pick one based on UI shape, n
 
 | Mode | API | When to use |
 |------|-----|-------------|
-| Full-screen | `slt::run` / `slt::run_with` | Standard TUI app on the alternate screen. Mouse capture is off unless `RunConfig::mouse(true)` is passed to `run_with`. |
+| Full-screen | `slt::run` / `slt::run_with` | Standard TUI app on the alternate screen. Mouse clicks, wheel, and drags are on by default; hover needs `RunConfig::mouse_mode(MouseMode::Hover)`. |
 | Inline | `slt::run_inline` / `slt::run_inline_with` | Fixed-height widget below the prompt — no alternate screen. |
 | Static + inline | `slt::run_static` | Log lines stream into scrollback while an inline UI stays live below. |
 | Async messages | `slt::run_async` *(feature: `async`)* | Background tasks use the wake-aware `AsyncSender`; retain the returned `AsyncRunHandle` to join or cancel the loop. |
 | Custom backend | `slt::frame` + `Backend` + `AppState` | Drive rendering yourself — tests, GUI embeds, WASM, snapshot harnesses. |
 
-`RunConfig` tunes mouse capture (default: off), kitty keyboard, color depth, max FPS, scroll speed, theme, title, and Ctrl+C handling across every mode.
+`RunConfig` tunes the mouse mode (default: `Drag` locally, `Click` over SSH; `Hover` or `Off` on request), kitty keyboard, color depth, max FPS, scroll speed, theme, title, and Ctrl+C handling across every mode.
 
 ## Focus and Scrolling
 
@@ -161,15 +171,15 @@ for application-controlled positioning. Keep one `ScrollState` per container.
 
 Use `ui.form_field_response(...)` for field/input interaction feedback without
 changing existing `ui.form_field(...)` callers. `ui.focused_layout_rect()` and
-`ui.measured_layout_rect(name)` expose previous-frame geometry before scrolling
+`ui.measured_layout_rect(name)` expose [previous-frame](docs/guide/02-state.md#the-previous-frame-rule) geometry before scrolling
 and clipping; `Response.rect` remains the visible mouse-hit rectangle.
-See [the migration guide](docs/MIGRATION.md) for the coordinate and timing rules.
+See [the migration guide](docs/reference/migration.md) for the coordinate and timing rules.
 
 ## Feature Flags
 
 ```toml
 [dependencies]
-superlighttui = { version = "0.25.0", features = ["async", "image"] }
+superlighttui = { version = "0.26.0", features = ["async", "image"] }
 ```
 
 | Feature | What it adds |
@@ -189,8 +199,8 @@ superlighttui = { version = "0.25.0", features = ["async", "image"] }
 
 - **Small public grammar**. Most screens start with normal Rust state, `row()` / `col()` / `container()`, method chaining, and `Response`.
 - **Less framework ceremony**. Many apps do not need an app trait, retained tree, or message enum just to get moving.
-- **Batteries included, backend still serious**. Common widgets auto-wire focus, hover, click, and scroll behavior (mouse events once `RunConfig::mouse(true)` is set), while the runtime keeps a conservative low-level path through `Backend`, `AppState`, and `frame()`.
-- **Conservative internals**. SLT keeps the public surface small, but the internals stay deliberately boring: shared frame kernel, explicit backend contract coverage, zero `unsafe`, feature-gated runtime paths, and validation across `all-features`, `no-default-features`, WASM, clippy, examples, cargo-hack, semver, and deny checks.
+- **Batteries included, backend still serious**. Common widgets auto-wire focus, hover, click, and scroll behavior (clicks, wheel, and drags by default; hover with `MouseMode::Hover`), while the runtime keeps a conservative low-level path through `Backend`, `AppState`, and `frame()`.
+- **Conservative internals**. SLT keeps the public surface small, but the internals stay deliberately boring: shared frame kernel, explicit backend contract coverage, zero `unsafe`, feature-gated runtime paths, and validation across `all-features`, `no-default-features`, clippy, examples, cargo-hack, semver, and deny checks (the WASM target is a local check while browser support is deferred).
 
 For Rust users, that usually means less setup than retained-mode TUI frameworks.
 For AI-assisted workflows, it means the public grammar is easy to infer from docs and examples.
@@ -216,15 +226,15 @@ graph LR
 ```
 
 Every `ui.*()` call records a command to a flat list — no tree construction, no layout math.
-The engine replays those commands through a **four-stage DFS pipeline** — each stage specializes: build the layout tree, compute flexbox, collect interaction and feedback data, render cells to a back buffer — then diffs against the previous frame and flushes only what changed.
+The engine replays those commands through a **four-stage DFS pipeline** — each stage specializes: build the layout tree, compute flexbox, collect interaction and feedback data, render cells to a back buffer — then diffs against the last rendered buffer and flushes only what changed.
 
 This architecture is what makes the simple grammar possible:
 
 - **No ceremony.** Immediate-mode means no `App` trait, no `Model`/`Message`/`Update`/`View`. Your closure is the entire UI. State is normal Rust variables. Control flow is `if`/`for`.
 - **Invisible layout.** `ui.col(|ui| { ... })` records an "open column" command. The engine builds the tree and runs flexbox — you never see `LayoutNode`.
-- **Automatic diffing.** The double-buffer diffs cells between frames and only emits changed ANSI attributes. You redraw everything; the engine decides what to write. No manual dirty tracking. Per-frame cost is currently higher than ratatui's on matched workloads; see the [Performance Guide](docs/PERFORMANCE.md) for measurements.
-- **Auto-wired interaction.** `ui.button("Save")` gets keyboard focus and Enter/Space activation for free; with `RunConfig::mouse(true)` it also reports hover and click. No hit-testing code on your side.
-- **Synchronous feedback.** Interaction uses the previous frame's layout positions (imperceptible at 60 FPS). No callbacks, no async layout queries — your code stays linear.
+- **Automatic diffing.** The double-buffer diffs cells between frames and only emits changed ANSI attributes. You redraw everything; the engine decides what to write. No manual dirty tracking. On the matched ratatui comparison harness SLT 0.26 renders faster than ratatui 0.30.2 on every workload: 10.2 vs 106.9 µs for a 200×60 dashboard, 23.0 vs 622.1 µs for a 10k-item list, 157.8 vs 340.0 µs for 60 nested boxes (Apple M3 Pro, rustc 1.98.0, 2026-10-18, shared host). See the [Performance Guide] for method and caveats.
+- **Auto-wired interaction.** `ui.button("Save")` gets keyboard focus and Enter/Space activation for free, reports mouse clicks out of the box, and reports hover under `MouseMode::Hover`. No hit-testing code on your side.
+- **Synchronous feedback.** Interaction uses the [previous frame's layout](docs/guide/02-state.md#the-previous-frame-rule) (imperceptible at 60 FPS). No callbacks, no async layout queries — your code stays linear.
 
 For the full eight-stage lifecycle, see [Architecture Guide].
 
@@ -233,6 +243,7 @@ For the full eight-stage lifecycle, see [Architecture Guide].
 Stateless calls take values; stateful widgets take an explicit state struct so your data
 keeps living in normal Rust variables across frames.
 
+<!-- slt-check: {"name": "readme_api_surface", "features": [], "context": "ui", "setup": "let mut input = TextInputState::new(); let mut dark = false; let mut tabs = TabsState::new(vec![\"Home\", \"Logs\"]); let mut list = ListState::new(vec![\"a\", \"b\"]); let mut table = TableState::new(vec![\"Name\"], vec![vec![\"SLT\"]]); let mut palette = CommandPaletteState::new(vec![PaletteCommand::new(\"Quit\", \"Exit\")]); let mut toasts = ToastState::new(); let data = vec![(0.0, 1.0), (1.0, 2.0)]; let values = vec![1.0, 3.0, 2.0];"} -->
 ```rust
 // Text and layout
 ui.text("Hello").bold().fg(Color::Cyan);
@@ -244,7 +255,7 @@ ui.row(|ui| {
 
 // Inputs and actions
 ui.text_input(&mut input);          // input: TextInputState
-if ui.button("Save").clicked {}   // Enter/Space; mouse click needs mouse(true)
+if ui.button("Save").clicked {}   // Enter/Space or mouse click
 ui.checkbox("Dark mode", &mut dark);
 
 // Data and navigation
@@ -280,30 +291,39 @@ For composition advice, see [Patterns Guide].
 
 ## Learn The Library
 
-| Document | What it covers |
-|----------|----------------|
-| [Quick Start] | Install, first app, closure mental model, layout, widget state |
-| [Widget Guide] | Complete API catalog of widgets, runtime methods, and state types |
+Read the learning path in order; each guide assumes the ones before it.
+The [Docs Index] lists every page.
+
+| Step | Guide | What it covers |
+|------|-------|----------------|
+| 1 | [Quick Start] | Install, first app, closure mental model, layout, widget state |
+| 2 | [State Guide] | App state vs hooks vs widget state, and the [previous-frame rule](docs/guide/02-state.md#the-previous-frame-rule) |
+| 3 | [Patterns Guide] | Components, forms, screens, modals, async messages, large-app structure |
+| 4 | [Interaction Guide] | Mouse, keyboard, focus, shortcuts, hover, drag, wheel and scrolling |
+| 5 | [Overlays Guide] | `Anchor` and overlay positioning mapped to CSS/Flutter/React Native |
+| 6 | [Theming Guide] | Theme struct, presets, ThemeBuilder, custom themes |
+| 7 | [Animation Guide] | Tween, spring, keyframes, sequence, stagger |
+| 8 | [Testing Guide] | `TestBackend`, `EventBuilder`, multi-frame tests, snapshots |
+| 9 | [Runtime Modes Guide] | `run` vs `run_inline` vs `run_static`, `RunConfig`, driving `frame()` |
+| 10 | [Browser Guide] | The `slt-wasm` browser runtime (deferred in 0.26; latest published `slt-wasm` is 0.25.0) |
+| 11 | [Terminal Compatibility] | Terminal/multiplexer/SSH support matrix, env vars, fallbacks |
+
+Coming from another stack: [Web Developers Guide] (HTML/CSS/React → SLT) and
+[Ratatui Guide] (widgets, layout and the incremental `ratatui` bridge).
+
+| Reference | What it covers |
+|-----------|----------------|
+| [Widget Guide] | Categorized catalog of widgets, runtime methods and state types |
+| [State API Guide] | Public fields, accessors and mutation methods for widget state |
 | [Cookbook] | Copy-paste recipes for common apps, each backed by a runnable example |
-| [Web Developers Guide] | Coming from web: CSS/React → SLT mapping |
-| [Interaction Guide] | Mouse, click, hover, drag, wheel, expand/collapse, hit-testing |
-| [Positioning Guide] | `Anchor` and overlay APIs mapped to CSS/Flutter/React Native positioning |
-| [State API Guide] | Public fields, accessors, and mutation methods for widget state |
-| [Migration Guide] | Version-by-version breaking changes and upgrade paths |
-| [Patterns Guide] | State placement, screen composition, helper extraction, large-app structure |
 | [Examples Guide] | Runnable examples grouped by product shape and feature area |
-| [Backends Guide] | `Backend`, `AppState`, `frame()`, inline mode, static output |
-| [Testing Guide] | `TestBackend`, `EventBuilder`, multi-frame tests, backend contract tests |
-| [Debugging Guide] | F12 overlay, clipping, focus surprises, previous-frame behavior |
-| [Previous Frame Guide] | Why interaction uses last-frame layout, when `Response.rect` is zero, frame-1 correctness |
-| [Terminal Compatibility] | Terminal/multiplexer/SSH support matrix, env vars, fallbacks |
-| [AI Guide] | Fastest path for AI-assisted builders and coding agents |
-| [Architecture Guide] | Module map, frame lifecycle, layout/render pipeline |
 | [Features Guide] | Feature flags, optional dependencies, recommended combos |
-| [Animation Guide] | Tween, spring, keyframes, sequence, stagger |
-| [Theming Guide] | Theme struct, presets, ThemeBuilder, custom themes |
-| [Design Principles] | API constraints and design philosophy |
-| [API Design] | Five consistency rules for new widgets and PR review checklist |
+| [Migration Guide] | Version-by-version breaking changes and upgrade paths |
+| [Debugging Guide] | F12 overlay, clipping, focus surprises |
+| [AI Guide] | Fastest path for AI-assisted builders and coding agents |
+
+Contributors: [Design Principles] (API rules and naming), [Architecture Guide]
+(module map, frame lifecycle) and [Performance Guide] (budgets and benchmarks).
 
 ## Representative Examples
 
@@ -317,8 +337,8 @@ For composition advice, see [Patterns Guide].
 | `text_tour` | `cargo run --example text_tour` | CJK rendering, IME input, Pretext reflow, cargo-style CLI |
 | `canvas_tour` | `cargo run --example canvas_tour` | DOOM fire, games (tetris/snake/minesweeper), raw draw, Kitty images, animation |
 | `system_tour` | `cargo run --example system_tour --features async` | Live error boundary and overlay anchor tabs; async and inline modes described as code |
-| `v020_tour` | `cargo run --example v020_tour` | v0.20 API feature tour, including static output (`run_static`) |
-| `v0211_tour` | `cargo run --example v0211_tour` | v0.21.1 API additions |
+| `widgets_tour` | `cargo run --example widgets_tour` | Hooks, theming, modal focus traps, layout helpers, and static output (`run_static`) |
+| `interaction_tour` | `cargo run --example interaction_tour` | Click / double-click / scroll `Response` signals, `KeyMap`, focus traversal |
 
 The full categorized index — including per-release feature tours and showcase demos — lives in [Examples Guide].
 
@@ -364,27 +384,29 @@ The release process expects format, check, clippy, tests, examples, and backend 
 [Crate]: https://crates.io/crates/superlighttui
 [Docs Index]: docs/README.md
 [Docs]: https://docs.rs/superlighttui
-[Backends Guide]: docs/BACKENDS.md
-[Testing Guide]: docs/TESTING.md
-[Debugging Guide]: docs/DEBUGGING.md
-[AI Guide]: docs/AI_GUIDE.md
-[Quick Start]: docs/QUICK_START.md
-[Widget Guide]: docs/WIDGETS.md
-[State API Guide]: docs/STATE_APIS.md
-[Migration Guide]: docs/MIGRATION.md
-[Examples Guide]: docs/EXAMPLES.md
-[Patterns Guide]: docs/PATTERNS.md
-[Architecture Guide]: docs/ARCHITECTURE.md
-[Design Principles]: docs/DESIGN_PRINCIPLES.md
-[API Design]: docs/API_DESIGN.md
-[Animation Guide]: docs/ANIMATION.md
-[Theming Guide]: docs/THEMING.md
-[Features Guide]: docs/FEATURES.md
-[Cookbook]: docs/COOKBOOK.md
-[Previous Frame Guide]: docs/PREVIOUS_FRAME_GUIDE.md
-[Positioning Guide]: docs/POSITIONING.md
-[Web Developers Guide]: docs/WEB_DEVELOPERS.md
-[Interaction Guide]: docs/INTERACTION.md
-[Terminal Compatibility]: docs/TERMINAL_COMPATIBILITY.md
+[Quick Start]: docs/guide/01-quick-start.md
+[State Guide]: docs/guide/02-state.md
+[Patterns Guide]: docs/guide/03-patterns.md
+[Interaction Guide]: docs/guide/04-interaction.md
+[Overlays Guide]: docs/guide/05-overlays.md
+[Theming Guide]: docs/guide/06-theming.md
+[Animation Guide]: docs/guide/07-animation.md
+[Testing Guide]: docs/guide/08-testing.md
+[Runtime Modes Guide]: docs/guide/09-runtime-modes.md
+[Browser Guide]: docs/guide/10-browser.md
+[Terminal Compatibility]: docs/guide/11-terminal-compatibility.md
+[Web Developers Guide]: docs/coming-from/web.md
+[Ratatui Guide]: docs/coming-from/ratatui.md
+[Widget Guide]: docs/reference/widgets.md
+[State API Guide]: docs/reference/state.md
+[Cookbook]: docs/reference/cookbook.md
+[Examples Guide]: docs/reference/examples.md
+[Features Guide]: docs/reference/features.md
+[Migration Guide]: docs/reference/migration.md
+[Debugging Guide]: docs/reference/debugging.md
+[AI Guide]: docs/reference/ai-guide.md
+[Design Principles]: docs/internals/design-principles.md
+[Architecture Guide]: docs/internals/architecture.md
+[Performance Guide]: docs/internals/performance.md
 [Contributing]: CONTRIBUTING.md
 [License]: ./LICENSE

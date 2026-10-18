@@ -10,43 +10,6 @@ fn saturating_overlap(overlap: u32) -> i32 {
     -saturating_gap(overlap)
 }
 
-/// Options for [`Context::modal_with`].
-///
-/// Controls focus behavior when a modal overlay is active.
-///
-/// # Example
-///
-/// ```no_run
-/// # let mut show = true;
-/// # slt::run(|ui: &mut slt::Context| {
-/// if show {
-///     ui.modal_with(slt::context::ModalOptions { tab_trap: true }, |ui| {
-///         ui.text("Are you sure?");
-///         if ui.button("OK").clicked { show = false; }
-///     });
-/// }
-/// # });
-/// ```
-#[derive(Debug, Clone, Copy)]
-pub struct ModalOptions {
-    /// When `true`, Tab/Shift+Tab navigation cannot leave the modal's focus
-    /// range, even if [`Context::set_focus_index`] or a mouse click moved
-    /// focus outside.
-    ///
-    /// Default: `true` — aligned with WCAG 2.1 SC 2.4.3 (Focus Order),
-    /// which recommends trapping focus inside modal dialogs.
-    ///
-    /// Set to `false` to preserve the legacy behavior where focus could
-    /// escape via programmatic means.
-    pub tab_trap: bool,
-}
-
-impl Default for ModalOptions {
-    fn default() -> Self {
-        Self { tab_trap: true }
-    }
-}
-
 /// Fluent builder for configuring containers before calling `.col()` or `.row()`.
 ///
 /// Obtain one via [`Context::container`] or [`Context::bordered`]. Chain the
@@ -122,6 +85,13 @@ pub struct ContainerBuilder<'a> {
     pub(crate) scroll_follow_focus: Option<bool>,
     pub(crate) scroll_state_id: u64,
     pub(crate) theme_override: Option<Theme>,
+    /// Hit-test flags for this container's slot (#439), e.g. `bubble_clicks`.
+    pub(crate) pointer_flags: u8,
+    /// Mouse pointer shape while this container is hovered (#452).
+    pub(crate) pointer_shape: Option<crate::PointerShape>,
+    /// Element-level `:hover` / `:focus` / `:focus-within` / `:active`
+    /// styles (#458).
+    pub(crate) state_styles: StateStyles,
 }
 
 /// A colored pixel in the canvas grid.
@@ -678,7 +648,7 @@ impl CanvasContext {
                     if col >= cols {
                         break;
                     }
-                    let width = UnicodeWidthStr::width(grapheme).max(1);
+                    let width = crate::width::str_width(grapheme).max(1);
                     if width > cols - col {
                         break;
                     }
@@ -748,7 +718,7 @@ impl CanvasContext {
 }
 
 #[cfg(test)]
-mod v024_canvas_tests {
+mod canvas_budget_tests {
     use super::*;
 
     #[test]
@@ -966,6 +936,27 @@ impl<'a> ContainerBuilder<'a> {
             let color = self.ctx.theme.resolve(tc);
             self.border_style = Style::new().fg(color);
         }
+        let states = &mut self.state_styles;
+        for (slot, value) in [
+            (&mut states.hover_bg, style.hover_bg),
+            (&mut states.hover_fg, style.hover_fg),
+            (&mut states.hover_border_fg, style.hover_border_fg),
+            (&mut states.focus_bg, style.focus_bg),
+            (&mut states.focus_fg, style.focus_fg),
+            (&mut states.focus_border_fg, style.focus_border_fg),
+            (&mut states.focus_within_bg, style.focus_within_bg),
+            (
+                &mut states.focus_within_border_fg,
+                style.focus_within_border_fg,
+            ),
+            (&mut states.active_bg, style.active_bg),
+            (&mut states.active_fg, style.active_fg),
+            (&mut states.active_border_fg, style.active_border_fg),
+        ] {
+            if value.is_some() {
+                *slot = value;
+            }
+        }
         self
     }
 
@@ -1061,21 +1052,173 @@ impl<'a> ContainerBuilder<'a> {
         self
     }
 
+    /// Set the default foreground (text) color for child text elements.
+    ///
+    /// Same as [`text_color`](Self::text_color), spelled like
+    /// [`Text::fg`](crate::Text::fg) and the CSS-style `bg`/`fg` pair.
+    /// Individual `.fg()` calls on text elements still override it.
+    pub fn fg(self, color: Color) -> Self {
+        self.text_color(color)
+    }
+
     /// Background color used when dark mode is active.
     pub fn dark_bg(mut self, color: Color) -> Self {
         self.dark_bg = Some(color);
         self
     }
 
-    /// Background color applied when the parent group is hovered.
+    /// Background color applied while the pointer is over the enclosing
+    /// [`group`](Context::group) container (or this container, when it is the
+    /// group).
+    ///
+    /// This matches the hovered group *instance*: rows built in a
+    /// loop with the same group name highlight one at a time. It does not
+    /// fire on keyboard focus; use [`focus_within_bg`](Self::focus_within_bg)
+    /// on the group container for that. For hover styling of this container
+    /// alone, [`hover_bg`](Self::hover_bg) needs no group name at all.
     pub fn group_hover_bg(mut self, color: Color) -> Self {
         self.group_hover_bg = Some(color);
         self
     }
 
-    /// Border style applied when the parent group is hovered.
+    /// Border style applied while the pointer is over the enclosing group
+    /// instance. See [`group_hover_bg`](Self::group_hover_bg).
     pub fn group_hover_border_style(mut self, style: Style) -> Self {
         self.group_hover_border_style = Some(style);
+        self
+    }
+
+    // ── interactive states (CSS pseudo-classes, #458) ────────────────
+
+    /// Background while the pointer is over this container (CSS `:hover`).
+    ///
+    /// Resolved from this container's own rect in the previous frame, so the
+    /// same code in a loop styles each row independently. Pointer motion is
+    /// reported with [`MouseMode::Hover`](crate::MouseMode::Hover). State
+    /// precedence, lowest first: `hover`, `focus_within`, `focus`, `active`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::{Color, EventBuilder, TestBackend};
+    ///
+    /// let mut tb = TestBackend::new(20, 2);
+    /// let rows = |ui: &mut slt::Context| {
+    ///     for label in ["one", "two"] {
+    ///         let _ = ui.container().hover_bg(Color::Blue).row(|ui| {
+    ///             ui.text(label);
+    ///         });
+    ///     }
+    /// };
+    /// tb.render(rows);
+    /// tb.run_with_events(EventBuilder::new().mouse_move(1, 0).build(), rows);
+    /// assert_eq!(tb.buffer().get(0, 0).style.bg, Some(Color::Blue));
+    /// assert_eq!(tb.buffer().get(0, 1).style.bg, None);
+    /// ```
+    pub fn hover_bg(mut self, color: Color) -> Self {
+        self.state_styles.hover_bg = Some(color);
+        self
+    }
+
+    /// Default text color for children while hovered (CSS `:hover { color }`).
+    /// Explicit text colors on children still win.
+    pub fn hover_fg(mut self, color: Color) -> Self {
+        self.state_styles.hover_fg = Some(color);
+        self
+    }
+
+    /// Border color while hovered.
+    pub fn hover_border_fg(mut self, color: Color) -> Self {
+        self.state_styles.hover_border_fg = Some(color);
+        self
+    }
+
+    /// Background while this container is the focused slot (CSS `:focus`):
+    /// the focusable registered right before it, e.g. with
+    /// [`register_focusable`](Context::register_focusable), holds focus.
+    ///
+    /// Focus never triggers [`hover_bg`](Self::hover_bg) and the pointer never
+    /// triggers `focus_bg`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::{Color, TestBackend};
+    ///
+    /// let mut tb = TestBackend::new(20, 2);
+    /// tb.render(|ui| {
+    ///     let _ = ui.register_focusable();
+    ///     let _ = ui.container().focus_bg(Color::Blue).row(|ui| {
+    ///         ui.text("card");
+    ///     });
+    /// });
+    /// assert_eq!(tb.buffer().get(0, 0).style.bg, Some(Color::Blue));
+    /// ```
+    pub fn focus_bg(mut self, color: Color) -> Self {
+        self.state_styles.focus_bg = Some(color);
+        self
+    }
+
+    /// Default text color for children while this container is focused.
+    pub fn focus_fg(mut self, color: Color) -> Self {
+        self.state_styles.focus_fg = Some(color);
+        self
+    }
+
+    /// Border color while this container is focused.
+    pub fn focus_border_fg(mut self, color: Color) -> Self {
+        self.state_styles.focus_border_fg = Some(color);
+        self
+    }
+
+    /// Background while focus is inside this container: on itself or on any
+    /// widget rendered in its closure (CSS `:focus-within`).
+    pub fn focus_within_bg(mut self, color: Color) -> Self {
+        self.state_styles.focus_within_bg = Some(color);
+        self
+    }
+
+    /// Border color while focus is inside this container (CSS
+    /// `:focus-within`), e.g. to outline a form section being edited.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::{Border, Color, TestBackend, widgets::TextInputState};
+    ///
+    /// let mut name = TextInputState::new();
+    /// let mut tb = TestBackend::new(30, 5);
+    /// tb.render(|ui| {
+    ///     let _ = ui
+    ///         .bordered(Border::Rounded)
+    ///         .focus_within_border_fg(Color::Cyan)
+    ///         .col(|ui| {
+    ///             let _ = ui.text_input(&mut name);
+    ///         });
+    /// });
+    /// assert_eq!(tb.buffer().get(0, 0).style.fg, Some(Color::Cyan));
+    /// ```
+    pub fn focus_within_border_fg(mut self, color: Color) -> Self {
+        self.state_styles.focus_within_border_fg = Some(color);
+        self
+    }
+
+    /// Background while the left mouse button is held after pressing this
+    /// container, until it is released (CSS `:active`).
+    pub fn active_bg(mut self, color: Color) -> Self {
+        self.state_styles.active_bg = Some(color);
+        self
+    }
+
+    /// Default text color for children while pressed (CSS `:active`).
+    pub fn active_fg(mut self, color: Color) -> Self {
+        self.state_styles.active_fg = Some(color);
+        self
+    }
+
+    /// Border color while pressed (CSS `:active`).
+    pub fn active_border_fg(mut self, color: Color) -> Self {
+        self.state_styles.active_border_fg = Some(color);
         self
     }
 
@@ -1085,12 +1228,6 @@ impl<'a> ContainerBuilder<'a> {
     pub fn p(mut self, value: u32) -> Self {
         self.padding = Padding::all(value);
         self
-    }
-
-    /// Set uniform padding on all sides. Deprecated alias for [`p`](Self::p).
-    #[deprecated(since = "0.20.0", note = "Use `p()` instead")]
-    pub fn pad(self, value: u32) -> Self {
-        self.p(value)
     }
 
     /// Set horizontal padding (left and right).
@@ -1232,7 +1369,7 @@ impl<'a> ContainerBuilder<'a> {
         at = h_at => ["Height applied only at the given breakpoint."]
     );
 
-    /// Set the minimum width constraint. Shorthand for [`min_width`](Self::min_width).
+    /// Set the minimum width constraint.
     pub fn min_w(mut self, value: u32) -> Self {
         self.constraints.set_min_width(Some(value));
         self
@@ -1249,7 +1386,7 @@ impl<'a> ContainerBuilder<'a> {
         at = min_w_at => ["Minimum width applied only at the given breakpoint."]
     );
 
-    /// Set the maximum width constraint. Shorthand for [`max_width`](Self::max_width).
+    /// Set the maximum width constraint.
     pub fn max_w(mut self, value: u32) -> Self {
         self.constraints.set_max_width(Some(value));
         self
@@ -1266,7 +1403,7 @@ impl<'a> ContainerBuilder<'a> {
         at = max_w_at => ["Maximum width applied only at the given breakpoint."]
     );
 
-    /// Set the minimum height constraint. Shorthand for [`min_height`](Self::min_height).
+    /// Set the minimum height constraint.
     pub fn min_h(mut self, value: u32) -> Self {
         self.constraints.set_min_height(Some(value));
         self
@@ -1283,7 +1420,7 @@ impl<'a> ContainerBuilder<'a> {
         at = min_h_at => ["Minimum height applied only at the given breakpoint."]
     );
 
-    /// Set the maximum height constraint. Shorthand for [`max_height`](Self::max_height).
+    /// Set the maximum height constraint.
     pub fn max_h(mut self, value: u32) -> Self {
         self.constraints.set_max_height(Some(value));
         self
@@ -1300,30 +1437,6 @@ impl<'a> ContainerBuilder<'a> {
         at = max_h_at => ["Maximum height applied only at the given breakpoint."]
     );
 
-    /// Set the minimum width constraint in cells. Deprecated alias for [`min_w`](Self::min_w).
-    #[deprecated(since = "0.20.0", note = "Use `min_w()` instead")]
-    pub fn min_width(self, value: u32) -> Self {
-        self.min_w(value)
-    }
-
-    /// Set the maximum width constraint in cells. Deprecated alias for [`max_w`](Self::max_w).
-    #[deprecated(since = "0.20.0", note = "Use `max_w()` instead")]
-    pub fn max_width(self, value: u32) -> Self {
-        self.max_w(value)
-    }
-
-    /// Set the minimum height constraint in rows. Deprecated alias for [`min_h`](Self::min_h).
-    #[deprecated(since = "0.20.0", note = "Use `min_h()` instead")]
-    pub fn min_height(self, value: u32) -> Self {
-        self.min_h(value)
-    }
-
-    /// Set the maximum height constraint in rows. Deprecated alias for [`max_h`](Self::max_h).
-    #[deprecated(since = "0.20.0", note = "Use `max_h()` instead")]
-    pub fn max_height(self, value: u32) -> Self {
-        self.max_h(value)
-    }
-
     /// Set width as a percentage (1-100) of the parent container.
     pub fn w_pct(mut self, pct: u8) -> Self {
         self.constraints.set_width_pct(Some(pct.min(100)));
@@ -1333,6 +1446,32 @@ impl<'a> ContainerBuilder<'a> {
     /// Set height as a percentage (1-100) of the parent container.
     pub fn h_pct(mut self, pct: u8) -> Self {
         self.constraints.set_height_pct(Some(pct.min(100)));
+        self
+    }
+
+    /// Set width as the fraction `num / den` of the parent container.
+    ///
+    /// Same as [`Constraints::w_ratio`]: `w_ratio(1, 3)` resolves to
+    /// `parent_width / 3` (floor division).
+    ///
+    /// ```
+    /// # use slt::*;
+    /// # TestBackend::new(30, 3).render(|ui| {
+    /// ui.container().w_ratio(1, 3).fg(Color::Red).col(|ui| {
+    ///     ui.text("one third");
+    /// });
+    /// # });
+    /// ```
+    pub fn w_ratio(mut self, num: u16, den: u16) -> Self {
+        self.constraints = self.constraints.w_ratio(num, den);
+        self
+    }
+
+    /// Set height as the fraction `num / den` of the parent container.
+    ///
+    /// Same as [`Constraints::h_ratio`] (floor division).
+    pub fn h_ratio(mut self, num: u16, den: u16) -> Self {
+        self.constraints = self.constraints.h_ratio(num, den);
         self
     }
 
@@ -1773,7 +1912,7 @@ impl<'a> ContainerBuilder<'a> {
     /// reversible* half: a measured, author-keyed stability gate plus
     /// diagnostics. The streaming benchmark `bench_streaming_append_chat`
     /// (`benches/benchmarks.rs`) quantifies the upstream cost this gate is
-    /// designed to eventually elide; see `docs/PERFORMANCE.md`.
+    /// designed to eventually elide; see `docs/internals/performance.md`.
     ///
     /// # Pattern: cache the chrome, not the stream
     ///
@@ -1964,7 +2103,7 @@ impl<'a> ContainerBuilder<'a> {
                         continue;
                     }
                     let symbol = cell.normalized_symbol();
-                    if UnicodeWidthStr::width(symbol.as_str()) as u32 > copy_width - dx {
+                    if crate::width::str_width(symbol.as_str()) as u32 > copy_width - dx {
                         continue;
                     }
                     let x = rect.x.saturating_add(dx);
@@ -2051,8 +2190,40 @@ impl<'a> ContainerBuilder<'a> {
         self.ctx.response_for(interaction_id)
     }
 
-    fn finish(mut self, direction: Direction, f: impl FnOnce(&mut Context)) -> Response {
+    fn finish(self, direction: Direction, f: impl FnOnce(&mut Context)) -> Response {
+        // Binary size (#491): only this shim is monomorphized per closure; the
+        // container body below exists once instead of being copied into every
+        // `.col(..)` / `.row(..)` call site (122 copies, ~520 KB in `demo`).
+        let mut f = Some(f);
+        self.finish_dyn(direction, &mut |ui: &mut Context| {
+            if let Some(f) = f.take() {
+                f(ui);
+            }
+        })
+    }
+
+    fn finish_dyn(mut self, direction: Direction, f: &mut dyn FnMut(&mut Context)) -> Response {
+        // A group container is identified by its name for pointer capture,
+        // unless a keyed focusable registered right before claims the slot.
+        if self.ctx.pointer.pending_key.is_none()
+            && let Some(name) = self.group_name.as_deref()
+        {
+            self.ctx.pointer.pending_key =
+                Some(crate::runtime::hashed_focus_key(("slt-group", name)));
+        }
+        // #458 `:focus`: the focusable registered right before this container
+        // (its focus marker attaches to this node) is the focused slot.
+        let focused_self = match self.ctx.commands.last() {
+            Some(Command::FocusMarker(id)) => self.ctx.rollback.focused_widget_id == Some(*id),
+            _ => false,
+        };
         let interaction_id = self.ctx.next_interaction_id();
+        self.ctx.mark_pointer_flags(
+            interaction_id,
+            self.pointer_flags,
+            self.scroll_state_id,
+            self.pointer_shape,
+        );
         // `row_gap` / `col_gap` are `Option<u32>` (positive override); fall back
         // to the signed builder `gap`, which alone can carry an overlap (#222).
         let resolved_gap: i32 = match direction {
@@ -2064,30 +2235,32 @@ impl<'a> ContainerBuilder<'a> {
         // when this container is a wrapping `Direction::Row`.
         let resolved_cross_gap: i32 = self.row_gap.map(saturating_gap).unwrap_or(self.gap);
 
-        let in_hovered_group = self
-            .group_name
-            .as_ref()
-            .map(|name| self.ctx.is_group_hovered(name))
-            .unwrap_or(false)
-            || self
-                .ctx
+        let group_name = self.group_name.take();
+        let is_group_container = group_name.is_some();
+        let states = self.state_styles;
+        // #458: hover and `:active` come from this element's own slot (its
+        // previous-frame rect and the pointer capture), not from a name, so
+        // rows that share a group name highlight independently.
+        let (hovered, active) = if states.uses_pointer() || is_group_container {
+            (
+                self.ctx.response_for(interaction_id).hovered,
+                states.uses_active() && self.ctx.slot_active(interaction_id),
+            )
+        } else {
+            (false, false)
+        };
+        let in_hovered_group = if is_group_container {
+            hovered
+        } else if self.ctx.rollback.group_stack.is_empty() {
+            false
+        } else {
+            self.ctx
                 .rollback
-                .group_stack
+                .group_hover_stack
                 .last()
-                .map(|name| self.ctx.is_group_hovered(name))
-                .unwrap_or(false);
-        let in_focused_group = self
-            .group_name
-            .as_ref()
-            .map(|name| self.ctx.is_group_focused(name))
-            .unwrap_or(false)
-            || self
-                .ctx
-                .rollback
-                .group_stack
-                .last()
-                .map(|name| self.ctx.is_group_focused(name))
-                .unwrap_or(false);
+                .copied()
+                .unwrap_or(false)
+        };
 
         let resolved_bg = if self.ctx.rollback.dark_mode {
             self.dark_bg.or(self.bg)
@@ -2099,19 +2272,32 @@ impl<'a> ContainerBuilder<'a> {
         } else {
             self.border_style
         };
-        let bg_color = if in_hovered_group || in_focused_group {
+        // `group_hover_*` fires on hover of the enclosing group instance only;
+        // focus styling is separate (`focus_within_*`, #458).
+        let group_bg = if in_hovered_group {
             self.group_hover_bg.or(resolved_bg)
         } else {
             resolved_bg
         };
-        let border_style = if in_hovered_group || in_focused_group {
+        let group_border_style = if in_hovered_group {
             self.group_hover_border_style
                 .unwrap_or(resolved_border_style)
         } else {
             resolved_border_style
         };
-        let group_name = self.group_name.take();
-        let is_group_container = group_name.is_some();
+        let pre_closure = StateFlags {
+            hovered,
+            focus_within: focused_self,
+            focused: focused_self,
+            active,
+        };
+        let (bg_color, border_style, text_color) =
+            states.resolve(pre_closure, group_bg, group_border_style, self.text_color);
+        self.text_color = text_color;
+        if is_group_container {
+            self.ctx.rollback.group_hover_stack.push(hovered);
+        }
+        let focus_start = self.ctx.rollback.focus_count;
 
         // Opt-in flex-shrink (#161). Push a marker the layout pass picks up
         // and applies to the next `BeginContainer` / `BeginScrollable`,
@@ -2136,6 +2322,7 @@ impl<'a> ContainerBuilder<'a> {
             self.ctx.commands.push(Command::BasisMarker(basis));
         }
 
+        let begin_index = self.ctx.commands.len();
         if let Some(scroll_offset) = self.scroll_offset {
             // #247: carry the finalizing `.row()` / `.col()` direction and both
             // axis offsets. The tree builder applies the offset matching
@@ -2143,7 +2330,7 @@ impl<'a> ContainerBuilder<'a> {
             // scroller (the common case).
             self.ctx
                 .commands
-                .push(Command::BeginScrollable(Box::new(BeginScrollableArgs {
+                .push(Command::BeginScrollable(BeginScrollableArgs {
                     grow: self.grow,
                     direction,
                     border: self.border,
@@ -2157,17 +2344,17 @@ impl<'a> ContainerBuilder<'a> {
                     padding: self.padding,
                     margin: self.margin,
                     constraints: self.constraints,
-                    title: self.title,
+                    title: self.title.map(Box::new),
                     scroll_offset,
                     scroll_offset_x: self.scroll_offset_x.unwrap_or(0),
                     scroll_follow_focus: self.scroll_follow_focus,
                     scroll_state_id: self.scroll_state_id,
                     group_name,
-                })));
+                }));
         } else {
             self.ctx
                 .commands
-                .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                .push(Command::BeginContainer(BeginContainerArgs {
                     direction,
                     gap: resolved_gap,
                     align: self.align,
@@ -2180,10 +2367,10 @@ impl<'a> ContainerBuilder<'a> {
                     padding: self.padding,
                     margin: self.margin,
                     constraints: self.constraints,
-                    title: self.title,
+                    title: self.title.map(Box::new),
                     grow: self.grow,
                     group_name,
-                })));
+                }));
         }
         self.ctx.rollback.text_color_stack.push(self.text_color);
         // Swap active theme if a per-subtree override was requested.
@@ -2212,8 +2399,38 @@ impl<'a> ContainerBuilder<'a> {
             std::panic::resume_unwind(panic);
         }
 
+        // #458 `:focus-within`: known only once the children registered their
+        // focus slots, so the already-recorded container is restyled in place.
+        if states.uses_focus_within() && !focused_self {
+            let focus_end = self.ctx.rollback.focus_count;
+            let within = self
+                .ctx
+                .rollback
+                .focused_widget_id
+                .is_some_and(|id| id >= focus_start && id < focus_end);
+            if within {
+                let flags = StateFlags {
+                    focus_within: true,
+                    ..pre_closure
+                };
+                let (bg, border, _) = states.resolve(flags, group_bg, group_border_style, None);
+                match self.ctx.commands.get_mut(begin_index) {
+                    Some(Command::BeginContainer(args)) => {
+                        args.bg_color = bg;
+                        args.border_style = border;
+                    }
+                    Some(Command::BeginScrollable(args)) => {
+                        args.bg_color = bg;
+                        args.border_style = border;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         if is_group_container {
             self.ctx.rollback.group_stack.pop();
+            self.ctx.rollback.group_hover_stack.pop();
             self.ctx.rollback.group_count = self.ctx.rollback.group_count.saturating_sub(1);
         }
 
@@ -2221,9 +2438,183 @@ impl<'a> ContainerBuilder<'a> {
     }
 }
 
+impl Context {
+    /// Render `f` with every widget inside disabled when `disabled` is
+    /// `true` (HTML `<fieldset disabled>` / the `disabled` attribute).
+    ///
+    /// Disabled widgets:
+    ///
+    /// - keep their focus slot, so the focus index of later widgets does not
+    ///   change when `disabled` toggles, but `Tab`, `Shift+Tab` and clicks
+    ///   skip them and they never report `focused`;
+    /// - ignore clicks, `Enter` / `Space` and typing, and report no `hovered`,
+    ///   `clicked` or `changed` — only [`Response::rect`] and
+    ///   [`Response::disabled`] are set;
+    /// - render with the theme's `text_dim` color (text and borders).
+    ///
+    /// This works for built-in widgets (`button`, `checkbox`, `toggle`,
+    /// `select`, `radio`, `tabs`, `text_input`, `textarea`, `slider`,
+    /// `list`, ...) and for custom widgets built on
+    /// [`register_focusable`](Self::register_focusable) /
+    /// [`interaction`](Self::interaction). Nested scopes cannot re-enable:
+    /// `disabled(false, ..)` inside `disabled(true, ..)` stays disabled.
+    /// Returns what `f` returns.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::{EventBuilder, KeyCode, TestBackend};
+    ///
+    /// let form_valid = false;
+    /// let mut submitted = false;
+    /// let mut tb = TestBackend::new(30, 3);
+    /// tb.run_with_events(EventBuilder::new().key_code(KeyCode::Enter).build(), |ui| {
+    ///     let submit = ui.disabled(!form_valid, |ui| ui.button("Submit").show());
+    ///     assert!(submit.disabled);
+    ///     submitted |= submit.clicked;
+    /// });
+    /// assert!(!submitted, "a disabled button ignores Enter");
+    /// ```
+    pub fn disabled<R>(&mut self, disabled: bool, f: impl FnOnce(&mut Context) -> R) -> R {
+        if !disabled {
+            return f(self);
+        }
+        let start = self.commands.len();
+        self.rollback.disabled_depth += 1;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self)));
+        self.rollback.disabled_depth = self.rollback.disabled_depth.saturating_sub(1);
+        let out = match result {
+            Ok(out) => out,
+            Err(panic) => std::panic::resume_unwind(panic),
+        };
+        let dim = self.theme.text_dim;
+        for command in &mut self.commands[start..] {
+            match command {
+                Command::Text { style, .. } | Command::Link { style, .. } => style.fg = Some(dim),
+                Command::RichText { segments, .. } => {
+                    for (_, style) in segments {
+                        style.fg = Some(dim);
+                    }
+                }
+                Command::BeginContainer(args) if args.border.is_some() => {
+                    args.border_style.fg = Some(dim);
+                }
+                Command::BeginScrollable(args) if args.border.is_some() => {
+                    args.border_style.fg = Some(dim);
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// Whether widgets rendered now are inside a [`disabled`](Self::disabled)
+    /// scope. Use it in custom widgets to skip input handling.
+    pub fn is_disabled(&self) -> bool {
+        self.rollback.disabled_depth > 0
+    }
+}
+
+/// Which interactive states apply to a container this frame (#458).
+#[derive(Debug, Clone, Copy, Default)]
+struct StateFlags {
+    hovered: bool,
+    focus_within: bool,
+    focused: bool,
+    active: bool,
+}
+
+/// Element-level state styles set on a [`ContainerBuilder`] (#458): the
+/// CSS `:hover`, `:focus`, `:focus-within` and `:active` pseudo-classes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct StateStyles {
+    pub(crate) hover_bg: Option<Color>,
+    pub(crate) hover_fg: Option<Color>,
+    pub(crate) hover_border_fg: Option<Color>,
+    pub(crate) focus_bg: Option<Color>,
+    pub(crate) focus_fg: Option<Color>,
+    pub(crate) focus_border_fg: Option<Color>,
+    pub(crate) focus_within_bg: Option<Color>,
+    pub(crate) focus_within_border_fg: Option<Color>,
+    pub(crate) active_bg: Option<Color>,
+    pub(crate) active_fg: Option<Color>,
+    pub(crate) active_border_fg: Option<Color>,
+}
+
+impl StateStyles {
+    fn uses_hover(&self) -> bool {
+        self.hover_bg.is_some() || self.hover_fg.is_some() || self.hover_border_fg.is_some()
+    }
+
+    fn uses_active(&self) -> bool {
+        self.active_bg.is_some() || self.active_fg.is_some() || self.active_border_fg.is_some()
+    }
+
+    fn uses_pointer(&self) -> bool {
+        self.uses_hover() || self.uses_active()
+    }
+
+    fn uses_focus_within(&self) -> bool {
+        self.focus_within_bg.is_some() || self.focus_within_border_fg.is_some()
+    }
+
+    /// Layer the state styles over the base values. Precedence, lowest
+    /// first: base, `:hover`, `:focus-within`, `:focus`, `:active`.
+    fn resolve(
+        &self,
+        flags: StateFlags,
+        bg: Option<Color>,
+        border: Style,
+        fg: Option<Color>,
+    ) -> (Option<Color>, Style, Option<Color>) {
+        let mut bg = bg;
+        let mut border = border;
+        let mut fg = fg;
+        let mut layer = |on: bool,
+                         layer_bg: Option<Color>,
+                         layer_fg: Option<Color>,
+                         layer_border: Option<Color>| {
+            if !on {
+                return;
+            }
+            bg = layer_bg.or(bg);
+            fg = layer_fg.or(fg);
+            if let Some(color) = layer_border {
+                border.fg = Some(color);
+            }
+        };
+        layer(
+            flags.hovered,
+            self.hover_bg,
+            self.hover_fg,
+            self.hover_border_fg,
+        );
+        layer(
+            flags.focus_within,
+            self.focus_within_bg,
+            None,
+            self.focus_within_border_fg,
+        );
+        layer(
+            flags.focused,
+            self.focus_bg,
+            self.focus_fg,
+            self.focus_border_fg,
+        );
+        layer(
+            flags.active,
+            self.active_bg,
+            self.active_fg,
+            self.active_border_fg,
+        );
+        (bg, border, fg)
+    }
+}
+
 #[cfg(test)]
-mod hotfix_tests {
-    //! Regression tests for v0.19.1 A3 hotfixes (issues #143, #144, #146, #149).
+mod canvas_geometry_tests {
+    //! Canvas shape rasterization, label width and raw-draw geometry guards
+    //! (issues #143, #144, #146, #149).
 
     use super::*;
 

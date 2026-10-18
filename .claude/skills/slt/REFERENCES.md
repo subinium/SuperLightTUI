@@ -1,6 +1,6 @@
 # SLT References
 
-Targets SLT v0.25.0.
+Targets SLT v0.26.0.
 
 Load this when the user asks about feature flags, version-specific APIs, or doc locations.
 
@@ -8,7 +8,7 @@ Load this when the user asks about feature flags, version-specific APIs, or doc 
 
 | Feature | Default? | Purpose | APIs / capabilities enabled |
 |---|---|---|---|
-| `crossterm` | yes | Terminal backend | `slt::run`, `slt::run_with`, `slt::run_inline`, `slt::run_static`, `detect_color_scheme`, `read_clipboard`. Mouse capture is off unless `RunConfig::default().mouse(true)` |
+| `crossterm` | yes | Terminal backend | `slt::run`, `slt::run_with`, `slt::run_inline`, `slt::run_static`, `detect_color_scheme`, `read_clipboard`. Mouse on by default (`MouseMode::Drag`, `Click` over SSH/mosh); hover needs `RunConfig::default().mouse_mode(MouseMode::Hover)` |
 | `bidi` | yes | UAX #9 text reordering | correct RTL and mixed-direction buffer rendering |
 | `async` | no | Tokio integration | `slt::run_async` (channel-based message pump) |
 | `serde` | no | Serialize/Deserialize | derives on `Style`, `Color`, `Theme`, layout types |
@@ -18,36 +18,37 @@ Load this when the user asks about feature flags, version-specific APIs, or doc 
 | `syntax-rust` / `syntax-python` / `syntax-javascript` / `syntax-typescript` / `syntax-go` / `syntax-bash` / `syntax-json` / `syntax-toml` / `syntax-c` / `syntax-cpp` / `syntax-java` / `syntax-ruby` / `syntax-css` / `syntax-html` / `syntax-yaml` | no | Per-language tree-sitter grammars | `ui.code_block(code, "rust")` etc. |
 | `syntax` | no | All `syntax-*` combined | every language above |
 | `kitty-compress` | no | zlib-compressed kitty protocol | larger images, smaller payloads |
+| `ratatui` | no | ratatui widget bridge (`ratatui-core` 0.1, no backend) | `ContainerBuilder::ratatui` / `ratatui_widget`, `From` conversions for `Color` / `Modifiers` / `Style`; not in `full` |
 | `full` | no | crossterm+async+serde+theme-watch+image+qrcode+kitty-compress+bidi | development / demos only; excludes syntax grammars |
 
 ## Runtime defaults that change behavior
 
-- **Mouse is opt-in.** `RunConfig::default()` has `mouse: false`. Without `slt::run_with(RunConfig::default().mouse(true), ...)`, `clicked` / `hovered` / `right_clicked` / `double_clicked` / `scroll_delta`, scrollbar drag and split-pane drag never fire in a real terminal.
-- **Global shortcuts go after inputs.** Render `text_input` / `textarea` before checking `ui.key('q')`, or gate on the input's `Response.focused`; otherwise typed characters also trigger shortcuts.
-- **`ui.modal` does not trap focus.** It keeps `tab_trap: false`; `modal_with(ModalOptions::default(), ..)` traps.
+- **Mouse is on by default, hover is opt-in.** `RunConfig::default()` resolves to `MouseMode::Drag` locally and `MouseMode::Click` over SSH/mosh, so `clicked` / `right_clicked` / `double_clicked` / `scroll_delta` and (locally) scrollbar and split-pane drags fire with plain `slt::run`. `hovered`, group hover and tooltips need `slt::run_with(RunConfig::default().mouse_mode(MouseMode::Hover), ...)`. `MouseMode::Off` keeps native terminal selection.
+- **Focused inputs own their keys.** `ui.key('q')` / `ui.shortcut(..)` skip the keys a focused `text_input` / `textarea` edits with, in any call order; use `ui.raw_key(c)` to see every press.
+- **`ui.modal` traps focus (since 0.26).** It equals `modal_with(ModalOpts::default(), ..)`; `ModalOpts::new().tab_trap(false)` opts out.
 - **`RunConfig::handle_ctrl_c(true)`** is the default; pass `false` to receive Ctrl-C yourself.
 
 ## v0.24 / v0.25 additions
 
 - `ScrollState::follow_focus: bool` (public field, default `true`) — scroll containers reveal the focused child, including nested axes and modal forms. Set `false` for app-controlled scrolling. `src/widgets/collections.rs`.
-- `Context::form_field_response(&mut FormField) -> FormFieldResponse` — `{ response, input, layout_rect: Option<Rect> }`, `Deref<Target = Response>`. `form_field` stays chainable. `src/context/widgets_display/layout.rs`, `src/widgets/responses.rs`.
+- `Context::form_field_response(&mut FormField) -> FormFieldResponse` — `{ response, input, layout_rect: Option<Rect> }`, `Deref<Target = Response>`. `form_field` stays chainable. `src/context/widgets/text_input.rs`, `src/widgets/text_input.rs`.
 - `Context::focused_layout_rect() -> Option<Rect>` and `Context::measured_layout_rect(name) -> Option<Rect>` — previous-frame full border box before scroll/clip. `Response.rect` stays the clipped hit rect. `src/context/helpers.rs`.
 - `TestBackend::has_pending_input()` / `AppState::has_pending_input()` — input queued behind a Tab group for the next frame.
 - `TestBackend::advance_time(Duration)` — deterministic headless clock (ticks now advance per frame).
 - `Context::try_canvas(w, h, draw) -> Result<Response, CanvasError>`, `Context::canvas_with(&mut CanvasContext, draw)` — bounded / reusable canvas storage.
-- Browser runtime: `crates/slt-wasm` with `WasmOptions`; see `docs/WASM.md`.
+- Browser runtime: `crates/slt-wasm` with `WasmOptions`; see `docs/guide/10-browser.md`.
 
 ## v0.20 API surface (highlights AI agents miss)
 
 These shipped in v0.20 and are NOT in older docs. Every entry verified against `src/`.
 
 ### Builders (Rule 1)
-- `ui.gauge(ratio: f64) -> Gauge<'_>` — `.label(s).width(n).color(c).show() -> GaugeResponse`. See `src/context/widgets_display/gauge.rs`.
-- `ui.line_gauge(ratio: f64) -> LineGauge<'_>` — `.label(s).filled(c).empty(c).width(n).show()`. See `src/context/widgets_display/gauge.rs`.
-- `ui.breadcrumb(&[&str]) -> Breadcrumb<'_>` — `.separator(s).color(c).show() -> BreadcrumbResponse`. See `src/context/widgets_display/status.rs`.
+- `ui.gauge(ratio: f64) -> Gauge<'_>` — `.label(s).width(n).color(c).show() -> GaugeResponse`. See `src/context/widgets/feedback/gauge.rs`.
+- `ui.line_gauge(ratio: f64) -> LineGauge<'_>` — `.label(s).filled(c).empty(c).width(n).show()`. See `src/context/widgets/feedback/gauge.rs`.
+- `ui.breadcrumb(&[&str]) -> Breadcrumb<'_>` — `.separator(s).color(c).show() -> BreadcrumbResponse`. See `src/context/widgets/display/status.rs`.
 
 ### Opts struct (Rule 3)
-- `ui.scrollable_with_gutter(&mut ScrollState, GutterOpts<G>, body)` — `widgets_display/gutter.rs:115`
+- `ui.scrollable_with_gutter(&mut ScrollState, GutterOpts<G>, body)` — `context/widgets/layout/gutter.rs:115`
 - `GutterOpts::line_numbers(total, viewport)` — 90% case smart constructor
 - `GutterOpts::new(total, viewport, |i| label)` — custom labels
 - `HighlightRange::line(i)` / `::span(start, len)` — replaces v0.19 `::single`
@@ -59,10 +60,10 @@ These shipped in v0.20 and are NOT in older docs. Every entry verified against `
 
 ### Hooks
 - `ui.use_state(\|\| init)` — order-based, see `src/context/runtime.rs`
-- `ui.use_state_named("id", \|\| init)` — `&'static str` + init fn (two args)
-- `ui.use_state_named_default::<T>("id")` — `&'static str`, `T: Default`
-- `ui.use_state_keyed("id-{i}", \|\| init)` — runtime `String`
-- `ui.use_state_keyed_default::<T>("id-{i}")` — runtime `String` + `T: Default`
+- `ui.use_state_keyed("id", \|\| init)` — `&'static str` or runtime `String` id, safe in `if`/loops
+- `ui.use_state_keyed_default::<T>("id")` — same, `T: Default`
+- `use_state_named*` — deprecated in 0.26; shares the keyed slot map
+- `StateHandle<T>` — alias of the `State<T>` hook handle; `use slt::prelude::*;` imports both
 - `ui.use_memo(&deps, \|d\| compute(d))` — cached compute
 - `ui.use_effect(\|d\| { ... }, &deps)` — side effect on deps change
 - `ui.provide(value, \|ui\| ...)` — typed scoped injection
@@ -87,7 +88,9 @@ These shipped in v0.20 and are NOT in older docs. Every entry verified against `
 ### Layout / DX (v0.20)
 - `ContainerBuilder::fill()` — equivalent to `.grow(1)`, more readable
 - `Rect::center_in(outer)`, `center_horizontally_in`, `center_vertically_in` — `src/rect.rs`
-- `Context::modal_with(slt::context::ModalOptions { tab_trap: true }, \|ui\| ...)` — focus-trapped modal (plain `modal` does not trap)
+- `Context::modal_with(slt::ModalOpts::new().anchor(Anchor::TopRight).offset(2, 1), \|ui\| ...)` — anchored, focus-trapped modal (plain `modal` traps too)
+- `Context::popover(rect, Placement::Below, \|ui\| ...)`, `context_menu(&mut MenuState, &resp)`, `menu_bar(&mut MenuBarState)` — anchored popovers and menus
+- `Context::disabled(cond, \|ui\| ...)` and `ContainerBuilder::{hover_bg, focus_bg, focus_within_border_fg, active_bg}` — disabled widgets and CSS-like state styles
 - `Context::static_log(...)` / `take_static_log()` — for `slt::run_static` scrollback
 
 ### Keymap (v0.20)
@@ -96,9 +99,20 @@ These shipped in v0.20 and are NOT in older docs. Every entry verified against `
 - `Context::keymap_help_overlay(open: bool)` — auto-rendered overlay
 - `RunConfig::handle_ctrl_c(bool)` — opt-out of auto Ctrl-C quit
 
+### Accessibility (v0.26)
+- `RunConfig::accessible(bool)` / `SLT_ACCESSIBLE=1` — linear prompt mode for screen readers (no screen takeover; widgets become sequential prompts). Explicit call wins over the env var
+- `ui.a11y_label("Email")` — accessible name of the next widget; `ui.is_accessible()` — hide visual-only hints
+- Details: `docs/guide/11-terminal-compatibility.md#accessibility`
+
+### Idle frame skipping (v0.26)
+- `RunConfig::idle_redraw(false)` — opt-in: idle ticks render no frame and write no bytes (default `true` redraws every tick)
+- `ui.request_frame()` / `ui.request_frame_after(Duration)` — ask for the next frame when showing the clock, cross-thread state or a hand-rolled `ui.tick()` animation; built-in animations, spinners, toasts, timers and tooltips request their own
+- Details: `docs/internals/performance.md#idle-cost`
+
 ### Testing (v0.20)
 - `TestBackend::new(w, h).record_frames()` + `tb.frames()[i]` — frame history
-- `tb.sequence().tick(\|ui\| ..).key(KeyCode::Esc, \|ui\| ..).type_string("hi", \|ui\| ..).run()` — every step takes its render closure
+- `tb.step(events, &mut app).press(KeyCode::Tab, &mut app).type_text("hi", &mut app)` (v0.26) — one `FnMut` over plain `&mut` state drives the sequence; focus is kept (as in `run_with_events`, which no longer resets it). `EventBuilder::hover(x, y)` for hover
+- `tb.sequence().tick(\|ui\| ..).key(KeyCode::Esc, \|ui\| ..).type_string("hi", \|ui\| ..).run()` — every step takes its own render closure
 - `Buffer::snapshot_format()` — readable snapshot dump
 - `tb.assert_not_contains(s)`, `assert_line_not_contains`, `assert_empty_line(y)`, `assert_style_at(x, y, style)`
 
@@ -121,33 +135,33 @@ These were either v0.19 preview or pre-1.0 mistakes consolidated by the v0.20 AP
 
 These docs are maintained for the current release, but source and compile-tested examples remain authoritative.
 
-- `docs/COMPLETE_REFERENCE.md` — broad single-file reference.
-- `docs/WIDGETS.md` — categorized widget and state reference.
-- `docs/STATE_APIS.md` — method-level state reference.
-- `docs/PREVIOUS_FRAME_GUIDE.md` — current. Read for `Response.rect` timing.
-- `docs/PATTERNS.md` — current. `provide`/`use_context`/`use_state_named`/`with_if` covered.
-- `docs/QUICK_START.md` — current.
-- `docs/COOKBOOK.md` — composition recipes; run through `cookbook_tour`.
-- `docs/THEMING.md` — current. `ThemeBuilder` `const fn` since v0.19.2.
-- `docs/TESTING.md` — covers v0.19.1 EventBuilder additions. Read alongside `tests/v020_test_utils_demo.rs` for v0.20 helpers.
-- `docs/ANIMATION.md` — current.
-- `docs/AI_GUIDE.md` — concise overview, current.
-- `docs/BACKENDS.md` — `Backend`, `AppState`, `frame()` low-level paths.
-- `docs/ARCHITECTURE.md` — render pipeline.
-- `docs/DEBUGGING.md` — F12 layout overlay, debug flags.
-- `docs/MIGRATION.md` — version-by-version public API migration guide.
+- `docs/reference/complete-reference.md` — broad single-file reference.
+- `docs/reference/widgets.md` — categorized widget and state reference.
+- `docs/reference/state.md` — method-level state reference.
+- `docs/guide/02-state.md` — current. App state vs hooks, and the previous-frame rule (`Response.rect` timing).
+- `docs/guide/03-patterns.md` — current. `provide`/`use_context`/`use_state_keyed`/`with_if` covered.
+
+- `docs/guide/01-quick-start.md` — current.
+- `docs/reference/cookbook.md` — composition recipes; run through `cookbook_tour`.
+- `docs/guide/06-theming.md` — current. `ThemeBuilder` `const fn` since v0.19.2.
+- `docs/guide/08-testing.md` — covers v0.19.1 EventBuilder additions. Read alongside `tests/example_snapshots/testing_report.rs` for the `record_frames` / `sequence` helpers.
+- `docs/guide/07-animation.md` — current.
+- `docs/reference/ai-guide.md` — concise overview, current.
+- `docs/guide/09-runtime-modes.md` — `run` / `run_inline` / `run_static` and `RunConfig`.
+- `docs/internals/custom-backends.md` — `Backend`, `AppState`, `frame()` low-level paths.
+- `docs/internals/architecture.md` — render pipeline.
+- `docs/reference/debugging.md` — F12 layout overlay, debug flags.
+- `docs/reference/migration.md` — version-by-version public API migration guide.
 - `docs/llms.txt` — short coding-agent index.
-- `docs/RUSTDOC_GUIDE.md` — current. Doctest standards.
-- `docs/NAMING.md` — current. The micro-tier rubric this skill encodes.
-- `docs/API_DESIGN.md` — current. The 5 rules this skill encodes.
-- `docs/DESIGN_PRINCIPLES.md` — current. North-star + audit matrix.
+- `docs/internals/rustdoc-guide.md` — current. Doctest standards.
+- `docs/internals/design-principles.md` — current. North-star, audit matrix, the 5 API review rules (`#api-review-rules`) and the naming micro-tier rubric (`#naming-conventions`) this skill encodes.
 
-**Authoritative when docs disagree**: source code (`src/lib.rs` re-exports, `src/context/widgets_*.rs` signatures), `examples/v020_*.rs` runnable demos, `tests/v020_*.rs` regression tests.
+**Authoritative when docs disagree**: source code (`src/lib.rs` re-exports, `src/context/widgets/` signatures), compile-checked `examples/*.rs` demos, `tests/*.rs` regression tests.
 
-## Examples (`examples/` — 63 Rust files, 20 Cargo-listed targets)
+## Examples (`examples/` — 67 Rust files, 33 Cargo-listed targets)
 
 The skill's `SKILL.md` lists the canonical reference example for each domain. Highlights:
-- **v0.20 surface**: `v020_tour.rs` (target `v020_tour`, tabbed over every `v020_*` demo), `v020_dx_shortcuts.rs` (on_hover/animate_bool/fill). `v020_showcase.rs` is not compiled by any target; do not use it as a reference.
+- **Feature demos**: `widgets_tour.rs` (target `widgets_tour`, tabbed over every single-feature demo such as `gauge.rs`, `modal_trap.rs`, `named_focus.rs`), `dx_shortcuts.rs` (on_hover/animate_bool/fill), `feature_showcase.rs` (target `feature_showcase`, the same features on one screen).
 - **Cookbook recipes**: `cookbook_login.rs`, `cookbook_table.rs`, `cookbook_modal_toast.rs`, `cookbook_dashboard.rs`, `cookbook_file_picker.rs`, `cookbook_tour.rs`
 - **Composition**: `demo_website.rs` (provide/use_context), `tests/context_provider.rs` (8 unit tests)
 - **CJK / wide chars**: `demo_cjk.rs`

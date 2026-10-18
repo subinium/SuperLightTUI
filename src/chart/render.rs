@@ -1,4 +1,8 @@
+//! Chart rendering entry point: turns a [`ChartConfig`] into styled rows of
+//! axis labels, plot cells and legend.
+
 use super::*;
+#[cfg(test)]
 use unicode_width::UnicodeWidthStr;
 
 /// Render a chart into styled row segments.
@@ -81,7 +85,7 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
     let legend_width_uncapped = if legend_on_right && !legend_items.is_empty() {
         legend_items
             .iter()
-            .map(|(_, name, _)| LEGEND_PREFIX_COLS + UnicodeWidthStr::width(name.as_str()))
+            .map(|(_, name, _)| LEGEND_PREFIX_COLS + crate::width::unicode_width(name.as_str()))
             .max()
             .unwrap_or(0)
     } else {
@@ -130,7 +134,7 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
     };
     let y_tick_width = y_tick_labels
         .iter()
-        .map(|s| UnicodeWidthStr::width(s.as_str()))
+        .map(|s| crate::width::unicode_width(s.as_str()))
         .max()
         .unwrap_or(1);
     let y_axis_width = if config.y_axis_visible {
@@ -336,7 +340,7 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
                 } else {
                     (String::new(), '│')
                 };
-            let label_width = UnicodeWidthStr::width(label.as_str());
+            let label_width = crate::width::unicode_width(label.as_str());
             let padded = format!(
                 "{}{}",
                 " ".repeat(y_tick_width.saturating_sub(label_width)),
@@ -395,7 +399,7 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
                 let name_budget = legend_width.saturating_sub(LEGEND_PREFIX_COLS);
                 let display_name = truncate_label(name, name_budget);
                 let raw = format!("  {symbol} {display_name}");
-                let raw_w = UnicodeWidthStr::width(raw.as_str());
+                let raw_w = crate::width::unicode_width(raw.as_str());
                 let pad = legend_width.saturating_sub(raw_w);
                 let text = format!("{raw}{}", " ".repeat(pad));
                 segments.push((text, Style::new().fg(*color)));
@@ -423,7 +427,7 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
         // Reserve the final endpoint before accepting interior labels. Dropping
         // an overlapping label is preferable to hiding the range's upper bound.
         let final_start = x_tick_cols.last().and_then(|(col, label)| {
-            let width = UnicodeWidthStr::width(label.as_str());
+            let width = crate::width::unicode_width(label.as_str());
             (width > 0 && width <= plot_width)
                 .then(|| col.saturating_sub(width / 2).min(plot_width - width))
         });
@@ -431,7 +435,7 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
             if label.is_empty() {
                 continue;
             }
-            let label_width = UnicodeWidthStr::width(label.as_str());
+            let label_width = crate::width::unicode_width(label.as_str());
             if label_width > plot_width {
                 continue;
             }

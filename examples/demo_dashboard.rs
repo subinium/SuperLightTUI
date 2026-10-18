@@ -32,7 +32,7 @@ fn main() -> std::io::Result<()> {
     let mut toasts = ToastState::new();
     let logs = make_logs();
 
-    slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut Context| {
+    slt::run_with(slt::RunConfig::default(), |ui: &mut Context| {
         render_frame(
             ui,
             &spinner,
@@ -142,14 +142,13 @@ pub fn render_frame(
     let tick = ui.tick();
     let metrics = sim_metrics(tick);
 
-    let _ = ui
-        .bordered(Border::Rounded)
+    ui.bordered(Border::Rounded)
         .title("System Dashboard")
         .p(1)
         .grow(1)
         .col(|ui| {
-            let _ = ui.row(|ui| {
-                let _ = ui.spinner(spinner);
+            ui.row(|ui| {
+                ui.spinner(spinner);
                 ui.text(" LIVE").bold().fg(Color::Green);
                 ui.spacer();
                 ui.text(format!(
@@ -160,8 +159,8 @@ pub fn render_frame(
                 ))
                 .dim();
             });
-            let _ = ui.divider_text("System Metrics");
-            let _ = ui.row(|ui| {
+            ui.divider_text("System Metrics");
+            ui.row(|ui| {
                 metric_card(ui, "CPU", metrics.cpu, "%", Color::Cyan);
                 metric_card(ui, "Memory", metrics.mem, "%", Color::Yellow);
                 metric_card(
@@ -179,15 +178,13 @@ pub fn render_frame(
                 metric_card(ui, "Net Out", metrics.net_out, "MB/s", Color::Magenta);
             });
 
-            let _ = ui.divider_text("Key Metrics");
-            let _ = ui.row(|ui| {
-                let _ = ui.bordered(Border::Rounded).p(1).grow(1).col(|ui| {
-                    let _ = ui.stat_trend("Requests", &format!("{}", metrics.requests), Trend::Up);
+            ui.divider_text("Key Metrics");
+            ui.row(|ui| {
+                ui.bordered(Border::Rounded).p(1).grow(1).col(|ui| {
+                    ui.stat_trend("Requests", &format!("{}", metrics.requests), Trend::Up);
                 });
-                let _ = ui.bordered(Border::Rounded).p(1).grow(1).col(|ui| {
-                    let _ = ui.stat_colored(
-                        "Errors",
-                        &format!("{}", metrics.errors),
+                ui.bordered(Border::Rounded).p(1).grow(1).col(|ui| {
+                    ui.stat("Errors", &format!("{}", metrics.errors)).color(
                         if metrics.errors > 5 {
                             Color::Red
                         } else {
@@ -195,52 +192,44 @@ pub fn render_frame(
                         },
                     );
                 });
-                let _ = ui.bordered(Border::Rounded).p(1).grow(1).col(|ui| {
-                    let _ = ui.stat_colored("P99", "45ms", Color::Yellow);
+                ui.bordered(Border::Rounded).p(1).grow(1).col(|ui| {
+                    ui.stat("P99", "45ms").color(Color::Yellow);
                 });
-                let _ = ui.bordered(Border::Rounded).p(1).grow(1).col(|ui| {
-                    let _ = ui.stat_colored("Threads", "24", Color::Blue);
+                ui.bordered(Border::Rounded).p(1).grow(1).col(|ui| {
+                    ui.stat("Threads", "24").color(Color::Blue);
                 });
             });
 
-            let _ = ui.container().grow(1).row(|ui| {
+            ui.container().grow(1).row(|ui| {
                 // process table
-                let _ = ui
-                    .bordered(Border::Rounded)
+                ui.bordered(Border::Rounded)
                     .title("Processes")
                     .p(1)
                     .grow(1)
                     .col(|ui| {
-                        let _ = ui.table(proc_table);
-                        let _ = ui.separator();
-                        let _ = ui.row(|ui| {
-                            if ui.button("Kill").clicked {
-                                let row = proc_table.selected;
-                                if let Some(name) =
-                                    proc_table.rows().get(row).and_then(|r| r.get(1))
-                                {
-                                    toasts.warning(format!("Killed: {name}"), tick);
-                                }
+                        ui.table(proc_table);
+                        ui.separator();
+                        ui.row(|ui| {
+                            if ui.button("Kill").clicked
+                                && let Some(name) = proc_table.selected_row().and_then(|r| r.get(1))
+                            {
+                                toasts.warning(format!("Killed: {name}"), tick);
                             }
-                            if ui.button("Restart").clicked {
-                                let row = proc_table.selected;
-                                if let Some(name) =
-                                    proc_table.rows().get(row).and_then(|r| r.get(1))
-                                {
-                                    toasts.success(format!("Restarted: {name}"), tick);
-                                }
+                            if ui.button("Restart").clicked
+                                && let Some(name) = proc_table.selected_row().and_then(|r| r.get(1))
+                            {
+                                toasts.success(format!("Restarted: {name}"), tick);
                             }
                         });
                     });
 
                 // log stream
-                let _ = ui
-                    .bordered(Border::Rounded)
+                ui.bordered(Border::Rounded)
                     .title("Logs")
                     .p(1)
                     .grow(1)
                     .col(|ui| {
-                        let _ = ui.scrollable(log_scroll).grow(1).col(|ui| {
+                        ui.scrollable(log_scroll).grow(1).col(|ui| {
                             for &(time, level, msg) in logs {
                                 let color = match level {
                                     "ERROR" => Color::Red,
@@ -258,8 +247,8 @@ pub fn render_frame(
 
             ui.toast(toasts);
 
-            let _ = ui.divider_text("Controls");
-            let _ = ui.help(&[
+            ui.divider_text("Controls");
+            ui.help(&[
                 ("Ctrl+Q", "quit"),
                 ("Ctrl+T", "theme"),
                 ("Tab", "focus"),
@@ -326,7 +315,7 @@ fn metric_card(ui: &mut Context, label: &str, value: f64, unit: &str, color: Col
         let bar: String = "█".repeat(filled) + &"░".repeat(bar_w - filled);
         ui.text(bar).fg(color);
         if value > 80.0 {
-            let _ = ui.badge_colored("HIGH", Color::Red);
+            ui.badge("HIGH").color(Color::Red);
         }
     });
     let _ = resp;

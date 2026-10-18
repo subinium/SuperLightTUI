@@ -1,3 +1,10 @@
+//! Collections family state — list, file picker, table, paginator, tree,
+//! directory tree and calendar.
+//!
+//! Rendered by `context/widgets/collections.rs`.
+
+use super::*;
+
 /// State for a selectable list widget.
 ///
 /// Pass a mutable reference to `Context::list` each frame. Up/Down arrow
@@ -6,13 +13,25 @@
 pub struct ListState {
     /// The list items as display strings.
     items: Vec<String>,
-    /// Index of the currently selected item in the filtered view.
+    /// Index of the currently selected item in the filtered **view**.
+    ///
+    /// This is not an index into [`items`](ListState::items): with a filter
+    /// active, `remove_item(list.selected)` removes a different item. Use
+    /// [`selected_index`](ListState::selected_index) (data index),
+    /// [`selected_view_index`](ListState::selected_view_index),
+    /// [`set_selected_index`](ListState::set_selected_index) and
+    /// [`remove_selected`](ListState::remove_selected) instead.
+    #[deprecated(
+        since = "0.26.0",
+        note = "view index, not a data index; use selected_index() / selected_view_index() / set_selected_index()"
+    )]
     pub selected: usize,
     /// Case-insensitive substring filter applied to list items.
     filter: String,
-    /// Top *item* index of the visible viewport for `virtual_list`. Defaults to
-    /// `0` and is clamped each frame so `selected` stays inside the viewport
-    /// without forcing the cursor to the bottom row. For the uniform
+    /// Top *item* index of the visible viewport for `list` and
+    /// `virtual_list`. Defaults to `0` and is clamped each frame so the
+    /// selection stays inside the viewport without forcing the cursor to the
+    /// bottom row. For the uniform
     /// fixed-height path this equals the top row; with per-item heights set
     /// (see [`set_item_heights`](ListState::set_item_heights)) the cumulative
     /// row offset is tracked separately in `viewport_row_offset`.
@@ -44,6 +63,11 @@ pub struct ListState {
 
 impl ListState {
     /// Create a list with the given items. The first item is selected initially.
+    // The struct literal initialises the deprecated `selected` storage (#455).
+    #[expect(
+        deprecated,
+        reason = "crate-internal storage access to the deprecated public selected field (#455)"
+    )]
     pub fn new(items: Vec<impl Into<String>>) -> Self {
         let items: Vec<String> = items.into_iter().map(Into::into).collect();
         let item_search_cache: Vec<String> = items.iter().map(|s| s.to_lowercase()).collect();
@@ -116,7 +140,9 @@ impl ListState {
                 self.heights_dirty = true;
             }
         }
-        self.selected = self.selected.min(self.view_indices.len().saturating_sub(1));
+        *self.view_cursor_mut() = self
+            .view_cursor()
+            .min(self.view_indices.len().saturating_sub(1));
         self.viewport_offset = self
             .viewport_offset
             .min(self.view_indices.len().saturating_sub(1));
@@ -127,7 +153,7 @@ impl ListState {
         if index > self.items.len() {
             return false;
         }
-        let selected = self.view_indices.get(self.selected).copied();
+        let selected = self.view_indices.get(self.view_cursor()).copied();
         let item = item.into();
         self.item_search_cache.insert(index, item.to_lowercase());
         self.items.insert(index, item);
@@ -144,7 +170,7 @@ impl ListState {
         if index >= self.items.len() {
             return None;
         }
-        let selected = self.view_indices.get(self.selected).copied();
+        let selected = self.view_indices.get(self.view_cursor()).copied();
         let item = self.items.remove(index);
         self.item_search_cache.remove(index);
         if let Some(heights) = &mut self.item_heights {
@@ -189,6 +215,7 @@ impl ListState {
     /// ```
     ///
     /// Available since `0.21.0`.
+    #[must_use]
     pub fn with_item_heights(mut self, heights: Vec<u32>) -> Self {
         self.set_item_heights(heights);
         self
@@ -302,8 +329,146 @@ impl ListState {
 
     /// Get the currently selected item text, or `None` if the list is empty.
     pub fn selected_item(&self) -> Option<&str> {
-        let data_idx = *self.view_indices.get(self.selected)?;
+        let data_idx = *self.view_indices.get(self.view_cursor())?;
         self.items.get(data_idx).map(String::as_str)
+    }
+
+    /// Data index (into [`items`](ListState::items)) of the selected item, or
+    /// `None` when the filtered view is empty.
+    ///
+    /// Equals `visible_indices()[selected_view_index()]`, so it is the index
+    /// to pass to [`remove_item`](ListState::remove_item),
+    /// [`item`](ListState::item) or [`move_item`](ListState::move_item).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::ListState;
+    ///
+    /// let mut list = ListState::new(vec!["apple", "banana", "cherry"]);
+    /// list.set_filter("cherry");
+    /// assert_eq!(list.selected_view_index(), 0);
+    /// assert_eq!(list.selected_index(), Some(2));
+    /// ```
+    ///
+    /// Available since `0.26.0`.
+    pub fn selected_index(&self) -> Option<usize> {
+        self.view_indices.get(self.view_cursor()).copied()
+    }
+
+    /// Position of the selected item in the filtered view (what the
+    /// deprecated `selected` field holds). `0` when the view is empty.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::ListState;
+    ///
+    /// let mut list = ListState::new(vec!["apple", "banana", "cherry"]);
+    /// assert!(list.set_selected_index(1));
+    /// list.set_filter("an");
+    /// assert_eq!(list.selected_view_index(), 0); // "banana" is the only row
+    /// ```
+    ///
+    /// Available since `0.26.0`.
+    pub fn selected_view_index(&self) -> usize {
+        self.view_cursor()
+    }
+
+    /// Select the item at position `view` of the filtered view (the write
+    /// counterpart of [`selected_view_index`](ListState::selected_view_index)).
+    /// Returns `false` (selection unchanged) when `view` is past the end.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::ListState;
+    ///
+    /// let mut list = ListState::new(vec!["apple", "banana", "cherry"]);
+    /// list.set_filter("an");
+    /// assert!(list.set_selected_view_index(0));
+    /// assert_eq!(list.selected_item(), Some("banana"));
+    /// assert!(!list.set_selected_view_index(1));
+    /// ```
+    ///
+    /// Available since `0.26.0`.
+    pub fn set_selected_view_index(&mut self, view: usize) -> bool {
+        if view >= self.view_indices.len() {
+            return false;
+        }
+        *self.view_cursor_mut() = view;
+        true
+    }
+
+    /// Select the item at data index `data`. Returns `false` (selection
+    /// unchanged) when the index is out of range or hidden by the filter.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::ListState;
+    ///
+    /// let mut list = ListState::new(vec!["apple", "banana", "cherry"]);
+    /// list.set_filter("a");
+    /// assert!(list.set_selected_index(1));
+    /// assert_eq!(list.selected_item(), Some("banana"));
+    /// assert!(!list.set_selected_index(2)); // "cherry" is filtered out
+    /// ```
+    ///
+    /// Available since `0.26.0`.
+    pub fn set_selected_index(&mut self, data: usize) -> bool {
+        // The filtered view keeps data order, so it is sorted ascending.
+        match self.view_indices.binary_search(&data) {
+            Ok(view) => {
+                *self.view_cursor_mut() = view;
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Remove and return the selected item — the one the user sees
+    /// highlighted — or `None` when the filtered view is empty.
+    ///
+    /// The selection stays at the same view position, so it moves to the next
+    /// visible item (or the new last one).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::ListState;
+    ///
+    /// let mut list = ListState::new(vec!["apple", "banana", "cherry"]);
+    /// list.set_filter("cherry");
+    /// assert_eq!(list.remove_selected().as_deref(), Some("cherry"));
+    /// assert_eq!(list.items(), ["apple", "banana"]);
+    /// ```
+    ///
+    /// Available since `0.26.0`.
+    pub fn remove_selected(&mut self) -> Option<String> {
+        let data = self.selected_index()?;
+        self.remove_item(data)
+    }
+
+    /// Storage accessors for the deprecated public `selected` field (#455):
+    /// crate code reads and writes the view cursor through these so the
+    /// deprecation only reaches downstream direct field access.
+    #[expect(
+        deprecated,
+        reason = "crate-internal storage access to the deprecated public selected field (#455)"
+    )]
+    #[inline]
+    pub(crate) fn view_cursor(&self) -> usize {
+        self.selected
+    }
+
+    #[expect(
+        deprecated,
+        reason = "crate-internal storage access to the deprecated public selected field (#455)"
+    )]
+    #[inline]
+    pub(crate) fn view_cursor_mut(&mut self) -> &mut usize {
+        &mut self.selected
     }
 
     /// Move the item at data index `from` to data index `to`, preserving
@@ -335,7 +500,7 @@ impl ListState {
 
         // Remember which data index is currently selected so selection can
         // follow the moved item (or stay on whatever item the user had).
-        let selected_data = self.view_indices.get(self.selected).copied();
+        let selected_data = self.view_indices.get(self.view_cursor()).copied();
 
         let item = self.items.remove(from);
         self.items.insert(to, item);
@@ -370,7 +535,7 @@ impl ListState {
                 data_idx
             };
             if let Some(view_pos) = self.view_indices.iter().position(|&i| i == new_data_idx) {
-                self.selected = view_pos;
+                *self.view_cursor_mut() = view_pos;
             }
         }
 
@@ -396,16 +561,16 @@ impl ListState {
             .viewport_offset
             .min(self.view_indices.len().saturating_sub(1));
         self.viewport_row_offset = 0;
-        if !self.view_indices.is_empty() && self.selected >= self.view_indices.len() {
-            self.selected = self.view_indices.len() - 1;
+        if !self.view_indices.is_empty() && self.view_cursor() >= self.view_indices.len() {
+            *self.view_cursor_mut() = self.view_indices.len() - 1;
         } else if self.view_indices.is_empty() {
-            self.selected = 0;
+            *self.view_cursor_mut() = 0;
         }
     }
 
     fn restore_selection(&mut self, raw: Option<usize>) {
         if let Some(view) = raw.and_then(|raw| self.view_indices.iter().position(|&i| i == raw)) {
-            self.selected = view;
+            *self.view_cursor_mut() = view;
         }
     }
 
@@ -413,10 +578,28 @@ impl ListState {
         self.item_search_cache = self.items.iter().map(|item| item.to_lowercase()).collect();
         if let Some(heights) = self.item_heights.as_mut() {
             heights.resize(self.items.len(), 1);
+            release_excess_capacity(heights);
         }
         self.heights_dirty = true;
         self.viewport_offset = self.viewport_offset.min(self.items.len().saturating_sub(1));
         self.rebuild_view();
+        // Bulk replacement (`set_items` / `clear_items`) is the only path that
+        // can shrink the list by orders of magnitude, so release index buffers
+        // sized for the old data here (#416). Filter changes keep capacity to
+        // avoid reallocating on every keystroke.
+        release_excess_capacity(&mut self.view_indices);
+        // `heights_dirty` is set, so the prefix sum is rebuilt before any read.
+        self.row_prefix.clear();
+        release_excess_capacity(&mut self.row_prefix);
+    }
+}
+
+/// Shrink `buf` when its capacity is far above its length, so a collection
+/// replaced by a much smaller one does not keep the old index buffers alive.
+fn release_excess_capacity<T>(buf: &mut Vec<T>) {
+    const SLACK: usize = 64;
+    if buf.capacity() > buf.len().saturating_mul(2).saturating_add(SLACK) {
+        buf.shrink_to(buf.len());
     }
 }
 
@@ -572,6 +755,7 @@ impl FilePickerState {
     }
 
     /// Configure whether hidden files should be shown.
+    #[must_use]
     pub fn show_hidden(mut self, show: bool) -> Self {
         self.show_hidden = show;
         self.invalidate_scan();
@@ -579,6 +763,7 @@ impl FilePickerState {
     }
 
     /// Restrict visible files to the provided extensions.
+    #[must_use]
     pub fn extensions(mut self, exts: &[&str]) -> Self {
         self.extensions = exts
             .iter()
@@ -665,21 +850,6 @@ impl FilePickerState {
     /// ```
     pub fn selected_file(&self) -> Option<&PathBuf> {
         self.selected_file.as_ref()
-    }
-
-    /// Return the currently selected file path.
-    ///
-    /// Deprecated alias for [`selected_file`](Self::selected_file). The
-    /// shorter name conflicts visually with the [`selected: usize`](Self::selected)
-    /// field — a getter returning a path alongside a public field returning
-    /// an index made call sites ambiguous. Migrate to `selected_file()` for
-    /// new code; this stub stays callable until v1.0.
-    #[deprecated(
-        since = "0.20.0",
-        note = "use selected_file() — disambiguates from the `selected: usize` field index"
-    )]
-    pub fn selected(&self) -> Option<&PathBuf> {
-        self.selected_file()
     }
 
     /// Re-scan the current directory, retaining failures in [`scan_errors`](Self::scan_errors).
@@ -847,33 +1017,6 @@ impl Default for FilePickerState {
     }
 }
 
-/// State for a tab navigation widget.
-///
-/// Pass a mutable reference to `Context::tabs` each frame. Left/Right arrow
-/// keys cycle through tabs when the widget is focused.
-#[derive(Debug, Clone, Default)]
-pub struct TabsState {
-    /// The tab labels displayed in the bar.
-    pub labels: Vec<String>,
-    /// Index of the currently active tab.
-    pub selected: usize,
-}
-
-impl TabsState {
-    /// Create tabs with the given labels. The first tab is active initially.
-    pub fn new(labels: Vec<impl Into<String>>) -> Self {
-        Self {
-            labels: labels.into_iter().map(Into::into).collect(),
-            selected: 0,
-        }
-    }
-
-    /// Get the currently selected tab label, or `None` if there are no tabs.
-    pub fn selected_label(&self) -> Option<&str> {
-        self.labels.get(self.selected).map(String::as_str)
-    }
-}
-
 /// Per-column width policy for a [`TableState`].
 ///
 /// Mirrors the semantics of [`GridColumn`] and
@@ -923,14 +1066,26 @@ pub enum TableColumn {
 ///
 /// Multi-row selection (Space / Shift+Up/Down / Ctrl+Space and modifier
 /// clicks) is tracked in [`multi_selected`](TableState::multi_selected); the
-/// `selected` field always remains the focused/cursor row.
+/// focused/cursor row ([`selected_view_index`](TableState::selected_view_index)) is
+/// tracked separately.
 #[derive(Debug, Clone)]
 pub struct TableState {
     /// Column header labels.
     headers: Vec<String>,
     /// Table rows, each a `Vec` of cell strings.
     rows: Vec<Vec<String>>,
-    /// Focused/cursor row (view index). Unchanged single-select semantics.
+    /// Focused/cursor row as a **view** index (after filter and sort).
+    ///
+    /// This is not an index into [`rows`](TableState::rows): with a filter or
+    /// sort active, `remove_row(table.selected)` removes a different row. Use
+    /// [`selected_index`](TableState::selected_index) (data index),
+    /// [`selected_view_index`](TableState::selected_view_index),
+    /// [`set_selected_index`](TableState::set_selected_index) and
+    /// [`remove_selected`](TableState::remove_selected) instead.
+    #[deprecated(
+        since = "0.26.0",
+        note = "view index, not a data index; use selected_index() / selected_view_index() / set_selected_index()"
+    )]
     pub selected: usize,
     /// Multi-row selection as view indices. Empty means no multi-selection.
     ///
@@ -958,12 +1113,20 @@ pub struct TableState {
     pub page_size: usize,
     /// Whether alternating row backgrounds are enabled.
     pub zebra: bool,
+    /// Top view row drawn by an unpaged `table` (#487). Clamped each frame so
+    /// the focused row stays inside the body viewport; ignored when paged.
+    pub(crate) viewport_offset: usize,
     view_indices: Vec<usize>,
-    row_search_cache: Vec<String>,
-    filter_tokens: Vec<String>,
+    pub(super) row_search_cache: Vec<String>,
+    pub(super) filter_tokens: Vec<String>,
 }
 
 impl Default for TableState {
+    // The struct literal initialises the deprecated `selected` storage (#455).
+    #[expect(
+        deprecated,
+        reason = "crate-internal storage access to the deprecated public selected field (#455)"
+    )]
     fn default() -> Self {
         Self {
             headers: Vec::new(),
@@ -982,6 +1145,7 @@ impl Default for TableState {
             page: 0,
             page_size: 0,
             zebra: false,
+            viewport_offset: 0,
             view_indices: Vec::new(),
             row_search_cache: Vec::new(),
             filter_tokens: Vec::new(),
@@ -1000,23 +1164,7 @@ impl TableState {
         let mut state = Self {
             headers,
             rows,
-            selected: 0,
-            multi_selected: HashSet::new(),
-            selection_anchor: None,
-            column_specs: Vec::new(),
-            column_widths: Vec::new(),
-            content_widths: Vec::new(),
-            widths_dirty: true,
-            resolved_width: 0,
-            sort_column: None,
-            sort_ascending: true,
-            filter: String::new(),
-            page: 0,
-            page_size: 0,
-            zebra: false,
-            view_indices: Vec::new(),
-            row_search_cache: Vec::new(),
-            filter_tokens: Vec::new(),
+            ..Self::default()
         };
         state.rebuild_row_search_cache();
         state.rebuild_view();
@@ -1088,7 +1236,7 @@ impl TableState {
         let index = self.rows.len();
         if !self.widths_dirty {
             for (width, cell) in self.content_widths.iter_mut().zip(&row) {
-                *width = (*width).max(UnicodeWidthStr::width(cell.as_str()) as u32);
+                *width = (*width).max(crate::width::str_width(cell.as_str()) as u32);
             }
             self.column_widths.clone_from(&self.content_widths);
         }
@@ -1105,7 +1253,9 @@ impl TableState {
             } else {
                 0
             };
-            self.selected = self.selected.min(self.view_indices.len().saturating_sub(1));
+            *self.view_cursor_mut() = self
+                .view_cursor()
+                .min(self.view_indices.len().saturating_sub(1));
             self.prune_selection();
         }
     }
@@ -1225,8 +1375,140 @@ impl TableState {
         if self.view_indices.is_empty() {
             return None;
         }
-        let data_idx = self.view_indices.get(self.selected)?;
+        let data_idx = self.view_indices.get(self.view_cursor())?;
         self.rows.get(*data_idx).map(|r| r.as_slice())
+    }
+
+    /// Data index (into [`rows`](TableState::rows)) of the focused row, or
+    /// `None` when the filtered view is empty.
+    ///
+    /// Maps through the current filter, sort and (absolute) page view, so it
+    /// is the index to pass to [`row`](TableState::row) or
+    /// [`remove_row`](TableState::remove_row).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::TableState;
+    ///
+    /// let mut table = TableState::new(vec!["Name"], vec![vec!["carol"], vec!["alice"]]);
+    /// table.sort_by(0); // alice, carol
+    /// assert_eq!(table.selected_view_index(), 0);
+    /// assert_eq!(table.selected_index(), Some(1)); // "alice" is data row 1
+    /// ```
+    ///
+    /// Available since `0.26.0`.
+    pub fn selected_index(&self) -> Option<usize> {
+        self.view_indices.get(self.view_cursor()).copied()
+    }
+
+    /// Position of the focused row in the filtered and sorted view (what the
+    /// deprecated `selected` field holds). Multi-selection
+    /// ([`is_row_selected`](TableState::is_row_selected)) and the
+    /// [`table_with`](crate::Context::table_with) renderer use the same space.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::TableState;
+    ///
+    /// let table = TableState::new(vec!["Name"], vec![vec!["a"], vec!["b"]]);
+    /// assert_eq!(table.selected_view_index(), 0);
+    /// ```
+    ///
+    /// Available since `0.26.0`.
+    pub fn selected_view_index(&self) -> usize {
+        self.view_cursor()
+    }
+
+    /// Focus the row at data index `data`, switching to its page when
+    /// pagination is enabled. Returns `false` (selection unchanged) when the
+    /// index is out of range or hidden by the filter.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::TableState;
+    ///
+    /// let mut table = TableState::new(vec!["Name"], vec![vec!["carol"], vec!["alice"]]);
+    /// table.sort_by(0);
+    /// assert!(table.set_selected_index(0)); // "carol"
+    /// assert_eq!(table.selected_view_index(), 1);
+    /// ```
+    ///
+    /// Available since `0.26.0`.
+    pub fn set_selected_index(&mut self, data: usize) -> bool {
+        match self.view_indices.iter().position(|&raw| raw == data) {
+            Some(view) => self.set_selected_view_index(view),
+            None => false,
+        }
+    }
+
+    /// Focus the row at position `view` of the filtered and sorted view,
+    /// switching to its page when pagination is enabled. Returns `false`
+    /// (selection unchanged) when `view` is past the end.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::TableState;
+    ///
+    /// let mut table = TableState::new(vec!["Name"], vec![vec!["carol"], vec!["alice"]]);
+    /// table.sort_by(0);
+    /// assert!(table.set_selected_view_index(1));
+    /// assert_eq!(table.selected_row(), Some(&["carol".to_string()][..]));
+    /// ```
+    ///
+    /// Available since `0.26.0`.
+    pub fn set_selected_view_index(&mut self, view: usize) -> bool {
+        if view >= self.view_indices.len() {
+            return false;
+        }
+        *self.view_cursor_mut() = view;
+        if let Some(page) = view.checked_div(self.page_size) {
+            self.page = page;
+        }
+        true
+    }
+
+    /// Remove and return the focused row — the one the user sees
+    /// highlighted — or `None` when the filtered view is empty.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::TableState;
+    ///
+    /// let mut table = TableState::new(vec!["Name"], vec![vec!["carol"], vec!["alice"]]);
+    /// table.set_filter("alice");
+    /// assert_eq!(table.remove_selected(), Some(vec!["alice".to_string()]));
+    /// assert_eq!(table.row_count(), 1);
+    /// ```
+    ///
+    /// Available since `0.26.0`.
+    pub fn remove_selected(&mut self) -> Option<Vec<String>> {
+        let data = self.selected_index()?;
+        self.remove_row(data)
+    }
+
+    /// Storage accessors for the deprecated public `selected` field (#455);
+    /// see [`ListState::view_cursor`].
+    #[expect(
+        deprecated,
+        reason = "crate-internal storage access to the deprecated public selected field (#455)"
+    )]
+    #[inline]
+    pub(crate) fn view_cursor(&self) -> usize {
+        self.selected
+    }
+
+    #[expect(
+        deprecated,
+        reason = "crate-internal storage access to the deprecated public selected field (#455)"
+    )]
+    #[inline]
+    pub(crate) fn view_cursor_mut(&mut self) -> &mut usize {
+        &mut self.selected
     }
 
     /// Set the per-column width policy.
@@ -1314,7 +1596,7 @@ impl TableState {
 
     /// Clear the multi-selection set and the range anchor.
     ///
-    /// The focused [`selected`](TableState::selected) cursor row is unaffected.
+    /// The focused cursor row ([`selected_view_index`](TableState::selected_view_index)) is unaffected.
     ///
     /// Available since v0.21.0.
     ///
@@ -1430,7 +1712,9 @@ impl TableState {
             self.page = 0;
         }
 
-        self.selected = self.selected.min(self.view_indices.len().saturating_sub(1));
+        *self.view_cursor_mut() = self
+            .view_cursor()
+            .min(self.view_indices.len().saturating_sub(1));
         self.prune_selection();
         self.widths_dirty = true;
     }
@@ -1479,7 +1763,7 @@ impl TableState {
         let col_count = self.headers.len();
         self.content_widths = vec![0u32; col_count];
         for (i, header) in self.headers.iter().enumerate() {
-            let mut width = UnicodeWidthStr::width(header.as_str()) as u32;
+            let mut width = crate::width::str_width(header.as_str()) as u32;
             if self.sort_column == Some(i) {
                 width += 2;
             }
@@ -1488,14 +1772,14 @@ impl TableState {
         for row in &self.rows {
             for (i, cell) in row.iter().enumerate() {
                 if i < col_count {
-                    let w = UnicodeWidthStr::width(cell.as_str()) as u32;
+                    let w = crate::width::str_width(cell.as_str()) as u32;
                     self.content_widths[i] = self.content_widths[i].max(w);
                 }
             }
         }
         // Default resolved widths to the content widths; `resolve_column_widths`
         // overlays the per-column specs each frame once the available width is
-        // known. When no spec is set this is the pre-v0.21 behavior verbatim.
+        // known. With no spec set the columns keep their content widths.
         self.column_widths = self.content_widths.clone();
         self.widths_dirty = false;
     }
@@ -1736,541 +2020,550 @@ impl PaginatorState {
     }
 }
 
-/// A highlighted line range within a scrollable region.
+// ── Tree ──────────────────────────────────────────────────────────────
+
+/// A node in a tree view.
+#[derive(Debug, Clone)]
+pub struct TreeNode {
+    /// Display label for this node.
+    pub label: String,
+    /// Child nodes.
+    pub children: Vec<TreeNode>,
+    /// Whether the node is expanded in the tree view.
+    pub expanded: bool,
+}
+
+impl TreeNode {
+    /// Create a collapsed tree node with no children.
+    pub fn new(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            children: Vec::new(),
+            expanded: false,
+        }
+    }
+
+    /// Mark this node as expanded.
+    #[must_use]
+    pub fn expanded(mut self) -> Self {
+        self.expanded = true;
+        self
+    }
+
+    /// Set child nodes for this node.
+    #[must_use]
+    pub fn children(mut self, children: Vec<TreeNode>) -> Self {
+        self.children = children;
+        self
+    }
+
+    /// Returns `true` when this node has no children.
+    pub fn is_leaf(&self) -> bool {
+        self.children.is_empty()
+    }
+
+    fn flatten(&self, depth: usize, out: &mut Vec<FlatTreeEntry>) {
+        out.push(FlatTreeEntry {
+            depth,
+            label: self.label.clone(),
+            is_leaf: self.is_leaf(),
+            expanded: self.expanded,
+        });
+        if self.expanded {
+            for child in &self.children {
+                child.flatten(depth + 1, out);
+            }
+        }
+    }
+}
+
+pub(crate) struct FlatTreeEntry {
+    pub depth: usize,
+    pub label: String,
+    pub is_leaf: bool,
+    pub expanded: bool,
+}
+
+/// State for a hierarchical tree view widget.
+#[derive(Debug, Clone)]
+pub struct TreeState {
+    /// Root nodes of the tree.
+    pub nodes: Vec<TreeNode>,
+    /// Selected row index in the flattened visible tree.
+    pub selected: usize,
+}
+
+impl TreeState {
+    /// Create tree state from root nodes.
+    pub fn new(nodes: Vec<TreeNode>) -> Self {
+        Self { nodes, selected: 0 }
+    }
+
+    pub(crate) fn flatten(&self) -> Vec<FlatTreeEntry> {
+        let mut entries = Vec::new();
+        for node in &self.nodes {
+            node.flatten(0, &mut entries);
+        }
+        entries
+    }
+
+    pub(crate) fn toggle_at(&mut self, flat_index: usize) {
+        let mut counter = 0usize;
+        Self::toggle_recursive(&mut self.nodes, flat_index, &mut counter);
+    }
+
+    fn toggle_recursive(nodes: &mut [TreeNode], target: usize, counter: &mut usize) -> bool {
+        for node in nodes.iter_mut() {
+            if *counter == target {
+                if !node.is_leaf() {
+                    node.expanded = !node.expanded;
+                }
+                return true;
+            }
+            *counter += 1;
+            if node.expanded && Self::toggle_recursive(&mut node.children, target, counter) {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+/// State for the directory tree widget.
+#[derive(Debug, Clone)]
+pub struct DirectoryTreeState {
+    /// The underlying tree state (reuses existing TreeState).
+    pub tree: TreeState,
+    /// Whether to show file/folder icons.
+    pub show_icons: bool,
+}
+
+impl DirectoryTreeState {
+    /// Create directory tree state from root nodes.
+    pub fn new(nodes: Vec<TreeNode>) -> Self {
+        Self {
+            tree: TreeState::new(nodes),
+            show_icons: true,
+        }
+    }
+
+    /// Build a directory tree from slash-delimited paths.
+    pub fn from_paths(paths: &[&str]) -> Self {
+        let mut roots: Vec<TreeNode> = Vec::new();
+
+        for raw_path in paths {
+            let parts: Vec<&str> = raw_path
+                .split('/')
+                .filter(|part| !part.is_empty())
+                .collect();
+            if parts.is_empty() {
+                continue;
+            }
+            insert_path(&mut roots, &parts, 0);
+        }
+
+        Self::new(roots)
+    }
+
+    /// Return selected node label if a node is selected.
+    pub fn selected_label(&self) -> Option<&str> {
+        let mut cursor = 0usize;
+        selected_label_in_nodes(&self.tree.nodes, self.tree.selected, &mut cursor)
+    }
+}
+
+impl Default for DirectoryTreeState {
+    fn default() -> Self {
+        Self::new(Vec::<TreeNode>::new())
+    }
+}
+
+fn insert_path(nodes: &mut Vec<TreeNode>, parts: &[&str], depth: usize) {
+    let Some(label) = parts.get(depth) else {
+        return;
+    };
+
+    let is_last = depth + 1 == parts.len();
+    let idx = nodes
+        .iter()
+        .position(|node| node.label == *label)
+        .unwrap_or_else(|| {
+            let mut node = TreeNode::new(*label);
+            if !is_last {
+                node.expanded = true;
+            }
+            nodes.push(node);
+            nodes.len() - 1
+        });
+
+    if is_last {
+        return;
+    }
+
+    nodes[idx].expanded = true;
+    insert_path(&mut nodes[idx].children, parts, depth + 1);
+}
+
+fn selected_label_in_nodes<'a>(
+    nodes: &'a [TreeNode],
+    target: usize,
+    cursor: &mut usize,
+) -> Option<&'a str> {
+    for node in nodes {
+        if *cursor == target {
+            return Some(node.label.as_str());
+        }
+        *cursor += 1;
+        if node.expanded
+            && let Some(found) = selected_label_in_nodes(&node.children, target, cursor)
+        {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// An absolute calendar date `(year, month 1–12, day 1–31)`.
 ///
-/// Used with [`ScrollState::set_highlights`] to mark search results, error
-/// lines, or any per-line emphasis. The `scrollable_with_gutter` widget reads
-/// the active highlights and renders a background band on matching lines.
+/// Used by [`CalendarState`] to represent range endpoints that can span
+/// month and year boundaries (a `selected_day` alone is scoped to the
+/// currently displayed month). Available since `0.21.0`.
+///
+/// # Example
+///
+/// ```no_run
+/// use slt::CalDate;
+///
+/// let d = CalDate { year: 2024, month: 12, day: 31 };
+/// assert_eq!((d.year, d.month, d.day), (2024, 12, 31));
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HighlightRange {
-    /// First line (0-based, relative to content top).
-    pub start_line: usize,
-    /// Number of lines in the range (1 = single line).
-    pub line_count: usize,
+pub struct CalDate {
+    /// Calendar year.
+    pub year: i32,
+    /// Month of year, `1`–`12`.
+    pub month: u32,
+    /// Day of month, `1`–`31`.
+    pub day: u32,
 }
 
-impl HighlightRange {
-    /// Create a single-line highlight at `line`.
-    ///
-    /// Field-name pairing: `start_line` + `line_count` → constructor named
-    /// `line`. Use [`Self::span`] for multi-line ranges.
-    pub fn line(line: usize) -> Self {
-        Self {
-            start_line: line,
-            line_count: 1,
-        }
-    }
-
-    /// Create a multi-line highlight starting at `start_line` covering `line_count` rows.
-    pub fn span(start_line: usize, line_count: usize) -> Self {
-        Self {
-            start_line,
-            line_count: line_count.max(1),
-        }
-    }
-
-    /// Check whether the given absolute line index falls within this range.
-    pub fn contains(&self, line: usize) -> bool {
-        line >= self.start_line && line < self.start_line + self.line_count
+impl CalDate {
+    /// Sort key ordering this date against another by year, then month, then day.
+    fn key(&self) -> (i32, u32, u32) {
+        (self.year, self.month, self.day)
     }
 }
 
-/// State for a scrollable container.
+/// Selection behavior for [`CalendarState`].
 ///
-/// Pass a mutable reference to `Context::scrollable` each frame. The context
-/// updates `offset` and the internal bounds automatically based on mouse wheel
-/// and drag events.
+/// Defaults to [`Single`](CalendarSelect::Single), preserving the original
+/// single-date pick. Switch to [`Range`](CalendarSelect::Range) via
+/// [`CalendarState::with_range`] for start/end range selection. Available
+/// since `0.21.0`.
 ///
-/// Both axes are tracked (#247): the vertical axis (`offset`, [`scroll_up`] /
-/// [`scroll_down`]) drives [`Context::scroll_col`], and the horizontal axis
-/// (`offset_x`, [`scroll_left`] / [`scroll_right`]) drives
-/// [`Context::scroll_row`]. A single [`ScrollState`] scrolls one axis per
-/// container — nest a `scroll_row` inside a `scroll_col` for both. The vertical
-/// API is unchanged from earlier versions.
+/// # Example
 ///
-/// [`scroll_up`]: ScrollState::scroll_up
-/// [`scroll_down`]: ScrollState::scroll_down
-/// [`scroll_left`]: ScrollState::scroll_left
-/// [`scroll_right`]: ScrollState::scroll_right
-/// [`Context::scroll_col`]: crate::Context::scroll_col
-/// [`Context::scroll_row`]: crate::Context::scroll_row
-#[derive(Debug)]
-pub struct ScrollState {
-    id: u64,
-    /// Reveal newly focused children automatically. Defaults to `true`.
-    ///
-    /// Also follows changes to the focused child's layout or viewport size.
-    /// Manual scrolling is preserved while focus and geometry stay unchanged.
-    /// Set to `false` for application-controlled scrolling. Layout corrections
-    /// are rendered immediately and synchronized into this state on its next
-    /// `Context::scrollable` binding unless the application changed the offset.
-    pub follow_focus: bool,
-    /// Current vertical scroll offset in rows.
-    pub offset: usize,
-    /// Current horizontal scroll offset in columns (#247).
-    pub offset_x: usize,
-    /// Whether the scrollbar thumb is currently being dragged.
-    ///
-    /// Set to `true` by [`Context::scrollbar`] on a mouse-down inside the
-    /// thumb and back to `false` on mouse-up, mirroring
-    /// [`SplitPaneState::dragging`](crate::widgets::SplitPaneState). Persists
-    /// across frames so cursor motion outside the thumb (or even outside the
-    /// track on the x-axis) keeps scrolling while the button is held.
-    ///
-    /// [`Context::scrollbar`]: crate::Context::scrollbar
-    pub dragging: bool,
-    content_height: u32,
-    viewport_height: u32,
-    content_width: u32,
-    viewport_width: u32,
-    max_offset_y: u32,
-    max_offset_x: u32,
-    highlights: Vec<HighlightRange>,
-    current_highlight: Option<usize>,
+/// ```no_run
+/// use slt::{CalendarSelect, CalendarState};
+///
+/// let mut cal = CalendarState::from_ym(2024, 3);
+/// assert_eq!(cal.mode(), CalendarSelect::Single);
+/// cal.with_range();
+/// assert_eq!(cal.mode(), CalendarSelect::Range);
+/// ```
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CalendarSelect {
+    /// Pick exactly one date (default).
+    #[default]
+    Single,
+    /// Pick a start/end date range via Shift-extend.
+    Range,
 }
 
-fn next_scroll_state_id() -> u64 {
-    static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-    NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+/// State for the calendar date picker widget.
+#[derive(Debug, Clone)]
+pub struct CalendarState {
+    /// Current display year.
+    pub year: i32,
+    /// Current display month (1–12).
+    pub month: u32,
+    /// Currently selected day, if any (single-date mode).
+    pub selected_day: Option<u32>,
+    pub(crate) cursor_day: u32,
+    pub(crate) mode: CalendarSelect,
+    pub(crate) anchor: Option<CalDate>,
+    pub(crate) extent: Option<CalDate>,
+    pub(crate) time_enabled: bool,
+    pub(crate) hour: u8,
+    pub(crate) minute: u8,
 }
 
-impl Clone for ScrollState {
-    fn clone(&self) -> Self {
-        Self {
-            id: next_scroll_state_id(),
-            follow_focus: self.follow_focus,
-            offset: self.offset,
-            offset_x: self.offset_x,
-            dragging: self.dragging,
-            content_height: self.content_height,
-            viewport_height: self.viewport_height,
-            content_width: self.content_width,
-            viewport_width: self.viewport_width,
-            max_offset_y: self.max_offset_y,
-            max_offset_x: self.max_offset_x,
-            highlights: self.highlights.clone(),
-            current_highlight: self.current_highlight,
-        }
-    }
-}
-
-impl ScrollState {
-    /// Create scroll state starting at offset 0.
+impl CalendarState {
+    /// Create a new `CalendarState` initialized to the current month.
     pub fn new() -> Self {
+        let (year, month) = Self::current_year_month();
+        Self::from_ym(year, month)
+    }
+
+    /// Create a `CalendarState` for a specific year and month.
+    pub fn from_ym(year: i32, month: u32) -> Self {
+        let month = month.clamp(1, 12);
         Self {
-            id: next_scroll_state_id(),
-            follow_focus: true,
-            offset: 0,
-            offset_x: 0,
-            dragging: false,
-            content_height: 0,
-            viewport_height: 0,
-            content_width: 0,
-            viewport_width: 0,
-            max_offset_y: 0,
-            max_offset_x: 0,
-            highlights: Vec::new(),
-            current_highlight: None,
+            year,
+            month,
+            selected_day: None,
+            cursor_day: 1,
+            mode: CalendarSelect::Single,
+            anchor: None,
+            extent: None,
+            time_enabled: false,
+            hour: 0,
+            minute: 0,
         }
     }
 
-    pub(crate) fn id(&self) -> u64 { self.id }
-
-    /// Check if scrolling upward is possible (offset is greater than 0).
-    pub fn can_scroll_up(&self) -> bool {
-        self.offset > 0
-    }
-
-    /// Check if scrolling downward is possible (content extends below the viewport).
-    pub fn can_scroll_down(&self) -> bool {
-        self.offset < self.max_offset()
-    }
-
-    /// Get the total content height in rows.
-    pub fn content_height(&self) -> u32 {
-        self.content_height
-    }
-
-    /// Get the viewport height in rows.
-    pub fn viewport_height(&self) -> u32 {
-        self.viewport_height
-    }
-
-    /// Maximum vertical offset from the most recent viewport binding.
-    /// Accounts for leading clipping; it need not equal content minus visible height.
-    pub fn max_offset(&self) -> usize { self.max_offset_y as usize }
-
-    /// Maximum horizontal offset from the most recent viewport binding.
-    pub fn max_offset_x(&self) -> usize { self.max_offset_x as usize }
-
-    /// Get the scroll progress as a ratio in `[0.0, 1.0]`.
+    /// Enable date-range selection (start/end via Shift-extend).
     ///
-    /// Returns `f64` to match the rest of the ratio surface unified in v0.20
-    /// (`Gauge::ratio`, `SplitPaneState::ratio`, `progress(ratio)`,
-    /// `progress_bar(ratio)`). Feed the value straight into [`Context::gauge`]
-    /// or [`Context::progress_bar`] without a cast.
+    /// Single-date mode remains the default; call this to opt in. Returns
+    /// `&mut Self` for chaining. Available since `0.21.0`.
     ///
-    /// [`Context::gauge`]: crate::Context::gauge
-    /// [`Context::progress_bar`]: crate::Context::progress_bar
+    /// # Example
     ///
     /// ```no_run
-    /// # use slt::ScrollState;
-    /// let scroll = ScrollState::new();
-    /// // Bounds are populated by the `scrollable` widget each frame; a fresh
-    /// // state with no content reports 0.0.
-    /// let ratio: f64 = scroll.progress_ratio();
-    /// assert!((0.0..=1.0).contains(&ratio));
+    /// use slt::CalendarState;
+    ///
+    /// let mut cal = CalendarState::from_ym(2024, 3);
+    /// cal.with_range();
     /// ```
-    pub fn progress_ratio(&self) -> f64 {
-        let max = self.max_offset();
-        if max == 0 {
-            0.0
+    pub fn with_range(&mut self) -> &mut Self {
+        self.mode = CalendarSelect::Range;
+        self
+    }
+
+    /// Enable hour/minute selection, rendered as `HH:MM` below the grid.
+    ///
+    /// Off by default — no time row is rendered unless enabled. Returns
+    /// `&mut Self` for chaining. Available since `0.21.0`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::CalendarState;
+    ///
+    /// let mut cal = CalendarState::from_ym(2024, 3);
+    /// cal.with_time();
+    /// ```
+    pub fn with_time(&mut self) -> &mut Self {
+        self.time_enabled = true;
+        self
+    }
+
+    /// The active selection mode (`Single` by default).
+    ///
+    /// Available since `0.21.0`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::{CalendarSelect, CalendarState};
+    ///
+    /// let cal = CalendarState::from_ym(2024, 3);
+    /// assert_eq!(cal.mode(), CalendarSelect::Single);
+    /// ```
+    pub fn mode(&self) -> CalendarSelect {
+        self.mode
+    }
+
+    /// Returns the selected date as `(year, month, day)`, if any.
+    pub fn selected_date(&self) -> Option<(i32, u32, u32)> {
+        self.selected_day.map(|day| (self.year, self.month, day))
+    }
+
+    /// The normalized selected range as `(start, end)` with `start <= end`.
+    ///
+    /// Returns `None` in single-date mode or until an anchor has been set in
+    /// range mode. Endpoints are absolute [`CalDate`]s, so a range may span
+    /// month or year boundaries. Available since `0.21.0`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::CalendarState;
+    ///
+    /// let mut cal = CalendarState::from_ym(2024, 3);
+    /// cal.with_range();
+    /// assert!(cal.selected_range().is_none());
+    /// ```
+    pub fn selected_range(&self) -> Option<(CalDate, CalDate)> {
+        if self.mode != CalendarSelect::Range {
+            return None;
+        }
+        let anchor = self.anchor?;
+        let extent = self.extent.unwrap_or(anchor);
+        if anchor.key() <= extent.key() {
+            Some((anchor, extent))
         } else {
-            self.offset.min(max) as f64 / max as f64
+            Some((extent, anchor))
         }
     }
 
-    /// Deprecated `f32` alias for [`progress_ratio`](Self::progress_ratio).
+    /// The selected `(hour, minute)` when time is enabled, else `None`.
     ///
-    /// `ScrollState::progress` was the only `f32` ratio left after the v0.20
-    /// `f32 → f64` ratio unification. Migrate to [`progress_ratio`](Self::progress_ratio):
-    /// call sites that wrapped the result in `as f64` can drop the cast, while
-    /// call sites passing the value to `gauge` / `progress_bar` (which already
-    /// take `f64`) need no cast at all.
-    #[deprecated(
-        since = "0.21.0",
-        note = "use progress_ratio() — f64 matches the rest of the v0.20+ ratio surface (gauge/progress_bar take f64; drop any `as f64` cast)"
-    )]
-    pub fn progress(&self) -> f32 {
-        self.progress_ratio() as f32
-    }
-
-    /// Scroll up by the given number of rows, clamped to 0.
-    pub fn scroll_up(&mut self, amount: usize) {
-        self.offset = self.offset.saturating_sub(amount);
-    }
-
-    /// Scroll down by the given number of rows, clamped to the maximum offset.
-    pub fn scroll_down(&mut self, amount: usize) {
-        let max_offset = self.max_offset();
-        self.offset = self.offset.saturating_add(amount).min(max_offset);
-    }
-
-    /// Set the absolute scroll offset, clamped to `[0, content - viewport]`.
+    /// Available since `0.21.0`.
     ///
-    /// Uses the same `max_offset` semantics as [`scroll_down`](Self::scroll_down).
-    /// Click-to-jump and thumb-drag in [`Context::scrollbar`] route through
-    /// this so an out-of-range target row never leaves the offset past the
-    /// last full screen of content. Direct `state.offset = …` writes keep
-    /// working; this is the clamping-safe alternative.
-    ///
-    /// [`Context::scrollbar`]: crate::Context::scrollbar
+    /// # Example
     ///
     /// ```no_run
-    /// # use slt::widgets::ScrollState;
-    /// let mut scroll = ScrollState::new();
-    /// // Bounds are populated by the `scrollable` widget each frame; on a
-    /// // fresh state max_offset is 0 so any target clamps to 0.
-    /// scroll.set_offset(999);
-    /// assert_eq!(scroll.offset, 0);
+    /// use slt::CalendarState;
+    ///
+    /// let mut cal = CalendarState::from_ym(2024, 3);
+    /// assert!(cal.selected_time().is_none());
+    /// cal.with_time();
+    /// assert_eq!(cal.selected_time(), Some((0, 0)));
     /// ```
-    pub fn set_offset(&mut self, offset: usize) {
-        let max_offset = self.max_offset();
-        self.offset = offset.min(max_offset);
+    pub fn selected_time(&self) -> Option<(u8, u8)> {
+        self.time_enabled.then_some((self.hour, self.minute))
     }
 
-    pub(crate) fn set_bounds(&mut self, content_height: u32, viewport_height: u32) {
-        self.content_height = content_height;
-        self.viewport_height = viewport_height;
-        self.max_offset_y = content_height.saturating_sub(viewport_height);
+    /// The cursor day as an absolute [`CalDate`] in the displayed month.
+    pub(crate) fn cursor_date(&self) -> CalDate {
+        CalDate {
+            year: self.year,
+            month: self.month,
+            day: self.cursor_day,
+        }
     }
 
-    pub(crate) fn set_clipped_bounds(&mut self, content: u32, viewport: u32, max: u32, horizontal: bool) {
-        if horizontal { self.set_bounds_x(content, viewport); self.max_offset_x = max; }
-        else { self.set_bounds(content, viewport); self.max_offset_y = max; }
+    /// Set the range anchor to the cursor, clearing any prior extent.
+    pub(crate) fn set_anchor_to_cursor(&mut self) {
+        let cur = self.cursor_date();
+        self.anchor = Some(cur);
+        self.extent = None;
     }
 
-    /// Update the horizontal (x-axis) bounds (#247).
+    /// Set the range extent endpoint to the cursor.
     ///
-    /// Called by [`Context::scroll_row`] / [`Context::scrollable`] each frame
-    /// when the bound scrollable scrolls horizontally. The vertical
-    /// [`set_bounds`](Self::set_bounds) is left untouched, keeping the two axes
-    /// independent.
-    ///
-    /// [`Context::scroll_row`]: crate::Context::scroll_row
-    /// [`Context::scrollable`]: crate::Context::scrollable
-    pub(crate) fn set_bounds_x(&mut self, content_width: u32, viewport_width: u32) {
-        self.content_width = content_width;
-        self.viewport_width = viewport_width;
-        self.max_offset_x = content_width.saturating_sub(viewport_width);
+    /// If no anchor exists yet, the cursor becomes the anchor.
+    pub(crate) fn extend_to_cursor(&mut self) {
+        let cur = self.cursor_date();
+        if self.anchor.is_none() {
+            self.anchor = Some(cur);
+        }
+        self.extent = Some(cur);
     }
 
-    /// Check if scrolling left is possible (`offset_x` is greater than 0, #247).
-    ///
-    /// ```no_run
-    /// # use slt::ScrollState;
-    /// let scroll = ScrollState::new();
-    /// assert!(!scroll.can_scroll_left());
-    /// ```
-    pub fn can_scroll_left(&self) -> bool {
-        self.offset_x > 0
+    /// Whether the given absolute date falls inside the selected range
+    /// (inclusive of both endpoints).
+    pub(crate) fn in_range(&self, d: CalDate) -> bool {
+        match self.selected_range() {
+            Some((start, end)) => start.key() <= d.key() && d.key() <= end.key(),
+            None => false,
+        }
     }
 
-    /// Check if scrolling right is possible (content extends past the right
-    /// edge of the viewport, #247).
-    ///
-    /// ```no_run
-    /// # use slt::ScrollState;
-    /// let scroll = ScrollState::new();
-    /// // A fresh state with no content cannot scroll right.
-    /// assert!(!scroll.can_scroll_right());
-    /// ```
-    pub fn can_scroll_right(&self) -> bool {
-        self.offset_x < self.max_offset_x()
+    /// Whether the given absolute date is one of the range endpoints.
+    pub(crate) fn is_range_endpoint(&self, d: CalDate) -> bool {
+        match self.selected_range() {
+            Some((start, end)) => d == start || d == end,
+            None => false,
+        }
     }
 
-    /// Total horizontal content width in columns (#247).
-    pub fn content_width(&self) -> u32 {
-        self.content_width
-    }
-
-    /// Horizontal viewport width in columns (#247).
-    pub fn viewport_width(&self) -> u32 {
-        self.viewport_width
-    }
-
-    /// Horizontal scroll progress as a ratio in `[0.0, 1.0]` (#247).
-    ///
-    /// The x-axis mirror of [`progress_ratio`](Self::progress_ratio). Returns
-    /// `0.0` when the content fits the viewport (no horizontal overflow). Feed
-    /// it to a future horizontal scrollbar, a position readout, or a minimap.
-    ///
-    /// ```no_run
-    /// # use slt::ScrollState;
-    /// let scroll = ScrollState::new();
-    /// let p: f64 = scroll.progress_x();
-    /// assert!((0.0..=1.0).contains(&p));
-    /// ```
-    pub fn progress_x(&self) -> f64 {
-        let max = self.max_offset_x();
-        if max == 0 {
-            0.0
+    /// Navigate to the previous month.
+    pub fn prev_month(&mut self) {
+        if self.month == 1 {
+            self.month = 12;
+            self.year -= 1;
         } else {
-            self.offset_x.min(max) as f64 / max as f64
+            self.month -= 1;
         }
+        self.clamp_days();
     }
 
-    /// Scroll left by the given number of columns, clamped to 0 (#247).
-    ///
-    /// ```no_run
-    /// # use slt::ScrollState;
-    /// let mut scroll = ScrollState::new();
-    /// scroll.scroll_left(4); // clamps at 0 with no content
-    /// assert_eq!(scroll.offset_x, 0);
-    /// ```
-    pub fn scroll_left(&mut self, amount: usize) {
-        self.offset_x = self.offset_x.saturating_sub(amount);
-    }
-
-    /// Scroll right by the given number of columns, clamped to the maximum
-    /// horizontal offset (#247).
-    ///
-    /// ```no_run
-    /// # use slt::ScrollState;
-    /// let mut scroll = ScrollState::new();
-    /// scroll.scroll_right(4); // clamps to content bounds (0 with no content)
-    /// assert_eq!(scroll.offset_x, 0);
-    /// ```
-    pub fn scroll_right(&mut self, amount: usize) {
-        let max_offset = self.max_offset_x();
-        self.offset_x = self.offset_x.saturating_add(amount).min(max_offset);
-    }
-
-    /// Set the active highlight ranges. Replaces any previous highlights.
-    ///
-    /// Selecting the first highlight automatically when the list is non-empty
-    /// matches the behavior of search-result navigation in code editors.
-    pub fn set_highlights(&mut self, ranges: &[HighlightRange]) {
-        self.highlights.clear();
-        self.highlights.extend_from_slice(ranges);
-        self.current_highlight = if self.highlights.is_empty() {
-            None
+    /// Navigate to the next month.
+    pub fn next_month(&mut self) {
+        if self.month == 12 {
+            self.month = 1;
+            self.year += 1;
         } else {
-            Some(0)
-        };
-    }
-
-    /// Read-only access to the active highlight ranges.
-    pub fn highlights(&self) -> &[HighlightRange] {
-        &self.highlights
-    }
-
-    /// Index of the currently focused highlight, if any.
-    pub fn current_highlight(&self) -> Option<usize> {
-        self.current_highlight
-    }
-
-    /// Clear all highlights and reset the current index.
-    pub fn clear_highlights(&mut self) {
-        self.highlights.clear();
-        self.current_highlight = None;
-    }
-
-    /// Advance to the next highlight, scrolling the viewport to show it.
-    /// Wraps from last to first.
-    pub fn highlight_next(&mut self) {
-        if self.highlights.is_empty() {
-            return;
+            self.month += 1;
         }
-        let next = match self.current_highlight {
-            Some(i) => (i + 1) % self.highlights.len(),
-            None => 0,
-        };
-        self.current_highlight = Some(next);
-        self.scroll_to_current_highlight();
+        self.clamp_days();
     }
 
-    /// Move to the previous highlight, scrolling the viewport to show it.
-    /// Wraps from first to last.
-    pub fn highlight_previous(&mut self) {
-        if self.highlights.is_empty() {
-            return;
-        }
-        let next = match self.current_highlight {
-            Some(i) => {
-                if i == 0 {
-                    self.highlights.len() - 1
+    pub(crate) fn days_in_month(year: i32, month: u32) -> u32 {
+        match month {
+            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+            4 | 6 | 9 | 11 => 30,
+            2 => {
+                if Self::is_leap_year(year) {
+                    29
                 } else {
-                    i - 1
+                    28
                 }
             }
-            None => 0,
-        };
-        self.current_highlight = Some(next);
-        self.scroll_to_current_highlight();
+            _ => 30,
+        }
     }
 
-    /// Scroll the viewport so the currently focused highlight is visible
-    /// with one line of context above when possible.
-    pub fn scroll_to_current_highlight(&mut self) {
-        let Some(idx) = self.current_highlight else {
-            return;
-        };
-        let Some(range) = self.highlights.get(idx).copied() else {
-            return;
-        };
-        let target = range.start_line;
-        let viewport = self.viewport_height as usize;
-        let max_offset = self.max_offset();
-        if target < self.offset {
-            self.offset = target.saturating_sub(1).min(max_offset);
-        } else if viewport > 0 && target >= self.offset + viewport {
-            let desired = target + 2;
-            let new_offset = desired.saturating_sub(viewport);
-            self.offset = new_offset.min(max_offset);
-        } else if self.offset > max_offset {
-            self.offset = max_offset;
+    pub(crate) fn first_weekday(year: i32, month: u32) -> u32 {
+        let month = month.clamp(1, 12);
+        let offsets = [0_i32, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
+        let mut y = year;
+        if month < 3 {
+            y -= 1;
         }
+        let sunday_based = (y + y / 4 - y / 100 + y / 400 + offsets[(month - 1) as usize] + 1) % 7;
+        ((sunday_based + 6) % 7) as u32
+    }
+
+    fn clamp_days(&mut self) {
+        let max_day = Self::days_in_month(self.year, self.month);
+        self.cursor_day = self.cursor_day.clamp(1, max_day);
+        if let Some(day) = self.selected_day {
+            self.selected_day = Some(day.min(max_day));
+        }
+    }
+
+    fn is_leap_year(year: i32) -> bool {
+        (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+    }
+
+    fn current_year_month() -> (i32, u32) {
+        let Ok(duration) = SystemTime::now().duration_since(UNIX_EPOCH) else {
+            return (1970, 1);
+        };
+        let days_since_epoch = (duration.as_secs() / 86_400) as i64;
+        let (year, month, _) = Self::civil_from_days(days_since_epoch);
+        (year, month)
+    }
+
+    fn civil_from_days(days_since_epoch: i64) -> (i32, u32, u32) {
+        let z = days_since_epoch + 719_468;
+        let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+        let doe = z - era * 146_097;
+        let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+        let mut year = (yoe as i32) + (era as i32) * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
+        let month = (mp + if mp < 10 { 3 } else { -9 }) as u32;
+        if month <= 2 {
+            year += 1;
+        }
+        (year, month, day)
     }
 }
 
-impl Default for ScrollState {
+impl Default for CalendarState {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// State for a [`crate::Context::split_pane`] /
-/// [`crate::Context::vsplit_pane`] container.
-///
-/// Tracks the split ratio and drag state. Pass a mutable reference each frame
-/// — the widget updates `ratio` in place when the user drags the handle or
-/// presses arrow keys with the handle focused.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SplitPaneState {
-    /// Fraction of space given to the first pane. Clamped to
-    /// `[min_ratio, 1.0 - min_ratio]`.
-    pub ratio: f64,
-    /// Whether the handle is currently being dragged.
-    pub dragging: bool,
-    /// Minimum fraction allocated to either pane. Default: `0.10`.
-    pub min_ratio: f64,
-}
-
-/// Default minimum fraction of either pane, used by [`SplitPaneState::new`].
-///
-/// Crate-internal: there is no public path that benefits from constructing
-/// with this constant — call [`SplitPaneState::new`] for the default (0.10)
-/// or [`SplitPaneState::with_min_ratio`] to override per-instance.
-pub(crate) const DEFAULT_SPLIT_MIN_RATIO: f64 = 0.10;
-
-impl SplitPaneState {
-    /// Create split state with the given initial ratio, clamped to
-    /// `[DEFAULT_SPLIT_MIN_RATIO, 1.0 - DEFAULT_SPLIT_MIN_RATIO]` (default
-    /// `[0.10, 0.90]`).
-    pub fn new(ratio: f64) -> Self {
-        let min_ratio = DEFAULT_SPLIT_MIN_RATIO;
-        let clamped = ratio.clamp(min_ratio, 1.0 - min_ratio);
-        Self {
-            ratio: clamped,
-            dragging: false,
-            min_ratio,
-        }
-    }
-
-    /// Override the minimum ratio for either pane (clamped to `[0.0, 0.49]`).
-    pub fn with_min_ratio(mut self, min: f64) -> Self {
-        self.min_ratio = min.clamp(0.0, 0.49);
-        self.ratio = self.ratio.clamp(self.min_ratio, 1.0 - self.min_ratio);
-        self
-    }
-
-    /// Set the ratio, clamped to `[min_ratio, 1.0 - min_ratio]`.
-    pub fn set_ratio(&mut self, ratio: f64) {
-        self.ratio = ratio.clamp(self.min_ratio, 1.0 - self.min_ratio);
-    }
-}
-
-impl Default for SplitPaneState {
-    fn default() -> Self {
-        Self::new(0.5)
-    }
-}
-
-/// Column specification for [`crate::Context::grid_with()`].
-///
-/// Controls the width allocation of individual columns in a grid layout.
-///
-/// # Example
-///
-/// ```no_run
-/// use slt::GridColumn;
-/// # slt::run(|ui: &mut slt::Context| {
-/// ui.grid_with(&[
-///     GridColumn::Fixed(8),   // label column: exactly 8 chars
-///     GridColumn::Grow(1),    // flexible column
-///     GridColumn::Grow(1),    // flexible column
-///     GridColumn::Fixed(4),   // status column: exactly 4 chars
-/// ], |ui| {
-///     // children placed left-to-right, wrapping to next row
-/// });
-/// # });
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum GridColumn {
-    /// Equal-width column with grow weight 1 (default `grid()` behavior).
-    Auto,
-    /// Fixed-width column in character cells. Does not grow or shrink.
-    Fixed(u32),
-    /// Flexible column with a custom grow weight. Higher values take
-    /// proportionally more space.
-    Grow(u16),
-    /// Column sized as a percentage (1–100) of the grid width.
-    Percent(u8),
-}
-
 #[cfg(test)]
-mod table_v021_width_tests {
+mod table_column_width_tests {
     use super::TableColumn;
     use super::TableState;
 
@@ -2474,86 +2767,28 @@ mod list_state_height_tests {
 }
 
 #[cfg(test)]
-mod scroll_state_progress_tests {
-    use super::ScrollState;
-
-    /// Build a state with the bounds the `scrollable` widget would set, plus an
-    /// offset, so `progress_ratio` exercises a realistic non-zero ratio.
-    fn scrolled(content_height: u32, viewport_height: u32, offset: usize) -> ScrollState {
-        let mut state = ScrollState::new();
-        state.set_bounds(content_height, viewport_height);
-        state.offset = offset;
-        state
-    }
-
-    #[test]
-    fn progress_ratio_returns_f64_in_unit_range() {
-        // Top of a scrollable region → 0.0.
-        let top = scrolled(100, 20, 0);
-        let ratio: f64 = top.progress_ratio();
-        assert_eq!(ratio, 0.0);
-
-        // Halfway through the scrollable range (offset 40 of max 80) → 0.5.
-        let mid = scrolled(100, 20, 40);
-        assert_eq!(mid.progress_ratio(), 0.5);
-
-        // Fully scrolled (offset == max) → 1.0.
-        let bottom = scrolled(100, 20, 80);
-        assert_eq!(bottom.progress_ratio(), 1.0);
-    }
-
-    #[test]
-    fn progress_ratio_is_zero_when_content_fits_viewport() {
-        // No overflow → no scroll range → 0.0 (and no divide-by-zero).
-        let fits = scrolled(20, 20, 0);
-        assert_eq!(fits.progress_ratio(), 0.0);
-
-        let smaller = scrolled(10, 20, 5);
-        assert_eq!(smaller.progress_ratio(), 0.0);
-    }
-
-    #[test]
-    fn progress_ratio_preserves_f64_precision() {
-        // 1/3 is lossy in f32; the f64 surface keeps more digits than `as f32`.
-        let third = scrolled(40, 10, 10); // max = 30, offset = 10 → 1/3
-        let ratio = third.progress_ratio();
-        assert!((ratio - 1.0 / 3.0).abs() < 1e-12);
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn deprecated_progress_delegates_to_progress_ratio() {
-        // The deprecated f32 alias must agree with the f64 source within f32 epsilon.
-        let state = scrolled(100, 20, 40);
-        let expected = state.progress_ratio() as f32;
-        assert_eq!(state.progress(), expected);
-        assert!((state.progress() - 0.5).abs() < f32::EPSILON);
-    }
-}
-
-#[cfg(test)]
 mod list_state_reorder_tests {
     use super::ListState;
 
     #[test]
     fn move_item_forward_reorders_and_keeps_selection() {
         let mut state = ListState::new(vec!["a", "b", "c", "d"]);
-        state.selected = 0; // "a"
+        assert!(state.set_selected_view_index(0)); // "a"
         assert!(state.move_item(0, 2));
         assert_eq!(state.items, vec!["b", "c", "a", "d"]);
         // Selection follows the moved item.
         assert_eq!(state.selected_item(), Some("a"));
-        assert_eq!(state.selected, 2);
+        assert_eq!(state.selected_view_index(), 2);
     }
 
     #[test]
     fn move_item_backward_reorders_and_keeps_selection() {
         let mut state = ListState::new(vec!["a", "b", "c", "d"]);
-        state.selected = 3; // "d"
+        assert!(state.set_selected_view_index(3)); // "d"
         assert!(state.move_item(3, 1));
         assert_eq!(state.items, vec!["a", "d", "b", "c"]);
         assert_eq!(state.selected_item(), Some("d"));
-        assert_eq!(state.selected, 1);
+        assert_eq!(state.selected_view_index(), 1);
     }
 
     #[test]
@@ -2580,10 +2815,10 @@ mod list_state_reorder_tests {
     #[test]
     fn move_item_noop_when_from_equals_to() {
         let mut state = ListState::new(vec!["a", "b", "c"]);
-        state.selected = 1;
+        assert!(state.set_selected_view_index(1));
         assert!(!state.move_item(1, 1));
         assert_eq!(state.items, vec!["a", "b", "c"]);
-        assert_eq!(state.selected, 1);
+        assert_eq!(state.selected_view_index(), 1);
     }
 
     #[test]
@@ -2606,16 +2841,16 @@ mod list_state_reorder_tests {
         // Moving an item that is not selected should keep selection on the
         // same logical item.
         let mut state = ListState::new(vec!["a", "b", "c", "d"]);
-        state.selected = 3; // "d"
+        assert!(state.set_selected_view_index(3)); // "d"
         assert!(state.move_item(0, 1)); // swap a/b; "d" stays last
         assert_eq!(state.items, vec!["b", "a", "c", "d"]);
         assert_eq!(state.selected_item(), Some("d"));
-        assert_eq!(state.selected, 3);
+        assert_eq!(state.selected_view_index(), 3);
     }
 }
 
 #[cfg(test)]
-mod v024_collection_state_tests {
+mod list_height_metadata_tests {
     use super::*;
 
     fn heights(state: &ListState) -> Vec<u32> {
@@ -2627,7 +2862,7 @@ mod v024_collection_state_tests {
         for initial in [vec![1, 10, 2], vec![1, 10]] {
             let mut state = ListState::new(vec!["a", "b", "c"]).with_item_heights(initial);
             let last = state.item_height(2);
-            state.selected = 1;
+            assert!(state.set_selected_view_index(1));
             state.remove_item(0);
             assert_eq!(heights(&state), [10, last]);
             assert_eq!(state.selected_item(), Some("b"));
@@ -2674,7 +2909,7 @@ mod v024_collection_state_tests {
     fn table_unsorted_append_preserves_selection_and_width_cache() {
         let mut state = TableState::new(vec!["H"], vec![vec!["one"], vec!["two"]]);
         state.select_single(1);
-        state.selected = 1;
+        assert!(state.set_selected_view_index(1));
         state.push_row(vec!["longer"]);
         assert!(!state.is_dirty());
         assert_eq!(state.column_widths(), [6]);
@@ -2702,6 +2937,178 @@ mod v024_collection_state_tests {
                 + state.row_prefix.capacity() * std::mem::size_of::<u32>()
                 + state.item_heights.as_ref().unwrap().capacity() * std::mem::size_of::<u32>();
             eprintln!("COLLECTION_RETAINED n={count} owned_capacity_bytes={bytes}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod selection_index_tests {
+    //! Issue #455: selected-item reads and removal use the data index of the
+    //! row the user sees highlighted, with or without a filter or sort.
+    use super::*;
+
+    fn fruit() -> ListState {
+        ListState::new(vec!["apple", "banana", "cherry"])
+    }
+
+    #[test]
+    fn remove_selected_under_filter_removes_the_highlighted_item() {
+        let mut list = fruit();
+        list.set_filter("cherry");
+        assert_eq!(list.selected_item(), Some("cherry"));
+        assert_eq!(list.remove_selected().as_deref(), Some("cherry"));
+        assert_eq!(list.items(), ["apple", "banana"]);
+        // Nothing left in the filtered view.
+        assert_eq!(list.remove_selected(), None);
+        assert_eq!(list.items(), ["apple", "banana"]);
+    }
+
+    #[test]
+    fn selected_index_maps_view_to_data_in_every_view_state() {
+        let mut list = fruit();
+        assert!(list.set_selected_index(2));
+        assert_eq!(list.selected_view_index(), 2);
+        assert_eq!(list.selected_index(), Some(list.visible_indices()[2]));
+
+        list.set_filter("an"); // banana only
+        assert_eq!(list.selected_view_index(), 0);
+        assert_eq!(list.selected_index(), Some(1));
+        assert_eq!(
+            list.selected_index(),
+            Some(list.visible_indices()[list.selected_view_index()])
+        );
+
+        list.set_filter("zzz");
+        assert_eq!(list.selected_index(), None);
+
+        let empty = ListState::new(Vec::<String>::new());
+        assert_eq!(empty.selected_index(), None);
+        assert_eq!(empty.selected_view_index(), 0);
+    }
+
+    #[test]
+    fn set_selected_index_selects_only_visible_items() {
+        let mut list = fruit();
+        list.set_filter("a"); // apple, banana
+        assert!(list.set_selected_index(1));
+        assert_eq!(list.selected_item(), Some("banana"));
+        assert!(!list.set_selected_index(2), "cherry is filtered out");
+        assert_eq!(list.selected_item(), Some("banana"));
+        assert!(!list.set_selected_index(99));
+    }
+
+    fn people() -> TableState {
+        TableState::new(
+            vec!["Name", "Age"],
+            vec![vec!["carol", "31"], vec!["alice", "45"], vec!["bob", "27"]],
+        )
+    }
+
+    fn row(cells: &[&str]) -> Vec<String> {
+        cells.iter().map(|cell| cell.to_string()).collect()
+    }
+
+    #[test]
+    fn table_remove_selected_under_filter_removes_the_highlighted_row() {
+        let mut table = people();
+        table.set_filter("bob");
+        assert_eq!(table.selected_row(), Some(&row(&["bob", "27"])[..]));
+        assert_eq!(table.remove_selected(), Some(row(&["bob", "27"])));
+        assert_eq!(table.row_count(), 2);
+        assert!(table.rows().iter().all(|r| r[0] != "bob"));
+    }
+
+    #[test]
+    fn table_remove_selected_under_sort_removes_the_highlighted_row() {
+        let mut table = people();
+        table.sort_by(0); // alice, bob, carol
+        assert!(table.set_selected_index(2)); // bob (data index 2)
+        assert_eq!(table.selected_view_index(), 1);
+        assert_eq!(table.selected_index(), Some(2));
+        assert_eq!(table.remove_selected(), Some(row(&["bob", "27"])));
+        let names: Vec<&str> = table.rows().iter().map(|r| r[0].as_str()).collect();
+        assert_eq!(names, ["carol", "alice"]);
+    }
+
+    #[test]
+    fn table_set_selected_index_moves_to_the_rows_page() {
+        let mut table = TableState::new(
+            vec!["N"],
+            (0..10).map(|i| vec![i.to_string()]).collect::<Vec<_>>(),
+        );
+        table.page_size = 3;
+        assert!(table.set_selected_index(7));
+        assert_eq!(table.page, 2);
+        assert_eq!(table.selected_index(), Some(7));
+        table.set_filter("zzz");
+        assert!(!table.set_selected_index(7));
+        assert_eq!(table.selected_index(), None);
+    }
+
+    #[test]
+    fn set_items_to_a_smaller_list_releases_index_buffers() {
+        // #416: replacing 10k items with 2 used to keep ~10k-entry
+        // view/prefix/height buffers alive for the life of the state.
+        let mut list = ListState::new((0..10_000).map(|i| i.to_string()).collect::<Vec<_>>())
+            .with_item_heights(vec![2; 10_000]);
+        list.ensure_row_prefix();
+        list.set_items(vec!["a", "b"]);
+        assert!(list.view_indices.capacity() <= 66, "view kept its capacity");
+        assert!(list.row_prefix.capacity() <= 66, "prefix kept its capacity");
+        assert!(
+            list.item_heights
+                .as_ref()
+                .is_some_and(|h| h.capacity() <= 66),
+            "heights kept their capacity"
+        );
+        assert_eq!(list.visible_indices(), [0, 1]);
+        list.ensure_row_prefix();
+        assert_eq!(list.row_prefix(), [0, 2, 4]);
+        // Filter churn keeps capacity (no reallocation per keystroke).
+        let mut big = ListState::new((0..1_000).map(|i| i.to_string()).collect::<Vec<_>>());
+        big.set_filter("999");
+        assert!(big.view_indices.capacity() >= 1_000);
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
+
+        #[test]
+        fn remove_selected_always_removes_selected_item(
+            items in proptest::collection::vec("[a-c]{1,3}", 0..12),
+            filter in "[a-c]{0,2}",
+            pick in 0usize..16,
+        ) {
+            let mut list = ListState::new(items.clone());
+            list.set_filter(filter.clone());
+            let visible = list.visible_indices().len().max(1);
+            if let Some(&data) = list.visible_indices().get(pick % visible) {
+                proptest::prop_assert!(list.set_selected_index(data));
+            }
+            let expected = list.selected_item().map(str::to_string);
+            proptest::prop_assert_eq!(
+                list.selected_index(),
+                list.visible_indices().get(list.selected_view_index()).copied()
+            );
+            let removed = list.remove_selected();
+            proptest::prop_assert_eq!(&removed, &expected);
+            proptest::prop_assert_eq!(
+                list.len(),
+                items.len() - usize::from(expected.is_some())
+            );
+
+            let mut table = TableState::new(
+                vec!["C"],
+                items.iter().map(|item| vec![item.clone()]).collect::<Vec<_>>(),
+            );
+            table.sort_by(0);
+            table.set_filter(filter);
+            let visible = table.visible_indices().len().max(1);
+            if let Some(&data) = table.visible_indices().get(pick % visible) {
+                proptest::prop_assert!(table.set_selected_index(data));
+            }
+            let expected = table.selected_row().map(<[String]>::to_vec);
+            proptest::prop_assert_eq!(table.remove_selected(), expected);
         }
     }
 }

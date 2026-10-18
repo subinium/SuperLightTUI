@@ -1,13 +1,13 @@
 ---
 name: slt-migration
-description: Migrate Rust TUIs from ratatui (or cursive, Python textual) to SuperLightTUI v0.25. Use when porting an existing TUI codebase to SLT, or when the user asks "how do I do X from ratatui in SLT". Korean triggers "ratatui 마이그레이션", "SLT로 포팅", "이걸 SLT로".
+description: Migrate Rust TUIs from ratatui (or cursive, Python textual) to SuperLightTUI v0.26. Use when porting an existing TUI codebase to SLT, or when the user asks "how do I do X from ratatui in SLT". Korean triggers "ratatui 마이그레이션", "SLT로 포팅", "이걸 SLT로".
 ---
 
 # SLT Migration Skill (from ratatui / cursive / textual)
 
 This skill complements `.agents/skills/slt/SKILL.md` (authoring). Use this one to **port** an existing codebase. After migration switch to the `slt` skill for day-to-day work.
 
-**Targets SLT v0.25.0**. Every API name below must be verified against `src/lib.rs` and `src/context/widgets_*.rs`. The v0.20 API consistency pass removed several v0.19 names; the historical table below remains relevant.
+**Targets SLT v0.26.0**. Every API name below must be verified against `src/lib.rs` and `src/context/widgets/`. The v0.20 API consistency pass removed several v0.19 names; the historical table below remains relevant.
 
 ## When to use
 
@@ -21,8 +21,8 @@ If starting fresh (no existing TUI), use the `slt` skill instead.
 
 ## Two rules that break naive ports
 
-1. **Mouse capture is opt-in.** ratatui apps enable it with `EnableMouseCapture`; in SLT `slt::run` leaves it off (`RunConfig::default()` has `mouse: false`). If the original app used the mouse, port to `slt::run_with(RunConfig::default().mouse(true), |ui| ...)`, or every `Response.clicked` / `hovered` / `scroll_delta` stays `false`.
-2. **Check global shortcuts after rendering text inputs.** A ratatui `match key.code { Char('q') => quit, .. }` dispatched before the focused input sees the key. In SLT, render `text_input` / `textarea` first (they consume the keys they handle), then check `ui.key('q')`, or gate on the input's `Response.focused`.
+1. **The mouse is on by default; hover is opt-in.** ratatui apps enable capture with `EnableMouseCapture` (all motion). Since v0.26, `slt::run` turns the mouse on by itself (`MouseMode::Drag` locally, `MouseMode::Click` over SSH/mosh), so `Response.clicked` / `scroll_delta` and drags work without configuration. If the original app reacted to plain pointer moves (hover), port to `slt::run_with(RunConfig::default().mouse_mode(MouseMode::Hover), |ui| ...)`, or `hovered` only changes on clicks and drags. If the original never enabled capture and users rely on native terminal selection, use `MouseMode::Off`.
+2. **Shortcuts vs focused inputs.** A ratatui `match key.code { Char('q') => quit, .. }` dispatched before the focused input sees the key. In SLT, `ui.key('q')` / `ui.shortcut(KeyCode::Char('q'), KeyModifiers::NONE)` skip the keys a focused `text_input` / `textarea` edits with, in any call order, so port the dispatch as plain shortcut checks. Use `ui.raw_key(c)` only when a key must fire even while typing.
 
 ## v0.20 removed APIs (do NOT migrate to these)
 
@@ -63,6 +63,7 @@ Compact side-by-side — read once before writing any code.
 ### Run loop
 
 ratatui (typical):
+<!-- slt-check-skip: ratatui code shown for comparison; not SLT -->
 ```rust
 let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
 terminal::enable_raw_mode()?;
@@ -79,11 +80,13 @@ terminal::disable_raw_mode()?;
 ```
 
 SLT:
+<!-- slt-check: {"name":"migration_run_loop","features":["crossterm"],"context":"module","setup":"#[derive(Default)] struct App { saves: u32 } fn render(ui: &mut Context, app: &mut App) { if ui.button(\"Save\").clicked { app.saves += 1; } }"} -->
 ```rust
 fn main() -> std::io::Result<()> {
     let mut app = App::default();
-    // ratatui enabled mouse capture above; SLT needs it explicitly.
-    slt::run_with(slt::RunConfig::default().mouse(true), |ui| {
+    // Clicks, wheel and drags are on by default. ratatui's EnableMouseCapture
+    // also reported every pointer move; MouseMode::Hover is the equivalent.
+    slt::run_with(slt::RunConfig::default().mouse_mode(slt::MouseMode::Hover), |ui| {
         if ui.key('q') || ui.key_code(KeyCode::Esc) { ui.quit(); }
         render(ui, &mut app);
     })
@@ -91,14 +94,14 @@ fn main() -> std::io::Result<()> {
 ```
 
 `slt::run` enters alternate screen, enables raw mode, installs a panic hook restoring terminal state, and tears down on exit. Variants:
-- `slt::run_with(RunConfig::default().mouse(true).theme(Theme::dark()), \|ui\| ...)` — mouse capture, custom theme
+- `slt::run_with(RunConfig::default().mouse_mode(MouseMode::Hover).theme(Theme::dark()), \|ui\| ...)` — hover reporting, custom theme
 - `slt::run_inline(rows, \|ui\| ...)` — render below the prompt, no alt screen
-- `slt::run_static(\|ui\| ...)` — append-only scrollback (use with `ui.static_log(...)`)
+- `slt::run_static(&mut output, dynamic_rows, \|ui\| ...)` — inline TUI below append-only scrollback; `output` is a `StaticOutput` (`output.println(..)` before the run, `ui.static_log(..)` inside it)
 - `slt::run_async::<Message>(\|ui, messages\| ...)` — tokio integration (`async` feature)
 
 ### Widget mapping (top ratatui widgets → SLT)
 
-Every SLT method below is verified against `src/context/widgets_*.rs`.
+Every SLT method below is verified against `src/context/widgets/`.
 
 | ratatui | SLT |
 |---|---|
@@ -133,7 +136,7 @@ These are SLT additions; if your ratatui app hand-rolled them, replace with the 
 | Breadcrumb with click feedback | `let r = ui.breadcrumb(&segs).separator(" › ").show(); if let Some(i) = r.clicked_segment { ... }` |
 | Tooltips | `if ui.button("X").on_hover(ui, "Save").clicked { ... }` |
 | Animated value | `let alpha = ui.animate_value("fade", target, 30);` (eased, 1-line) |
-| Modal with focus trap (WCAG) | `ui.modal_with(slt::context::ModalOptions { tab_trap: true }, \|ui\| ...)` (plain `ui.modal` keeps legacy `tab_trap: false`) |
+| Modal with focus trap (WCAG) | `ui.modal(\|ui\| ...)` (traps by default since 0.26); `ui.modal_with(slt::ModalOpts::new().anchor(..), \|ui\| ...)` to pin it |
 | Scroll that follows Tab focus | `ui.scrollable(&mut scroll).col(...)` — automatic since v0.25; opt out with `scroll.follow_focus = false` |
 | Form field with geometry | `let r = ui.form_field_response(&mut field);` → `FormFieldResponse { response, input, layout_rect }` |
 | Per-subtree theme override | `ui.container().theme(custom_theme).col(\|ui\| ...)` |
@@ -144,11 +147,13 @@ These are SLT additions; if your ratatui app hand-rolled them, replace with the 
 ratatui custom `Widget` trait impls don't translate directly. Two options:
 
 **Option A — function** (preferred for one-off widgets):
+<!-- slt-check: {"name":"migration_widget_fn","features":[],"context":"module","setup":"struct MyData { title: String }"} -->
 ```rust
-fn render_my_widget(ui: &mut Context, data: &MyData) { /* method calls */ }
+fn render_my_widget(ui: &mut Context, data: &MyData) { ui.text(&data.title).bold(); }
 ```
 
 **Option B — implement SLT's `Widget` trait** (for reusable libraries):
+<!-- slt-check: {"name":"migration_widget_trait","features":[],"context":"module"} -->
 ```rust
 struct Label<'a> { text: &'a str }
 impl<'a> slt::Widget for Label<'a> {
@@ -159,15 +164,31 @@ impl<'a> slt::Widget for Label<'a> {
         slt::Response::default()
     }
 }
-let mut label = Label { text: "hello" };
-ui.widget(&mut label);
+fn render(ui: &mut slt::Context) {
+    let mut label = Label { text: "hello" };
+    ui.widget(&mut label);
+}
 ```
 
 Note: SLT's `Widget` trait is different from ratatui's. ratatui's `Widget::render(self, area, buf)` is a stateless paint into a `Buffer`. SLT's `Widget::ui(&mut self, ui)` is an immediate-mode call that returns a `Response`.
 
+### Incremental path — keep ratatui widgets (`ratatui` feature, v0.26+)
+
+When a rewrite is too big to do at once, or a third-party ratatui widget has no SLT equivalent, enable `superlighttui = { version = "0.26", features = ["ratatui"] }` and render the ratatui widget inside an SLT container. The feature depends only on `ratatui-core` 0.1 (ratatui 0.30), not on a ratatui backend, and is not part of `full`.
+
+<!-- slt-check-skip: needs the external ratatui-widgets crate and captured app values -->
+```rust
+use ratatui_widgets::{block::Block, paragraph::Paragraph}; // or `ratatui::widgets`
+ui.container().h(5).ratatui_widget(Paragraph::new(text.clone()).block(Block::bordered()));
+ui.container().grow(1).ratatui(move |area, buf| sparkline.render(area, buf));
+```
+
+The closure is deferred (`'static`): move owned data in. It is render-only — input, focus and `StatefulWidget` state stay in SLT code. `slt::Color` / `Modifiers` / `Style` convert to and from the ratatui types with `From`; see `src/ratatui_compat.rs` for the lossy cases (blink variants, `HIDDEN`, `OVERLINE`). Port these regions to native SLT widgets later, one at a time.
+
 ### Layout mapping
 
 ratatui:
+<!-- slt-check-skip: ratatui code shown for comparison; not SLT -->
 ```rust
 let chunks = Layout::default()
     .direction(Direction::Vertical)
@@ -179,11 +200,12 @@ f.render_widget(footer, chunks[2]);
 ```
 
 SLT:
+<!-- slt-check: {"name":"migration_layout","features":[],"context":"ui"} -->
 ```rust
 ui.col(|ui| {
-    ui.container().h(3).col(|ui| { /* header */ });
-    ui.container().fill().col(|ui| { /* body — fills remaining (v0.20 fill() == grow(1)) */ });
-    ui.container().h(1).col(|ui| { /* footer */ });
+    ui.container().h(3).col(|ui| { ui.text("header"); });
+    ui.container().fill().col(|ui| { ui.text("body"); }); // fills remaining (fill() == grow(1))
+    ui.container().h(1).col(|ui| { ui.text("footer"); });
 });
 ```
 
@@ -196,17 +218,20 @@ Constraint translation:
 | `Constraint::Min(n)` | `.min_h(n).fill()` (col) or `.min_w(n).fill()` (row) |
 | `Constraint::Max(n)` | `.max_h(n)` or `.max_w(n)` |
 | `Constraint::Percentage(50)` | `.h_pct(50)` or `.w_pct(50)` |
-| `Constraint::Ratio(1, 3)` | `.constraints(Constraints::default().h_ratio(1, 3))` or `.w_ratio(1, 3)` (ratio lives on `Constraints`, not on `ContainerBuilder`) |
+| `Constraint::Ratio(1, 3)` | `.h_ratio(1, 3)` (col) or `.w_ratio(1, 3)` (row), directly on `ContainerBuilder`; also on `Constraints` |
 | `.margin(1)` on Layout | `.p(1)` on parent container |
 | `.spacing(1)` between chunks | `.gap(1)` on parent `row` / `col` |
 
-`Constraints` value type also exposes the v0.20 `WidthSpec` set: `Constraints::default().w_pct(50)`, `.w_ratio(1, 3)`, `.w_minmax(10, 30)` — see `examples/v020_widthspec.rs`.
+`Constraints` value type also exposes the v0.20 `WidthSpec` set: `Constraints::default().w_pct(50)`, `.w_ratio(1, 3)`, `.w_minmax(10, 30)` — see `examples/widthspec.rs`. Containers take the ratio directly too: `ui.container().w_ratio(1, 3).col(..)` (and `h_ratio`), like ratatui's `Constraint::Ratio(1, 3)`.
 
 ### State mapping (re-exported via `slt::*`)
 
+`use slt::prelude::*;` imports the common ones below plus `Context`, `run` / `run_with`, the style types and `KeyCode` in one line (no `crossterm` re-export, so it never shadows your own crossterm dependency during a port).
+
+
 | ratatui / your code | SLT |
 |---|---|
-| `ListState` | `slt::ListState` (`ListState::new(items)`, `set_items`, `set_filter`, `selected_item`, `visible_indices`) |
+| `ListState` | `slt::ListState` (`ListState::new(items)`, `set_items`, `set_filter`, `selected_item`, `selected_index`, `remove_selected`, `visible_indices`) |
 | `TableState` | `slt::TableState` (`set_rows`, `toggle_sort`, `sort_by`, `set_filter`, `next_page`, `prev_page`) |
 | `TabsState` | `slt::TabsState` (`new(vec!["Files", "Settings"])`, `selected_label`) |
 | `ScrollbarState` / manual offset | `slt::ScrollState` + `ui.scrollable(&mut state).col(...)` or `ui.scrollable_with_gutter(...)` |
@@ -214,7 +239,7 @@ Constraint translation:
 | your own `textarea: Vec<String>` | `slt::TextareaState::default().word_wrap(80)` |
 | your own selection set | `slt::SelectState`, `slt::RadioState`, `slt::MultiSelectState` |
 | tree view | `slt::TreeState`, `slt::DirectoryTreeState::from_paths(...)` |
-| modal flag | `slt::Context::modal(\|ui\| ...)` or `modal_with(ModalOptions{tab_trap:true}, ...)` |
+| modal flag | `slt::Context::modal(\|ui\| ...)` or `modal_with(ModalOpts::new(), ...)` |
 | toast queue | `slt::ToastState::default()` + `ui.toast(&mut toasts)`, or `ui.notify(msg, ToastLevel::Info)` for the built-in queue |
 | log/history view | `slt::RichLogState::new()` (capped at 10000) or `RichLogState::new_unbounded()` |
 
@@ -222,6 +247,7 @@ Constraint translation:
 
 ratatui apps typically thread `&mut App` (or `&App`) through every render fn:
 
+<!-- slt-check-skip: ratatui code shown for comparison; not SLT -->
 ```rust
 fn render(f: &mut Frame, app: &mut App) {
     render_header(f, app);
@@ -232,21 +258,25 @@ fn render(f: &mut Frame, app: &mut App) {
 
 In SLT v0.19+ replace **read-only** sharing with `provide`/`use_context`:
 
+<!-- slt-check: {"name":"migration_provide_context","features":["crossterm"],"context":"module","setup":"#[derive(Clone, Default)] struct Settings; #[derive(Default)] struct App { settings: Settings, doc: TextareaState } fn render_body(ui: &mut Context, doc: &mut TextareaState) { let _ = ui.textarea(doc, 5); } fn render_footer(ui: &mut Context) { ui.text(\"q quit\"); }"} -->
 ```rust
 struct AppCtx { theme: slt::Theme, tick: u64, settings: Settings }
 
-slt::run(|ui| {
-    let ctx = AppCtx { theme: *ui.theme(), tick: ui.tick(), settings: app.settings.clone() };
-    ui.provide(ctx, |ui| {
-        render_header(ui);
-        render_body(ui, &mut app.doc);   // writes still pass &mut explicitly
-        render_footer(ui);
-    });
-});
+fn main() -> std::io::Result<()> {
+    let mut app = App::default();
+    slt::run(|ui| {
+        let ctx = AppCtx { theme: *ui.theme(), tick: ui.tick(), settings: app.settings.clone() };
+        ui.provide(ctx, |ui| {
+            render_header(ui);
+            render_body(ui, &mut app.doc);   // writes still pass &mut explicitly
+            render_footer(ui);
+        });
+    })
+}
 
 fn render_header(ui: &mut slt::Context) {
-    let ctx = ui.use_context::<AppCtx>();
-    ui.text(format!("tick {}", ctx.tick));
+    let tick = ui.use_context::<AppCtx>().tick;   // copy out before the next `ui` call
+    ui.text(format!("tick {tick}"));
 }
 ```
 
@@ -259,7 +289,7 @@ Reserve explicit `&mut` parameters for **writes** (`&mut MyDocState`).
 | `KeyCode::Char('q')` match | `if ui.key('q') { ... }` |
 | `KeyCode::Esc` match | `if ui.key_code(KeyCode::Esc) { ... }` |
 | `KeyModifiers::CONTROL + Char('c')` | `if ui.key_mod('c', KeyModifiers::CONTROL) { ... }` (Ctrl-C is also auto-handled by `slt::run`) |
-| `EnableMouseCapture` | `slt::run_with(RunConfig::default().mouse(true), ...)` — required for every mouse row below |
+| `EnableMouseCapture` | Nothing for clicks, wheel and drags (on by default); `RunConfig::default().mouse_mode(MouseMode::Hover)` for `MouseEventKind::Moved` / hover |
 | `MouseEventKind::Down(MouseButton::Left)` | `if let Some((x, y)) = ui.mouse_down() { ... }` or `Response.clicked` |
 | `MouseEventKind::Down(MouseButton::Right)` | `Response.right_clicked` (v0.20) |
 | `MouseEventKind::ScrollUp` | `if ui.scroll_up() { ... }` |
@@ -268,9 +298,9 @@ Reserve explicit `&mut` parameters for **writes** (`&mut MyDocState`).
 | `paste` event | `if let Some(s) = ui.paste() { ... }` |
 | Sequence detection | `if ui.key_chord("gg") { ... }` |
 
-**Modal-aware**: `ui.key()`, `ui.key_code()`, `ui.key_mod()` are filtered when a modal is open. For global shortcuts that bypass modals, use `ui.raw_key_code()` / `ui.raw_key_mod()`.
+**Modal-aware**: `ui.key()`, `ui.key_code()`, `ui.key_mod()` are filtered when a modal is open, and skip the keys a focused text field edits with. For global shortcuts that bypass both, use `ui.raw_key()` / `ui.raw_key_code()` / `ui.raw_key_mod()`.
 
-**Consume**: `ui.consume_key(c)` / `ui.consume_key_code(code)` mark events handled so child widgets don't re-process. Useful for global shortcuts taking precedence over text input.
+**Consume**: `ui.consume_key(c)` / `ui.consume_key_code(code)` mark events handled so child widgets don't re-process. They never claim keys a focused text field edits with.
 
 ### Style mapping
 
@@ -295,7 +325,7 @@ Both libraries have:
 - `Color::Reset` in both
 
 Differences:
-- ratatui has `Color::Gray` and `Color::DarkGray` — SLT only has `Color::DarkGray`. Use `Color::Indexed(8)` (ANSI bright black) or `Color::Rgb(128, 128, 128)` for mid-gray.
+- Gray/white names are shifted by one ANSI slot. ratatui `Color::Gray` (index 7) is SLT `Color::White`, ratatui `Color::White` (index 15) is SLT `Color::LightWhite`, and `Color::DarkGray` (index 8) is the same in both. The `ratatui` feature's `From` impls apply this mapping (`src/ratatui_compat.rs`); a literal `Color::White` left in ported code renders one shade darker than before.
 - For semantic colors prefer `slt::palette::tailwind::*` (`BLUE.c500`, `RED.c700`) — same 11-shade scale across 22 palettes, identical to Tailwind CSS.
 
 ### Border type mapping
@@ -370,20 +400,20 @@ textual is class-based with reactive state and CSS. SLT is functional with plain
 
 - **"I have a struct that implements `Widget` trait."** — drop ratatui's. Either rewrite as `fn render_my_widget(ui: &mut Context, data: &MyData)`, or implement `slt::Widget` (different shape — see Custom widgets section).
 - **"My App has a `draw(&mut self, frame: &mut Frame)` method."** — convert to `fn render(ui: &mut Context, app: &mut App)` and call from `slt::run(\|ui\| render(ui, &mut app))`.
-- **"ratatui `ListState` lives across frames."** — same in SLT. `let mut list = ListState::new(items);` outside the closure; pass `&mut list` to `ui.list(&mut list)` each frame.
+- **"ratatui `ListState` lives across frames."** — same in SLT. `let mut list = ListState::new(items);` outside the closure; pass `&mut list` to `ui.list(&mut list)` each frame. Read the selection with `list.selected_item()` (`Option<&str>`) or `list.selected_index()` (`Option<usize>`, the data index into `items` to pass to `remove_item` / `item`); the `selected` field is deprecated since 0.26 because it holds the filtered-view position, not the data index.
 - **"I want raw crossterm events."** — prefer `ui.key()` / `ui.key_code()` / `ui.key_mod()` / `ui.mouse_down()` / `ui.scroll_up()`. Raw `ui.events()` is for advanced cases (key release, paste handling, custom modifier matching). For modal-aware globals use `ui.raw_key_code()` / `ui.raw_key_mod()`.
 - **"I have heavy custom layout math (`.split()` arithmetic on `Rect`)."** — try `ui.row` / `ui.col` + `.fill / .h / .w / .h_pct / .w_pct / .align / .justify` first. Flexbox handles 95% of cases. Drop to `ui.container().draw(\|buf, rect\| { ... })` only when flexbox can't express it. The `draw` closure must be `'static` (deferred execution).
 - **"`Constraint::Percentage(50)` is everywhere."** — `.w_pct(50)` (row child) or `.h_pct(50)` (col child). Both take `u8`.
 - **"I use `Layout::default().margin(1).split(area)`."** — `.p(1)` on the parent container.
 - **"I check `Response.rect` immediately."** — SLT layout runs *after* the closure. Frame 1 returns zero `Rect`. Guard with `if ui.tick() > 0 { ... }`.
 - **"`Borders::ALL`."** — SLT default. `ui.bordered(Border::Rounded)` draws all 4 sides. Subset via `.border_sides(BorderSides::horizontal())` (top + bottom) or `vertical()` (left + right).
-- **"I want `Color::Gray`."** — doesn't exist. Use `Color::Indexed(8)` or `Color::Rgb(128, 128, 128)`. Or pull from `palette::tailwind::SLATE.c500`.
+- **"I want `Color::Gray`."** — SLT has no `Gray`; ratatui's `Gray` is ANSI 7, which is SLT `Color::White`. Port ratatui `White` to `Color::LightWhite` (ANSI 15). For a theme-independent mid-gray use `palette::tailwind::SLATE.c500`.
 - **"My ratatui app calls `terminal.clear()` between frames."** — don't. SLT diffs the buffer and only emits changed cells. Manual clear breaks the diff and causes flicker.
 - **"My panic hook restores raw mode."** — drop it. `slt::run` installs one on first call.
 - **"I'm threading `&App` through every render fn."** — replace read-only sharing with `ui.provide(ctx, \|ui\| ...)` + `ui.use_context::<AppCtx>()`. Keep `&mut` for writes.
-- **"My ratatui Gauge has no label."** — use `ui.gauge(0.75)` (no label) or `ui.progress(0.75)` (returns `Response`).
-- **"Clicks and scroll do nothing."** — mouse capture is opt-in: `slt::run_with(RunConfig::default().mouse(true), ...)`.
-- **"Typing `q` in a search box quits."** — the shortcut was checked before the input rendered. Move `ui.key('q')` after `ui.text_input(...)` or gate it on `!response.focused`.
+- **"My ratatui Gauge has no label."** — use `ui.gauge(0.75)` (no label) or `ui.progress(0.75)` (a `ProgressBar` builder that derefs to `Response`; chain `.color(c)`).
+- **"Hover does nothing."** — the default mouse mode reports clicks, wheel and drags only: `slt::run_with(RunConfig::default().mouse_mode(MouseMode::Hover), ...)`. If clicks do nothing either, look for `.mouse(false)` / `MouseMode::Off`.
+- **"Typing `q` in a search box quits."** — the shortcut uses `raw_key` / `raw_events()`, which ignore text focus. Use `ui.key('q')` or `ui.shortcut(..)`; they skip keys a focused input edits with.
 
 ## Migration workflow
 
@@ -394,13 +424,13 @@ textual is class-based with reactive state and CSS. SLT is functional with plain
    ```
    Map each to an SLT method via the tables above.
 
-2. **Convert the run loop.** Replace `Terminal::new` setup + draw loop + `disable_raw_mode` teardown with one of `slt::run`, `slt::run_with`, `slt::run_inline`, or `slt::run_async`. If the original enabled mouse capture, use `run_with(RunConfig::default().mouse(true), ...)`.
+2. **Convert the run loop.** Replace `Terminal::new` setup + draw loop + `disable_raw_mode` teardown with one of `slt::run`, `slt::run_with`, `slt::run_inline`, or `slt::run_async`. If the original relied on hover (`MouseEventKind::Moved`), use `run_with(RunConfig::default().mouse_mode(MouseMode::Hover), ...)`; clicks and wheel need nothing.
 
 3. **Move state out of the draw closure.** Most ratatui apps already do this. Keep the same shape — your `App` struct now feeds into one SLT closure.
 
 4. **Replace layout splitters.** Each `Layout::default().constraints(...).split(area)` becomes nested `ui.row` / `ui.col` + `.fill / .h / .w / .h_pct / .w_pct / .align / .justify`. `.gap(n)` instead of `.spacing(n)`, `.p(n)` instead of `.margin(n)`.
 
-5. **Replace each `f.render_widget(...)` with the SLT method.** Convert widget by widget. Verify any uncertain method via the mapping table or grep `src/context/widgets_*.rs`.
+5. **Replace each `f.render_widget(...)` with the SLT method.** Convert widget by widget. Verify any uncertain method via the mapping table or grep `src/context/widgets/`.
 
 6. **Adopt current builders.** Where the old code hand-rolled gauges, breadcrumbs, scrollable-with-line-numbers, or split panes, use the current builders/opts directly. They handle hit-testing and accessibility.
 
@@ -417,7 +447,7 @@ After everything compiles, run the full quality gate (project `AGENTS.md`):
 
 Be honest with the user — these need workarounds:
 
-- **ratatui `Canvas` braille drawing primitive.** SLT has `ui.canvas(width, height, \|cv\| { cv.line(...); cv.circle(...); })` but the API takes a `CanvasContext` closure, not a value-typed widget. Custom point/line drawing logic needs a small rewrite. See `Context::canvas` in `src/context/widgets_viz.rs`.
+- **ratatui `Canvas` braille drawing primitive.** SLT has `ui.canvas(width, height, \|cv\| { cv.line(...); cv.circle(...); })` but the API takes a `CanvasContext` closure, not a value-typed widget. Custom point/line drawing logic needs a small rewrite. See `Context::canvas` in `src/context/widgets/viz/canvas.rs`.
 - **ratatui `Wrap { trim: true }` exact semantics.** SLT wraps via container width and `.wrap()` on text; trim-leading-whitespace behavior isn't identical. Test wrap-heavy text manually.
 - **cursive's deep view layering / multiple modal stacks.** SLT supports `ui.modal(...)` / `ui.modal_with(...)` / `ui.overlay_at(anchor, \|ui\| ...)` but not arbitrary nested view managers. Most uses fold into `if state.show_modal { ui.modal(\|ui\| ...) }`.
 - **textual's CSS/TCSS hot reload.** SLT does not hot-reload layout or arbitrary style code. The `theme-watch` feature can reload TOML themes through `ThemeWatcher`; use `cargo watch -x run` for code and layout iteration.
@@ -428,10 +458,10 @@ If a feature genuinely doesn't map, tell the user — don't fake it.
 
 - `.agents/skills/slt/SKILL.md` — SLT authoring skill (use after migration is done).
 - `.agents/skills/slt/REFERENCES.md` — feature flags, current surface, doc pointers.
-- `examples/v020_*.rs` — v0.20 feature demos (gauge, breadcrumb, scrollable_with_gutter, split_pane, etc.), compiled and run through `cargo run --example v020_tour`.
-- `tests/v020_*.rs` — regression tests showing canonical TestBackend + sequence patterns.
+- `examples/gauge.rs`, `examples/breadcrumb_response.rs`, `examples/gutter_highlights.rs`, `examples/split_pane.rs`, etc. — single-feature demos, compiled and run through `cargo run --example widgets_tour`.
+- `tests/hooks_focus.rs`, `tests/widgets.rs`, `tests/example_snapshots/` — regression tests showing canonical TestBackend + sequence patterns.
 - `src/lib.rs` — authoritative public re-exports.
-- `src/context/widgets_*.rs` — authoritative widget signatures.
+- `src/context/widgets/` — authoritative widget signatures.
 - ratatui repo: <https://github.com/ratatui-org/ratatui>
 - cursive repo: <https://github.com/gyscos/cursive>
 - textual repo: <https://github.com/Textualize/textual>

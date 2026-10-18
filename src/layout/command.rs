@@ -1,3 +1,6 @@
+//! The [`Command`] stream that `Context` records each frame and the layout
+//! tree is built from.
+
 use super::*;
 
 /// Main axis direction for a container's children.
@@ -12,9 +15,10 @@ pub enum Direction {
 
 /// Arguments for [`Command::BeginContainer`].
 ///
-/// Boxed inside the variant so that the surrounding `Command` enum stays
-/// small — a frame may contain hundreds of commands, and most variants
-/// (for example `EndContainer`) carry no payload.
+/// Stored inline in the variant so a container costs no heap allocation
+/// per frame (it was boxed under #64); inlining it and
+/// boxing only the rare `title` keeps `Command` at 136 bytes with no
+/// per-container allocation.
 #[derive(Debug, Clone)]
 pub(crate) struct BeginContainerArgs {
     pub direction: Direction,
@@ -31,15 +35,17 @@ pub(crate) struct BeginContainerArgs {
     pub padding: Padding,
     pub margin: Margin,
     pub constraints: Constraints,
-    pub title: Option<(String, Style)>,
+    /// Boxed: titles are rare, and inline they would add 32 bytes to every
+    /// `Command`. A titled container already allocates its `String`.
+    pub title: Option<Box<(String, Style)>>,
     pub grow: u16,
     pub group_name: Option<std::sync::Arc<str>>,
 }
 
 /// Arguments for [`Command::BeginScrollable`].
 ///
-/// Boxed for the same reason as [`BeginContainerArgs`] — keeps the
-/// `Command` enum from being dragged up to the width of this payload.
+/// Stored inline like [`BeginContainerArgs`]; this is the widest variant
+/// and sets the size of `Command`.
 ///
 /// `direction` selects the scroll axis (#247): `Direction::Column` scrolls
 /// vertically (the historic default), `Direction::Row` scrolls horizontally.
@@ -67,7 +73,9 @@ pub(crate) struct BeginScrollableArgs {
     pub padding: Padding,
     pub margin: Margin,
     pub constraints: Constraints,
-    pub title: Option<(String, Style)>,
+    /// Boxed: titles are rare, and inline they would add 32 bytes to every
+    /// `Command`. A titled container already allocates its `String`.
+    pub title: Option<Box<(String, Style)>>,
     /// Vertical scroll offset in rows (used when `direction == Column`).
     pub scroll_offset: u32,
     /// Horizontal scroll offset in columns (used when `direction == Row`, #247).
@@ -93,8 +101,8 @@ pub(crate) enum Command {
         margin: Margin,
         constraints: Constraints,
     },
-    BeginContainer(Box<BeginContainerArgs>),
-    BeginScrollable(Box<BeginScrollableArgs>),
+    BeginContainer(BeginContainerArgs),
+    BeginScrollable(BeginScrollableArgs),
     Link {
         text: String,
         url: String,
@@ -166,16 +174,15 @@ mod size_tests {
     ///
     /// A frame may push hundreds of `Command` values into a single `Vec`,
     /// so every byte in the enum variant-union multiplies across the frame.
-    /// Fat variants (`BeginContainer`, `BeginScrollable`) are boxed to keep
-    /// the common 0-payload variants (e.g. `EndContainer`) cheap.
-    ///
-    /// The current ceiling reflects the largest remaining inline variant
-    /// (`Text`, which carries a `String` + `Constraints` + `Style` + small
-    /// scalars). If this test fires after a refactor, either box the new
-    /// fat variant or bump this bound with justification.
+    /// The container variants are inline (no allocation per
+    /// container per frame); the widest one, `BeginScrollable`, sets the
+    /// size. In the matched harness the larger copy costs less than the
+    /// malloc/free pair it replaces (every workload equal or faster within
+    /// noise). If this test fires after a refactor, box a rare
+    /// field (as `title` is) or bump this bound with a measurement.
     #[test]
     fn command_enum_size_is_bounded() {
-        const MAX_BYTES: usize = 128;
+        const MAX_BYTES: usize = 136;
         let actual = std::mem::size_of::<Command>();
         assert!(
             actual <= MAX_BYTES,

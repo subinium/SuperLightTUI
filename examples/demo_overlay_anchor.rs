@@ -4,7 +4,7 @@
 //!
 //! Each badge sits in its own overlay with the corresponding [`Anchor`].
 //! The base layer renders a centered title behind them; the overlays float
-//! on top without dimming (use [`modal_at`] for a dimmed variant).
+//! on top without dimming (use `modal_with(ModalOpts::new().anchor(..))` for a dimmed variant).
 //!
 //! - Outer flush badges (`TL`..`BR`) call [`Context::overlay_at`] — the
 //!   widget sits flush against the screen edge / corner.
@@ -28,8 +28,7 @@ pub fn render(ui: &mut Context) {
     }
 
     // Base layer — visible behind every overlay.
-    let _ = ui
-        .bordered(Border::Rounded)
+    ui.bordered(Border::Rounded)
         .title("overlay_at + overlay_at_offset demo")
         .p(2)
         .grow(1)
@@ -50,7 +49,7 @@ pub fn render(ui: &mut Context) {
     // Flush badges (no inset). Each lives in its own overlay, so flexbox
     // doesn't compete with the base layer.
     for (anchor, label, color) in ANCHORS {
-        let _ = ui.overlay_at(*anchor, |ui| {
+        ui.overlay_at(*anchor, |ui| {
             ui.text(*label).fg(Color::Black).bg(*color);
         });
     }
@@ -58,7 +57,7 @@ pub fn render(ui: &mut Context) {
     // Inset badges — same anchors, shifted (dx=2, dy=1) toward the
     // viewport center. Compare visually with the flush corners above.
     for (anchor, label) in INSET_BADGES {
-        let _ = ui.overlay_at_offset(*anchor, 2, 1, |ui| {
+        ui.overlay_at_offset(*anchor, 2, 1, |ui| {
             ui.text(*label).fg(Color::White).bg(Color::Magenta);
         });
     }

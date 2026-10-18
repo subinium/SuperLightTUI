@@ -1,0 +1,391 @@
+//! Feedback family — spinners, toasts, sliders, alerts, confirm prompts,
+//! progress bars and gauges.
+//!
+//! State types ([`crate::widgets::ToastState`],
+//! [`crate::widgets::SpinnerState`], [`crate::widgets::SliderOpts`],
+//! [`crate::widgets::AlertLevel`], ...) live in `src/widgets/feedback.rs`.
+
+use super::*;
+
+mod gauge;
+mod progress;
+mod slider;
+
+pub use gauge::{Gauge, LineGauge};
+pub use progress::ProgressBar;
+pub use slider::Slider;
+
+#[cfg(test)]
+mod tests;
+
+impl Context {
+    /// Render an animated spinner.
+    ///
+    /// The spinner advances one frame per tick. Use [`SpinnerState::dots`] or
+    /// [`SpinnerState::line`] to create the state.
+    ///
+    /// Returns a [`Response`] with `hovered` populated correctly so callers
+    /// can attach tooltips or react to mouse interaction. `ui.spinner(&state);`
+    /// is a plain statement (`Response` is not `#[must_use]` as a type).
+    pub fn spinner(&mut self, state: &SpinnerState) -> Response {
+        let response = self.interaction();
+        // #490: a spinner animates on every tick.
+        self.request_frame();
+        self.styled(
+            state.frame(self.tick).to_string(),
+            Style::new().fg(self.theme.primary),
+        );
+        response
+    }
+
+    /// Render toast notifications. Calls `state.cleanup(tick)` automatically.
+    ///
+    /// Expired messages are removed before rendering. If there are no active
+    /// messages, nothing is rendered and `self` is returned unchanged.
+    pub fn toast(&mut self, state: &mut ToastState) -> &mut Self {
+        state.cleanup(self.tick);
+        if state.messages.is_empty() {
+            return self;
+        }
+        // #490: toasts expire after a number of rendered ticks.
+        self.request_frame();
+
+        self.skip_interaction_slot();
+        self.commands
+            .push(Command::BeginContainer(BeginContainerArgs {
+                direction: Direction::Column,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            }));
+        for message in state.messages.iter().rev() {
+            let color = match message.level {
+                ToastLevel::Info => self.theme.primary,
+                ToastLevel::Success => self.theme.success,
+                ToastLevel::Warning => self.theme.warning,
+                ToastLevel::Error => self.theme.error,
+            };
+            let mut line = String::with_capacity(4 + message.text.len());
+            line.push_str("  ● ");
+            line.push_str(&message.text);
+            self.styled(line, Style::new().fg(color));
+        }
+        self.commands.push(Command::EndContainer);
+        self.rollback.last_text_idx = None;
+
+        self
+    }
+
+    fn slider_inner(
+        &mut self,
+        label: &str,
+        value: &mut f64,
+        range: std::ops::RangeInclusive<f64>,
+        step: f64,
+    ) -> Response {
+        let focused = self.register_focusable();
+        // Capture focus-edge flags here: slider assembles its Response by
+        // hand, so it must set gained_focus/lost_focus itself (#208).
+        let (gained_focus, lost_focus) = self.focus_transitions(focused);
+        let mut changed = false;
+
+        let (start, end) = crate::widgets::normalize_numeric_range(*range.start(), *range.end());
+        let span = end - start;
+        let step = crate::widgets::normalize_numeric_step(step);
+
+        *value = crate::widgets::normalize_numeric_value(*value, start, end);
+
+        if focused {
+            let mut consumed_indices = Vec::new();
+            for (i, key) in self.available_key_presses() {
+                match key.code {
+                    KeyCode::Left | KeyCode::Char('h') => {
+                        if step > 0.0 {
+                            let next =
+                                crate::widgets::normalize_numeric_value(*value - step, start, end);
+                            if (next - *value).abs() > f64::EPSILON {
+                                *value = next;
+                                changed = true;
+                            }
+                        }
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Right | KeyCode::Char('l') => {
+                        if step > 0.0 {
+                            let next =
+                                crate::widgets::normalize_numeric_value(*value + step, start, end);
+                            if (next - *value).abs() > f64::EPSILON {
+                                *value = next;
+                                changed = true;
+                            }
+                        }
+                        consumed_indices.push(i);
+                    }
+                    _ => {}
+                }
+            }
+            self.consume_indices(consumed_indices);
+        }
+
+        let ratio = if span <= f64::EPSILON {
+            0.0
+        } else {
+            ((*value - start) / span).clamp(0.0, 1.0)
+        };
+
+        let value_text = format_compact_number(*value);
+        let label_width = crate::width::unicode_width(label) as u32;
+        let value_width = crate::width::unicode_width(value_text.as_str()) as u32;
+        let track_width = self
+            .area_width
+            .saturating_sub(label_width + value_width + 8)
+            .max(10) as usize;
+        let thumb_idx = if track_width <= 1 {
+            0
+        } else {
+            (ratio * (track_width as f64 - 1.0)).round() as usize
+        };
+
+        let mut track = String::with_capacity(track_width);
+        for i in 0..track_width {
+            if i == thumb_idx {
+                track.push('○');
+            } else if i < thumb_idx {
+                track.push('█');
+            } else {
+                track.push('━');
+            }
+        }
+
+        let text_color = self.theme.text;
+        let border_color = self.theme.border;
+        let primary_color = self.theme.primary;
+        let dim_color = self.theme.text_dim;
+        let mut response = self.container().row(|ui| {
+            ui.text(label).fg(text_color);
+            ui.text("[").fg(border_color);
+            ui.text(track).grow(1).fg(primary_color);
+            ui.text("]").fg(border_color);
+            if focused {
+                ui.text(value_text.as_str()).bold().fg(primary_color);
+            } else {
+                ui.text(value_text.as_str()).fg(dim_color);
+            }
+        });
+        response.focused = focused;
+        response.changed = changed;
+        response.gained_focus = gained_focus;
+        response.lost_focus = lost_focus;
+        response
+    }
+
+    /// Render an alert banner with icon and level-based coloring.
+    ///
+    /// Argument order is `(message, level)` — message first, then the
+    /// [`AlertLevel`](crate::widgets::AlertLevel). This is the executable
+    /// proof that [API review rules](https://github.com/subinium/superlighttui/blob/main/docs/internals/design-principles.md#api-review-rules)
+    /// Rule 3 matches the shipped signature.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::AlertLevel;
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.alert("Disk full", AlertLevel::Error);
+    /// ui.alert("Saved", AlertLevel::Success);
+    /// # });
+    /// ```
+    pub fn alert(&mut self, message: &str, level: crate::widgets::AlertLevel) -> Response {
+        use crate::widgets::AlertLevel;
+
+        let theme = self.theme;
+        let (icon, color) = match level {
+            AlertLevel::Info => ("ℹ", theme.accent),
+            AlertLevel::Success => ("✓", theme.success),
+            AlertLevel::Warning => ("⚠", theme.warning),
+            AlertLevel::Error => ("✕", theme.error),
+        };
+
+        let focused = self.register_focusable();
+        let key_dismiss = if focused {
+            let consumed: Vec<usize> = self
+                .available_key_presses()
+                .filter_map(|(i, key)| {
+                    if matches!(key.code, KeyCode::Enter | KeyCode::Char('x')) {
+                        Some(i)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            let dismissed = !consumed.is_empty();
+            self.consume_indices(consumed);
+            dismissed
+        } else {
+            false
+        };
+
+        let mut response = self.container().col(|ui| {
+            ui.line(|ui| {
+                let mut icon_text = String::with_capacity(icon.len() + 2);
+                icon_text.push(' ');
+                icon_text.push_str(icon);
+                icon_text.push(' ');
+                ui.text(icon_text).fg(color).bold();
+                ui.text(message).grow(1);
+                ui.text(" [×] ").dim();
+            });
+        });
+        response.focused = focused;
+        if key_dismiss {
+            response.clicked = true;
+        }
+
+        response
+    }
+
+    /// Yes/No confirmation dialog. Returns Response with .clicked=true when answered.
+    ///
+    /// `result` is set to true for Yes, false for No.
+    ///
+    /// # Examples
+    /// ```
+    /// # use slt::*;
+    /// # TestBackend::new(80, 24).render(|ui| {
+    /// let mut answer = false;
+    /// let r = ui.confirm("Delete this file?", &mut answer);
+    /// if r.clicked && answer { /* user confirmed */ }
+    /// # });
+    /// ```
+    pub fn confirm(&mut self, question: &str, result: &mut bool) -> Response {
+        let focused = self.register_focusable();
+        let mut a11y = self.a11y_begin(focused);
+        let mut is_yes = *result;
+        let mut clicked = false;
+        // Issue #469: an accessible-mode y/n answer is a keyboard answer.
+        if let Some(value) = crate::runtime::A11yBegin::take_bool(a11y.as_mut()) {
+            is_yes = value;
+            *result = value;
+            clicked = true;
+        }
+
+        // 1) Keyboard hit-test runs first so it can mutate `is_yes`.
+        if focused {
+            let mut consumed_indices = Vec::new();
+            for (i, key) in self.available_key_presses() {
+                match key.code {
+                    KeyCode::Char('y') => {
+                        is_yes = true;
+                        *result = true;
+                        clicked = true;
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Char('n') => {
+                        is_yes = false;
+                        *result = false;
+                        clicked = true;
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Tab | KeyCode::BackTab | KeyCode::Left | KeyCode::Right => {
+                        is_yes = !is_yes;
+                        *result = is_yes;
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Enter => {
+                        *result = is_yes;
+                        clicked = true;
+                        consumed_indices.push(i);
+                    }
+                    _ => {}
+                }
+            }
+            self.consume_indices(consumed_indices);
+        }
+
+        // 2) Mouse hit-test runs *before* style computation and rendering so
+        // the visual feedback for `[Yes]` / `[No]` reflects the click in the
+        // same frame the click happened. Predict the row's interaction id
+        // (the next slot the row will allocate) and look up the previous
+        // frame's rect from `prev_hit_map`. On the first frame the row has
+        // no entry yet, so we fall back to assuming the row starts at (0,0)
+        // — same behaviour as the prior implementation.
+        let q_width = crate::width::unicode_width(question) as u32;
+        if !clicked && let Some((mx, my)) = self.last_left_press_pos() {
+            let next_id = self.rollback.interaction_count;
+            let prev_rect = self.prev_hit_map.get(next_id).copied();
+            let row_x = prev_rect.map(|r| r.x).unwrap_or(0);
+            let in_row_y = match prev_rect {
+                Some(r) if r.height > 0 => my >= r.y && my < r.bottom(),
+                _ => true,
+            };
+            if in_row_y {
+                let yes_start = row_x + q_width + 1;
+                let yes_end = yes_start + 5;
+                let no_start = yes_end + 1;
+                let no_end = no_start + 4; // "[No]" = 4 display columns
+                if mx >= yes_start && mx < yes_end {
+                    is_yes = true;
+                    *result = true;
+                    clicked = true;
+                } else if mx >= no_start && mx < no_end {
+                    is_yes = false;
+                    *result = false;
+                    clicked = true;
+                }
+            }
+        }
+
+        // 3) Style computation reads the now-mutated `is_yes`.
+        let yes_style = if is_yes {
+            if focused {
+                Style::new().fg(self.theme.bg).bg(self.theme.success).bold()
+            } else {
+                Style::new().fg(self.theme.success).bold()
+            }
+        } else {
+            Style::new().fg(self.theme.text_dim)
+        };
+        let no_style = if !is_yes {
+            if focused {
+                Style::new().fg(self.theme.bg).bg(self.theme.error).bold()
+            } else {
+                Style::new().fg(self.theme.error).bold()
+            }
+        } else {
+            Style::new().fg(self.theme.text_dim)
+        };
+
+        // 4) Render with the post-hit-test styles.
+        let mut response = self.row(|ui| {
+            ui.text(question);
+            ui.text(" ");
+            ui.styled("[Yes]", yes_style);
+            ui.text(" ");
+            ui.styled("[No]", no_style);
+        });
+
+        if let Some(begin) = a11y {
+            self.a11y_end_labelled(
+                begin,
+                crate::runtime::A11yRole::Confirm,
+                question,
+                Some(is_yes),
+            );
+        }
+        response.focused = focused;
+        response.clicked = clicked;
+        response.changed = clicked;
+        response
+    }
+}

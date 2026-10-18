@@ -133,12 +133,12 @@ fn main() {
                 }
             }
 
-            let _ = ui.col(|ui| {
+            ui.col(|ui| {
                 for row in 0..term_h {
                     let top_y = row * 2;
                     let bot_y = top_y + 1;
 
-                    let _ = ui.row(|ui| {
+                    ui.row(|ui| {
                         let mut run_start = 0;
                         let mut cur_top = fire.color_at(0, top_y, &palette);
                         let mut cur_bot = fire.color_at(0, bot_y, &palette);

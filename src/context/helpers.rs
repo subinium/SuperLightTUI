@@ -1,3 +1,7 @@
+//! Shared helpers for widget implementations: deferred raw-draw invocation
+//! with balanced clips, grapheme and width utilities, table cell clamping,
+//! intrinsic-size queries and the platform URL opener.
+
 use super::*;
 
 struct DeferredDrawClipGuard<'a> {
@@ -58,7 +62,6 @@ impl Drop for DeferredDrawClipGuard<'_> {
 /// The callback panic is returned to the frame kernel instead of crossing the
 /// cleanup boundary. The caller decides whether to render an error-boundary
 /// fallback or write persistent frame state back and resume unwinding.
-#[allow(dead_code)] // Called by the #340 frame-kernel integration in src/lib.rs.
 pub(crate) fn invoke_deferred_draw(
     buffer: &mut crate::buffer::Buffer,
     rect: Rect,
@@ -135,7 +138,7 @@ pub(crate) fn byte_index_for_grapheme(s: &str, cluster_index: usize) -> usize {
 /// glyph, not the per-scalar sum.
 #[inline]
 pub(crate) fn cluster_width(cluster: &str) -> u32 {
-    UnicodeWidthStr::width(cluster) as u32
+    crate::width::str_width(cluster) as u32
 }
 
 pub(crate) fn format_token_count(count: usize) -> String {
@@ -148,50 +151,115 @@ pub(crate) fn format_token_count(count: usize) -> String {
     }
 }
 
-pub(crate) fn format_table_row(cells: &[String], widths: &[u32], separator: &str) -> String {
-    let sep_width = UnicodeWidthStr::width(separator);
-    let total_cells_width: usize = widths.iter().map(|w| *w as usize).sum();
-    let mut row = String::with_capacity(
-        total_cells_width + sep_width.saturating_mul(widths.len().saturating_sub(1)),
-    );
+/// Append the decimal digits of `n` to `out` (no `fmt` machinery, no
+/// temporary `String`).
+pub(crate) fn push_usize(out: &mut String, mut n: usize) {
+    let mut digits = [0u8; 20];
+    let mut start = digits.len();
+    loop {
+        start -= 1;
+        digits[start] = b'0' + (n % 10) as u8;
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    for &digit in &digits[start..] {
+        out.push(char::from(digit));
+    }
+}
+
+/// Build one table row (cells padded/truncated to `widths`, joined by
+/// `separator`) into a single `String`.
+///
+/// Every cell is written straight into the row buffer through
+/// [`push_table_cell`], so a row costs exactly one allocation regardless of
+/// the column count (no per-cell `String`). Missing cells render as blanks.
+/// Widgets use [`push_table_row`] into a pooled buffer; this owned form is
+/// the reference the tests compare against.
+#[cfg(test)]
+pub(crate) fn format_table_row<S: AsRef<str>>(
+    cells: &[S],
+    widths: &[u32],
+    separator: &str,
+) -> String {
+    let mut row = String::with_capacity(table_row_capacity(cells, widths, separator));
+    push_table_row(&mut row, cells, widths, separator);
+    row
+}
+
+/// Byte capacity [`push_table_row`] needs for an ASCII row.
+///
+/// A padded cell needs `len + (width - display_width)` bytes, bounded by
+/// `max(width, len)` for ASCII content. Multi-byte padding may grow the
+/// buffer once; ASCII rows never reallocate.
+pub(crate) fn table_row_capacity<S: AsRef<str>>(
+    cells: &[S],
+    widths: &[u32],
+    separator: &str,
+) -> usize {
+    let mut capacity = separator
+        .len()
+        .saturating_mul(widths.len().saturating_sub(1));
+    for (i, width) in widths.iter().enumerate() {
+        let len = cells.get(i).map_or(0, |cell| cell.as_ref().len());
+        capacity = capacity.saturating_add((*width as usize).max(len));
+    }
+    capacity
+}
+
+/// Append one table row to `row`: the [`format_table_row`] output without
+/// allocating when `row` has room (see [`table_row_capacity`]).
+pub(crate) fn push_table_row<S: AsRef<str>>(
+    row: &mut String,
+    cells: &[S],
+    widths: &[u32],
+    separator: &str,
+) {
     for (i, width) in widths.iter().enumerate() {
         if i > 0 {
             row.push_str(separator);
         }
-        row.push_str(&clamp_table_cell(
-            cells.get(i).map(String::as_str).unwrap_or(""),
-            *width,
-        ));
+        push_table_cell(row, cells.get(i).map(AsRef::as_ref).unwrap_or(""), *width);
     }
-    row
 }
 
 /// Pad or truncate `cell` so its display width is exactly `width` cells.
 ///
 /// Shorter content is right-padded with spaces (current behavior); longer
 /// content is truncated with a `…` ellipsis. With an `Auto` column the
-/// resolved width already equals the content width, so this is a pure pad —
-/// preserving the pre-v0.21 string-grid output byte-for-byte.
+/// resolved width already equals the content width, so this is a pure pad
+/// and an all-`Auto` table renders the plain string grid byte-for-byte.
 pub(crate) fn clamp_table_cell(cell: &str, width: u32) -> String {
+    let mut out = String::with_capacity((width as usize).max(cell.len()));
+    push_table_cell(&mut out, cell, width);
+    out
+}
+
+/// Append `cell`, padded or truncated to exactly `width` display cells, to
+/// `out`. Same output as [`clamp_table_cell`] without allocating.
+pub(crate) fn push_table_cell(out: &mut String, cell: &str, width: u32) {
     let width = width as usize;
     if width == 0 {
-        return String::new();
+        return;
     }
-    let cell_width = UnicodeWidthStr::width(cell);
+    // `display_width` equals `str_width` and skips the width tables for
+    // printable ASCII, the common table cell.
+    let cell_width = crate::cell::display_width(cell);
     if cell_width <= width {
-        let mut out = String::with_capacity(width);
         out.push_str(cell);
         out.extend(std::iter::repeat_n(' ', width - cell_width));
-        return out;
+        return;
     }
     if width == 1 {
-        return "\u{2026}".to_string();
+        out.push('\u{2026}');
+        return;
     }
+    let start = out.len();
     let target = width - 1;
-    let mut out = String::with_capacity(width);
     let mut acc = 0usize;
     for grapheme in cell.graphemes(true) {
-        let ch_width = UnicodeWidthStr::width(grapheme);
+        let ch_width = crate::width::str_width(grapheme);
         if acc + ch_width > target {
             break;
         }
@@ -200,13 +268,38 @@ pub(crate) fn clamp_table_cell(cell: &str, width: u32) -> String {
     }
     out.push('\u{2026}');
     // Pad in case the last char was wide and left a one-cell gap before `…`.
-    let out_width = UnicodeWidthStr::width(out.as_str());
+    let out_width = crate::width::str_width(&out[start..]);
     out.extend(std::iter::repeat_n(' ', width.saturating_sub(out_width)));
-    out
+}
+
+/// [`clamp_table_cell`] for an owned cell: pads in place when the content
+/// fits, so a renderer-produced `String` is reused instead of copied.
+pub(crate) fn fit_table_cell_owned(mut cell: String, width: u32) -> String {
+    let width_usize = width as usize;
+    if width_usize == 0 {
+        cell.clear();
+        return cell;
+    }
+    let cell_width = crate::width::str_width(cell.as_str());
+    if cell_width <= width_usize {
+        cell.extend(std::iter::repeat_n(' ', width_usize - cell_width));
+        return cell;
+    }
+    clamp_table_cell(&cell, width)
+}
+
+/// Append the table header rule (`─` per column joined by `─┼─`) to `out`.
+pub(crate) fn push_table_separator(out: &mut String, widths: &[u32]) {
+    for (i, width) in widths.iter().enumerate() {
+        if i > 0 {
+            out.push_str("─┼─");
+        }
+        out.extend(std::iter::repeat_n('─', *width as usize));
+    }
 }
 
 #[cfg(test)]
-mod v024_table_tests {
+mod table_truncation_tests {
     use super::*;
 
     #[test]
@@ -221,7 +314,7 @@ mod v024_table_tests {
             for width in 0..=10 {
                 let rendered = clamp_table_cell(&source, width);
                 assert_eq!(
-                    UnicodeWidthStr::width(rendered.as_str()),
+                    crate::width::str_width(rendered.as_str()),
                     width as usize,
                     "{source:?} width={width}"
                 );
@@ -240,12 +333,47 @@ mod v024_table_tests {
         assert_eq!(clamp_table_cell("\u{301}", 0), "");
         assert_eq!(
             format_table_row(
-                &["\u{1f469}\u{200d}\u{1f4bb}abcd".into(), "Z".into()],
+                &[
+                    String::from("\u{1f469}\u{200d}\u{1f4bb}abcd"),
+                    String::from("Z")
+                ],
                 &[4, 2],
                 "|"
             ),
             "\u{1f469}\u{200d}\u{1f4bb}a\u{2026}|Z "
         );
+    }
+
+    #[test]
+    fn in_place_row_builders_match_per_cell_clamp() {
+        let cells = [
+            "abc",
+            "\u{1f469}\u{200d}\u{1f4bb}wide",
+            "",
+            "e\u{301}e\u{301}e\u{301}",
+            "日本語テキスト",
+        ];
+        for width in 0..=9u32 {
+            let widths = vec![width; cells.len()];
+            let expected = cells
+                .iter()
+                .map(|cell| clamp_table_cell(cell, width))
+                .collect::<Vec<_>>()
+                .join(" │ ");
+            assert_eq!(format_table_row(&cells, &widths, " │ "), expected);
+            for cell in cells {
+                assert_eq!(
+                    fit_table_cell_owned(cell.to_string(), width),
+                    clamp_table_cell(cell, width),
+                    "{cell:?} width={width}"
+                );
+            }
+        }
+        // Missing trailing cells render as blanks.
+        assert_eq!(format_table_row(&["x"], &[2, 3], "|"), "x |   ");
+        let mut rule = String::new();
+        push_table_separator(&mut rule, &[2, 1]);
+        assert_eq!(rule, "───┼──");
     }
 }
 
@@ -297,7 +425,7 @@ pub(crate) fn format_compact_number(value: f64) -> String {
 }
 
 pub(crate) fn center_text(text: &str, width: usize) -> String {
-    let text_width = UnicodeWidthStr::width(text);
+    let text_width = crate::width::str_width(text);
     if text_width >= width {
         return text.to_string();
     }
@@ -402,7 +530,7 @@ pub(crate) fn textarea_visual_to_logical(
     }
 }
 
-/// Intrinsic-size measurement API (v0.21.1).
+/// Intrinsic-size measurement API.
 ///
 /// These read-only queries expose the layout engine's text-wrapping math and
 /// the previous frame's named-container geometry without changing any rendering
@@ -458,7 +586,7 @@ impl Context {
         let height = lines.len().max(1);
         let width = lines
             .iter()
-            .map(|line| UnicodeWidthStr::width(line.as_str()))
+            .map(|line| crate::width::str_width(line.as_str()))
             .max()
             .unwrap_or(0);
 
@@ -542,23 +670,313 @@ fn clamp_u16(value: usize) -> u16 {
     value.min(u16::MAX as usize) as u16
 }
 
-#[allow(unused_variables)]
-pub(crate) fn open_url(url: &str) -> std::io::Result<()> {
+/// URL schemes [`Context::link`] is allowed to hand to the system opener.
+///
+/// Anything else (`file:`, `javascript:`, `data:`, custom protocol handlers,
+/// ...) is still rendered and emitted as an OSC 8 hyperlink, but SLT never
+/// launches it itself.
+const ALLOWED_LINK_SCHEMES: [&str; 3] = ["http", "https", "mailto"];
+
+/// Why a link target was refused before any process was spawned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LinkError {
+    /// The URL is empty.
+    Empty,
+    /// The URL contains whitespace, a control character or a double quote.
+    InvalidCharacter,
+    /// The URL has no `scheme:` prefix.
+    MissingScheme,
+    /// The scheme is not in the allow-list (`http`, `https`, `mailto`).
+    UnsupportedScheme,
+    /// The scheme is allowed but the rest of the URL is missing or malformed.
+    MalformedUrl,
+}
+
+impl std::fmt::Display for LinkError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let msg = match self {
+            Self::Empty => "the URL is empty",
+            Self::InvalidCharacter => "the URL contains whitespace or control characters",
+            Self::MissingScheme => "the URL has no scheme",
+            Self::UnsupportedScheme => "only http, https and mailto links can be opened",
+            Self::MalformedUrl => "the URL is malformed",
+        };
+        f.write_str(msg)
+    }
+}
+
+impl std::error::Error for LinkError {}
+
+/// Failure while trying to open a link with the system opener.
+#[derive(Debug)]
+pub(crate) enum OpenUrlError {
+    /// The URL was refused by [`validate_link_url`]; nothing was spawned.
+    Rejected(LinkError),
+    /// The opener process could not be spawned.
+    Spawn(std::io::Error),
+}
+
+impl std::fmt::Display for OpenUrlError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Rejected(e) => write!(f, "{e}"),
+            Self::Spawn(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+/// Validate a link target before it is handed to the system opener.
+///
+/// Rules (applied on every platform):
+/// - the URL must be non-empty and is never trimmed: leading/trailing
+///   whitespace is rejected rather than silently removed;
+/// - whitespace, control characters (C0, DEL, C1) and `"` are rejected;
+/// - the scheme must be `http`, `https` or `mailto` (case-insensitive);
+/// - `http`/`https` URLs need a non-empty `//authority`, `mailto` URLs a
+///   non-empty address part.
+///
+/// Characters such as `&`, `|` or `%` are legitimate in URLs (query strings,
+/// percent-encoding) and are *not* rejected: no opener path goes through a
+/// shell, so they are never interpreted as metacharacters.
+pub(crate) fn validate_link_url(url: &str) -> Result<&str, LinkError> {
+    if url.is_empty() {
+        return Err(LinkError::Empty);
+    }
+    if url
+        .chars()
+        .any(|c| c.is_control() || c.is_whitespace() || c == '"')
+    {
+        return Err(LinkError::InvalidCharacter);
+    }
+
+    let (scheme, rest) = url.split_once(':').ok_or(LinkError::MissingScheme)?;
+    let mut scheme_chars = scheme.chars();
+    let scheme_is_valid = scheme_chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+        && scheme_chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+    if !scheme_is_valid {
+        return Err(LinkError::MissingScheme);
+    }
+    let Some(allowed) = ALLOWED_LINK_SCHEMES
+        .iter()
+        .find(|allowed| scheme.eq_ignore_ascii_case(allowed))
+    else {
+        return Err(LinkError::UnsupportedScheme);
+    };
+
+    let well_formed = if *allowed == "mailto" {
+        !rest.is_empty()
+    } else {
+        rest.strip_prefix("//")
+            .and_then(|after| after.split(['/', '?', '#']).next())
+            .is_some_and(|authority| !authority.is_empty())
+    };
+    if !well_formed {
+        return Err(LinkError::MalformedUrl);
+    }
+    Ok(url)
+}
+
+/// Build the platform opener invocation for an already-validated URL.
+///
+/// The URL is always passed as a single argv entry to a program spawned
+/// directly via [`std::process::Command`], never through a shell. Windows
+/// uses `rundll32.exe url.dll,FileProtocolHandler <url>` rather than
+/// `cmd /c start`, because cmd.exe would interpret `&`, `|`, `^`, `<`, `>`
+/// and `%` inside the URL. Returns `None` on platforms without a known
+/// opener.
+pub(crate) fn opener_command(url: &str) -> Option<(&'static str, Vec<&str>)> {
     #[cfg(target_os = "macos")]
     {
-        std::process::Command::new("open").arg(url).spawn()?;
+        Some(("open", vec![url]))
     }
     #[cfg(target_os = "linux")]
     {
-        std::process::Command::new("xdg-open").arg(url).spawn()?;
+        Some(("xdg-open", vec![url]))
     }
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("cmd")
-            .args(["/c", "start", "", url])
-            .spawn()?;
+        Some(("rundll32.exe", vec!["url.dll,FileProtocolHandler", url]))
     }
-    Ok(())
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        let _ = url;
+        None
+    }
+}
+
+/// Whether the process runs inside a remote session (SSH or mosh), judged
+/// from the environment flags those sessions set.
+pub(crate) fn terminal_is_remote_env(
+    has_ssh_connection: bool,
+    has_ssh_tty: bool,
+    has_mosh_ip: bool,
+) -> bool {
+    has_ssh_connection || has_ssh_tty || has_mosh_ip
+}
+
+/// Whether the current process runs inside a remote session.
+pub(crate) fn session_is_remote() -> bool {
+    terminal_is_remote_env(
+        std::env::var_os("SSH_CONNECTION").is_some(),
+        std::env::var_os("SSH_TTY").is_some(),
+        std::env::var_os("MOSH_IP").is_some(),
+    )
+}
+
+/// Open a link target with the system opener, if it is safe to do so.
+///
+/// The URL is validated with [`validate_link_url`] first. In a remote
+/// session nothing is spawned: the opener would run on the remote host, not
+/// on the user's machine; the OSC 8 hyperlink lets the local terminal open
+/// it instead. The opener's stdio is detached so it cannot write over the
+/// alternate screen.
+pub(crate) fn open_url(url: &str) -> Result<(), OpenUrlError> {
+    let url = validate_link_url(url).map_err(OpenUrlError::Rejected)?;
+    if session_is_remote() {
+        return Ok(());
+    }
+    let Some((program, args)) = opener_command(url) else {
+        return Ok(());
+    };
+    std::process::Command::new(program)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map(drop)
+        .map_err(OpenUrlError::Spawn)
+}
+
+#[cfg(test)]
+mod link_url_tests {
+    use super::{LinkError, opener_command, validate_link_url};
+
+    #[test]
+    fn allows_http_https_and_mailto() {
+        for url in [
+            "http://example.com",
+            "https://example.com",
+            "HTTPS://Example.com/Path",
+            "https://example.com/search?q=a&b=c|d^e%20f",
+            "https://user@example.com:8443/a/b#frag",
+            "https://[::1]:8080/",
+            "mailto:someone@example.com",
+            "MailTo:someone@example.com?subject=hi&body=x",
+        ] {
+            assert_eq!(validate_link_url(url), Ok(url), "{url}");
+        }
+    }
+
+    #[test]
+    fn rejects_disallowed_schemes() {
+        for url in [
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "data:text/html,<b>x</b>",
+            "custom-scheme:payload",
+            "ms-settings:display",
+            "vbscript:msgbox",
+            "ftp://example.com",
+            // A Windows drive letter parses as a one-letter scheme.
+            "C:\\Windows\\System32\\calc.exe",
+        ] {
+            assert_eq!(
+                validate_link_url(url),
+                Err(LinkError::UnsupportedScheme),
+                "{url}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_empty_and_missing_scheme() {
+        assert_eq!(validate_link_url(""), Err(LinkError::Empty));
+        for url in [
+            "example.com",
+            "//example.com",
+            ":foo",
+            "1http://example.com",
+            "/tmp/x",
+        ] {
+            assert_eq!(
+                validate_link_url(url),
+                Err(LinkError::MissingScheme),
+                "{url}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_whitespace_control_chars_and_quotes() {
+        for url in [
+            " https://example.com",
+            "https://example.com ",
+            "https://example.com/a b",
+            "https://example.com/\ta",
+            "https://example.com/\na",
+            "https://example.com/\ra",
+            "https://example.com/\u{0}",
+            "https://example.com/\u{1b}]8;;x",
+            "https://example.com/\u{7f}",
+            "https://example.com/\u{85}",
+            "https://example.com/\u{9b}",
+            "https://example.com/\u{a0}",
+            "https://example.com/\u{2028}",
+            "https://example.com/\"&calc",
+        ] {
+            assert_eq!(
+                validate_link_url(url),
+                Err(LinkError::InvalidCharacter),
+                "{url:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_allowed_urls() {
+        for url in [
+            "https:",
+            "https:example.com",
+            "https://",
+            "https:///path",
+            "http://?q",
+            "https:\\\\example.com",
+            "mailto:",
+        ] {
+            assert_eq!(
+                validate_link_url(url),
+                Err(LinkError::MalformedUrl),
+                "{url}"
+            );
+        }
+    }
+
+    #[test]
+    fn opener_never_uses_a_shell() {
+        let url = "https://example.com/?a=1&b=2";
+        let command = opener_command(url);
+
+        #[cfg(target_os = "windows")]
+        assert_eq!(
+            command,
+            Some(("rundll32.exe", vec!["url.dll,FileProtocolHandler", url]))
+        );
+        #[cfg(target_os = "macos")]
+        assert_eq!(command, Some(("open", vec![url])));
+        #[cfg(target_os = "linux")]
+        assert_eq!(command, Some(("xdg-open", vec![url])));
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+        assert_eq!(command, None);
+
+        if let Some((program, args)) = opener_command(url) {
+            let program = program.to_ascii_lowercase();
+            assert!(!program.contains("cmd"), "{program}");
+            assert!(!program.contains("powershell"), "{program}");
+            assert!(!program.ends_with("sh"), "{program}");
+            assert_eq!(args.last(), Some(&url), "URL must be one argv entry");
+        }
+    }
 }
 
 #[cfg(test)]

@@ -113,23 +113,23 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
     }
 
     // ── Header ───────────────────────────────────────────────────
-    let _ = ui.container().gap(sp.xs()).col(|ui| {
+    ui.container().gap(sp.xs()).col(|ui| {
         ui.text("Design System Demo (v0.17)").bold().fg(primary);
         ui.text(format!(
             "Theme: {} | Left/Right cycle themes | t: toggle theme view | q: quit",
             theme_name
         ))
         .fg(text_dim);
-        let _ = ui.separator();
+        ui.separator();
     });
 
     if state.show_themes {
         // ── Theme browser ────────────────────────────────────────
-        let _ = ui.container().gap(sp.sm()).col(|ui| {
+        ui.container().gap(sp.sm()).col(|ui| {
             ui.text("All Theme Presets").bold();
             for (i, (name, t)) in state.themes.iter().enumerate() {
                 let marker = if i == state.theme_idx { "> " } else { "  " };
-                let _ = ui.container().gap(1).row(|ui| {
+                ui.container().gap(1).row(|ui| {
                     ui.text(format!("{}{}", marker, name)).fg(t.primary).bold();
                     for (label, color) in [
                         ("pri", t.primary),
@@ -140,7 +140,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                         ("err", t.error),
                     ] {
                         let fg = Color::contrast_fg(color);
-                        let _ = ui.container().bg(color).px(1).col(|ui| {
+                        ui.container().bg(color).px(1).col(|ui| {
                             ui.text(label).fg(fg);
                         });
                     }
@@ -149,23 +149,23 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
         });
     } else {
         // ── Showcase ─────────────────────────────────────────────
-        let _ = ui.container().gap(sp.sm()).col(|ui| {
+        ui.container().gap(sp.sm()).col(|ui| {
             // Row 1: Style extends + ThemeColor
             ui.text("Style Extends + ThemeColor").bold();
-            let _ = ui.container().gap(sp.xs()).row(|ui| {
-                let _ = ui.container().apply(&CARD).grow(1).col(|ui| {
+            ui.container().gap(sp.xs()).row(|ui| {
+                ui.container().apply(&CARD).grow(1).col(|ui| {
                     ui.text("CARD (base)").fg(surface_text);
                     ui.text("theme_bg: Surface").fg(text_dim);
                 });
-                let _ = ui.container().apply(&CARD_PRIMARY).grow(1).col(|ui| {
+                ui.container().apply(&CARD_PRIMARY).grow(1).col(|ui| {
                     ui.text("CARD_PRIMARY").fg(surface_text);
                     ui.text("extends CARD").fg(text_dim);
                 });
-                let _ = ui.container().apply(&CARD_ERROR).grow(1).col(|ui| {
+                ui.container().apply(&CARD_ERROR).grow(1).col(|ui| {
                     ui.text("CARD_ERROR").fg(surface_text);
                     ui.text("extends CARD").fg(text_dim);
                 });
-                let _ = ui.container().apply(&CARD_SUCCESS).grow(1).col(|ui| {
+                ui.container().apply(&CARD_SUCCESS).grow(1).col(|ui| {
                     ui.text("CARD_SUCCESS").fg(surface_text);
                     ui.text("extends CARD").fg(text_dim);
                 });
@@ -173,7 +173,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 
             // Row 2: Spacing tokens
             ui.text("Spacing Tokens").bold();
-            let _ = ui.container().gap(sp.xs()).row(|ui| {
+            ui.container().gap(sp.xs()).row(|ui| {
                 let scale = Spacing::new(1);
                 for (name, val) in [
                     ("xs", scale.xs()),
@@ -182,7 +182,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                     ("lg", scale.lg()),
                     ("xl", scale.xl()),
                 ] {
-                    let _ = ui.container().apply(&CARD).p(val).grow(1).col(|ui| {
+                    ui.container().apply(&CARD).p(val).grow(1).col(|ui| {
                         ui.text(format!("sp.{}() = {}", name, val)).fg(surface_text);
                     });
                 }
@@ -190,8 +190,8 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 
             // Row 3: WidgetTheme + interactive widgets
             ui.text("WidgetTheme (buttons have cyan accent)").bold();
-            let _ = ui.container().gap(sp.sm()).row(|ui| {
-                let _ = ui.container().apply(&CARD).grow(1).col(|ui| {
+            ui.container().gap(sp.sm()).row(|ui| {
+                ui.container().apply(&CARD).grow(1).col(|ui| {
                     if ui.button("Increment").clicked {
                         state.counter += 1;
                     }
@@ -200,15 +200,15 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                         state.counter = 0;
                     }
                 });
-                let _ = ui.container().apply(&CARD).grow(1).col(|ui| {
+                ui.container().apply(&CARD).grow(1).col(|ui| {
                     ui.text("Text Input:");
-                    let _ = ui.text_input(&mut state.input);
+                    ui.text_input(&mut state.input);
                     ui.text(format!("Value: \"{}\"", state.input.value))
                         .fg(text_dim);
                 });
-                let _ = ui.container().apply(&CARD).grow(1).col(|ui| {
+                ui.container().apply(&CARD).grow(1).col(|ui| {
                     ui.text("List:");
-                    let _ = ui.list(&mut state.list);
+                    ui.list(&mut state.list);
                 });
             });
 
@@ -220,11 +220,11 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                 ("Success", theme.success),
                 ("Surface", theme.surface),
             ];
-            let _ = ui.container().gap(sp.xs()).row(|ui| {
+            ui.container().gap(sp.xs()).row(|ui| {
                 for (label, bg_color) in test_bgs {
                     let fg = Color::contrast_fg(bg_color);
                     let ratio = Color::contrast_ratio_f64(fg, bg_color);
-                    let _ = ui.container().bg(bg_color).p(1).grow(1).col(|ui| {
+                    ui.container().bg(bg_color).p(1).grow(1).col(|ui| {
                         ui.text(label).fg(fg).bold();
                         ui.text(format!("ratio: {:.1}", ratio)).fg(fg);
                     });
@@ -236,7 +236,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 
 fn main() -> std::io::Result<()> {
     let widget_theme = WidgetTheme::new().button(WidgetColors::new().accent(Color::Cyan));
-    let config = RunConfig::default().mouse(true).widget_theme(widget_theme);
+    let config = RunConfig::default().widget_theme(widget_theme);
 
     let mut state = DemoState::new();
     slt::run_with(config, move |ui: &mut Context| {

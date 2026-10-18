@@ -1,3 +1,6 @@
+//! Layout-tree rendering into a [`Buffer`]: borders, clipping, scroll
+//! offsets, layer tinting and the debug overlay.
+
 use super::*;
 
 pub(crate) fn render(node: &LayoutNode, buf: &mut Buffer) {
@@ -37,10 +40,12 @@ pub(crate) fn render(node: &LayoutNode, buf: &mut Buffer) {
 /// Walks `buf.content` as one contiguous slice rather than per-cell
 /// `get_mut` so the per-cell bounds assert is paid zero times and the
 /// compiler can vectorize the modifier OR over the whole grid.
-fn dim_entire_buffer(buf: &mut Buffer) {
+pub(super) fn dim_entire_buffer(buf: &mut Buffer) {
     for cell in &mut buf.content {
         cell.style.modifiers |= crate::style::Modifiers::DIM;
     }
+    // Direct `content` writes must be recorded in the written spans.
+    buf.mark_touched_rect(buf.area);
 }
 
 /// OR the `DIM` modifier into a contiguous run of cells `[start, end)` in
@@ -58,7 +63,7 @@ fn dim_cell_range(content: &mut [crate::cell::Cell], start: usize, end: usize) {
 }
 
 /// Test-only re-export of [`dim_buffer_around`] for the perf alloc tests
-/// and the `v020_perf_audit` demo. Not part of the stable API.
+/// and the `perf_audit` example. Not part of the stable API.
 #[doc(hidden)]
 pub(crate) fn __bench_dim_buffer_around(buf: &mut Buffer, modal_rect: Rect) {
     dim_buffer_around(buf, modal_rect)
@@ -126,6 +131,16 @@ fn dim_buffer_around(buf: &mut Buffer, modal_rect: Rect) {
         // Right segment: columns [clip_right, area.right()).
         dim_cell_range(content, row_base + right_lo, row_base + full_hi);
     }
+
+    // Record the four strips in the written spans (direct `content` writes).
+    let top = Rect::new(area.x, area.y, area.width, clip_y - area.y);
+    let bottom = Rect::new(area.x, clip_bottom, area.width, area.bottom() - clip_bottom);
+    let band = clip_bottom - clip_y;
+    let left = Rect::new(area.x, clip_y, clip_x - area.x, band);
+    let right = Rect::new(clip_right, clip_y, area.right() - clip_right, band);
+    for strip in [top, bottom, left, right] {
+        buf.mark_touched_rect(strip);
+    }
 }
 
 /// Layer category used to tint F12 debug outlines.
@@ -149,9 +164,8 @@ enum LayerTint {
 
 /// Per-layer widget breakdown for the debug status bar.
 ///
-/// Returned by [`count_leaf_widgets_layered`]. The legacy `total` accessor
-/// preserves the v0.19.3 "N widgets" status line so existing snapshot tests
-/// stay green; the per-layer fields surface in the new
+/// Returned by [`count_leaf_widgets_layered`]. `total` drives the
+/// "N widgets" status line that snapshot tests pin; the per-layer fields surface in the
 /// "(N base, M overlay, K modal)" suffix.
 #[derive(Debug, Clone, Copy, Default)]
 struct LayerCounts {
@@ -236,19 +250,56 @@ fn render_debug_status_bar(node: &LayoutNode, buf: &mut Buffer, frame_time_us: u
         String::new()
     };
 
+    let (ms_whole, ms_tenth) = debug_ms_tenths(frame_time_us);
     let status = format!(
-        "[SLT Debug] {}x{} | {} widgets{} | {:.1}ms | {:.0}fps",
+        "[SLT Debug] {}x{} | {} widgets{} | {}.{}ms | {}fps",
         width,
         height,
         widgets,
         breakdown,
-        frame_time_us as f64 / 1_000.0,
-        fps.max(0.0)
+        ms_whole,
+        ms_tenth,
+        debug_fps_whole(fps)
     );
 
     let row_fill = " ".repeat(width as usize);
     buf.set_string(buf.area.x, y, &row_fill, style);
     buf.set_string(buf.area.x, y, &status, style);
+}
+
+/// `frame_time_us` in milliseconds rounded to one decimal, as `(whole, tenth)`.
+///
+/// Matches `format!("{:.1}", frame_time_us as f64 / 1_000.0)` digit for digit
+/// (round half to even on the exact binary value) but uses integer formatting
+/// only. The debug bar was the sole `f32`/`f64` `Display` user in a default
+/// build, so this keeps the float-formatting machinery (~15 KB) out of
+/// binaries that never format a float themselves (#491).
+fn debug_ms_tenths(frame_time_us: u64) -> (u64, u64) {
+    let tenths = frame_time_us / 100;
+    let round_up = match (frame_time_us % 100).cmp(&50) {
+        std::cmp::Ordering::Less => false,
+        std::cmp::Ordering::Greater => true,
+        std::cmp::Ordering::Equal => {
+            // A decimal tie: the nearest `f64` to `us / 1000` decides. The
+            // fused multiply-add yields the exact sign of `x * 1000 - us`.
+            let x = frame_time_us as f64 / 1_000.0;
+            let residual = x.mul_add(1_000.0, -(frame_time_us as f64));
+            if residual == 0.0 {
+                tenths % 2 == 1
+            } else {
+                residual > 0.0
+            }
+        }
+    };
+    let tenths = tenths + u64::from(round_up);
+    (tenths / 10, tenths % 10)
+}
+
+/// `fps` rounded to a whole number; matches `format!("{:.0}", fps.max(0.0))`
+/// for every finite rate (see [`debug_ms_tenths`] for why it avoids floats).
+fn debug_fps_whole(fps: f32) -> u64 {
+    // `as` saturates; a frame interval is at least 1 ns, so fps <= 1e9.
+    fps.max(0.0).round_ties_even() as u64
 }
 
 /// Count leaf widgets per layer category, walking nested overlays.
@@ -660,6 +711,21 @@ fn set_string_clipped_x(
     style: Style,
     link: Option<&str>,
 ) -> i64 {
+    let width = u32::try_from(crate::cell::display_width(text)).unwrap_or(u32::MAX);
+    set_measured_string_clipped_x(buf, screen_x, y, text, width, style, link)
+}
+
+/// [`set_string_clipped_x`] for a caller that already knows `text`'s display
+/// width (#494), e.g. from [`super::tree::TextNodeData::width`].
+fn set_measured_string_clipped_x(
+    buf: &mut Buffer,
+    screen_x: i64,
+    y: u32,
+    text: &str,
+    text_width: u32,
+    style: Style,
+    link: Option<&str>,
+) -> i64 {
     #[cfg(feature = "bidi")]
     if screen_x < i64::from(buf.area.x) && crate::buffer::needs_bidi_reorder(text) {
         let visual = crate::buffer::reorder_line_visual(text);
@@ -668,7 +734,7 @@ fn set_string_clipped_x(
             .map(compact_str::CompactString::new);
         let mut x = screen_x;
         for grapheme in visual.graphemes(true) {
-            let width = UnicodeWidthStr::width(grapheme) as i64;
+            let width = crate::cell::display_width(grapheme) as i64;
             if x >= i64::from(buf.area.x) && x < i64::from(buf.area.right()) {
                 buf.set_grapheme_visual(x as u32, y, grapheme, style, link.as_ref());
             }
@@ -676,7 +742,7 @@ fn set_string_clipped_x(
         }
         return x;
     }
-    let full_width = UnicodeWidthStr::width(text) as i64;
+    let full_width = i64::from(text_width);
     let left = i64::from(buf.area.x);
     if screen_x >= left {
         let sx = screen_x as u32;
@@ -696,7 +762,7 @@ fn set_string_clipped_x(
             byte_start = idx;
             break;
         }
-        consumed += UnicodeWidthStr::width(g) as u32;
+        consumed += crate::cell::display_width(g) as u32;
     }
     if byte_start >= text.len() {
         // Entire run scrolled off the left edge.
@@ -717,6 +783,7 @@ fn set_styled_line_clipped_x(
     screen_x: i64,
     y: u32,
     segments: &[(String, Style)],
+    widths: Option<&[u32]>,
     parent_bg: Option<Color>,
 ) -> i64 {
     #[cfg(feature = "bidi")]
@@ -727,13 +794,19 @@ fn set_styled_line_clipped_x(
         return set_styled_bidi_line(buf, screen_x, y, segments, parent_bg);
     }
 
+    // `widths` (#494) are the build-time measurements of `segments`; they
+    // are only passed when they line up one-to-one.
+    let widths = widths.filter(|widths| widths.len() == segments.len());
     let mut x = screen_x;
-    for (text, style) in segments {
+    for (i, (text, style)) in segments.iter().enumerate() {
         let mut style = *style;
         if style.bg.is_none() {
             style.bg = parent_bg;
         }
-        x = set_string_clipped_x(buf, x, y, text, style, None);
+        x = match widths {
+            Some(widths) => set_measured_string_clipped_x(buf, x, y, text, widths[i], style, None),
+            None => set_string_clipped_x(buf, x, y, text, style, None),
+        };
     }
     x
 }
@@ -790,7 +863,7 @@ fn set_styled_bidi_line(
     for logical_index in visual_to_logical {
         let grapheme = graphemes[logical_index].1;
         let normalized = crate::cell::normalize_cell_symbol(grapheme);
-        let width = UnicodeWidthStr::width(normalized.as_str()) as i64;
+        let width = crate::cell::display_width(normalized.as_str()) as i64;
         let next_x = x.saturating_add(width);
         if x >= left && x < right {
             buf.set_grapheme_visual(x as u32, y, grapheme, atom_styles[logical_index], None);
@@ -921,13 +994,27 @@ fn render_inner(
                         if line_y < 0 {
                             continue;
                         }
-                        set_styled_line_clipped_x(buf, sx, line_y as u32, line_segs, parent_bg);
+                        set_styled_line_clipped_x(
+                            buf,
+                            sx,
+                            line_y as u32,
+                            line_segs,
+                            None,
+                            parent_bg,
+                        );
                     }
                 } else {
                     if sy < 0 {
                         return;
                     }
-                    set_styled_line_clipped_x(buf, sx, sy as u32, segs, parent_bg);
+                    set_styled_line_clipped_x(
+                        buf,
+                        sx,
+                        sy as u32,
+                        segs,
+                        Some(&td.segment_widths),
+                        parent_bg,
+                    );
                 }
             } else if let Some(ref text) = td.content {
                 let mut style = node.style;
@@ -947,33 +1034,37 @@ fn render_inner(
                         if line_y < 0 {
                             continue;
                         }
-                        let text_width = UnicodeWidthStr::width(line.as_str()) as u32;
-                        let x_align = if text_width < node.size.0 {
+                        let line_width =
+                            u32::try_from(crate::cell::display_width(line)).unwrap_or(u32::MAX);
+                        let x_align = if line_width < node.size.0 {
                             match node.align {
                                 Align::Start => 0,
-                                Align::Center => (node.size.0 - text_width) / 2,
-                                Align::End => node.size.0 - text_width,
+                                Align::Center => (node.size.0 - line_width) / 2,
+                                Align::End => node.size.0 - line_width,
                             }
                         } else {
                             0
                         };
-                        set_string_clipped_x(
+                        set_measured_string_clipped_x(
                             buf,
                             sx + i64::from(x_align),
                             line_y as u32,
                             line,
+                            line_width,
                             style,
-                            node.link_url.as_deref(),
+                            td.link_url.as_deref(),
                         );
                     }
                 } else {
                     if sy < 0 {
                         return;
                     }
-                    let text_width = UnicodeWidthStr::width(text.as_str()) as u32;
+                    // Measured once when the node was built (#494).
+                    let text_width = td.width;
                     if node.truncate && text_width > node.size.0 && node.size.0 > 1 {
                         let truncated = truncate_with_ellipsis(text, node.size.0 as usize);
-                        let trunc_width = UnicodeWidthStr::width(truncated.as_str()) as u32;
+                        let trunc_width = u32::try_from(crate::cell::display_width(&truncated))
+                            .unwrap_or(u32::MAX);
                         let x_align = if trunc_width < node.size.0 {
                             match node.align {
                                 Align::Start => 0,
@@ -983,13 +1074,14 @@ fn render_inner(
                         } else {
                             0
                         };
-                        set_string_clipped_x(
+                        set_measured_string_clipped_x(
                             buf,
                             sx + i64::from(x_align),
                             sy as u32,
                             &truncated,
+                            trunc_width,
                             style,
-                            node.link_url.as_deref(),
+                            td.link_url.as_deref(),
                         );
                     } else {
                         let x_align = if text_width < node.size.0 {
@@ -1007,7 +1099,7 @@ fn render_inner(
                                 .graphemes(true)
                                 .take(cursor_offset)
                                 .map(|grapheme| {
-                                    u32::try_from(UnicodeWidthStr::width(grapheme))
+                                    u32::try_from(crate::cell::display_width(grapheme))
                                         .unwrap_or(u32::MAX)
                                 })
                                 .fold(0u32, u32::saturating_add);
@@ -1016,13 +1108,14 @@ fn render_inner(
                                 buf.set_cursor_pos(cursor_screen_x, sy as u32, td.cursor_masked);
                             }
                         }
-                        set_string_clipped_x(
+                        set_measured_string_clipped_x(
                             buf,
                             draw_x,
                             sy as u32,
                             text,
+                            text_width,
                             style,
-                            node.link_url.as_deref(),
+                            td.link_url.as_deref(),
                         );
                     }
                 }
@@ -1033,12 +1126,9 @@ fn render_inner(
             if let Some(color) = node.bg_color
                 && let Some(area) = visible_area(node, x_offset, y_offset, buf.area)
             {
-                let fill_style = Style::new().bg(color);
-                for y in area.y..area.bottom() {
-                    for x in area.x..area.right() {
-                        buf.set_string(x, y, " ", fill_style);
-                    }
-                }
+                // Bulk blank fill; edge cells that cut a wide grapheme take
+                // the general write path inside `fill_rect` (#493).
+                buf.fill_rect(area, Style::new().bg(color));
             }
             let child_bg = node.bg_color.or(parent_bg);
             render_container_border(node, buf, x_offset, y_offset, child_bg);
@@ -1150,9 +1240,8 @@ fn render_container_border(
         && top_i < i64::from(buf.area.bottom())
     {
         let y = top_i as u32;
-        for xx in h_start as u32..=h_end as u32 {
-            buf.set_char(xx, y, chars.h, style);
-        }
+        let count = (h_end - h_start + 1) as u32;
+        buf.set_char_row(h_start as u32, y, count, chars.h, style);
     }
     if sides.bottom
         && horizontal_visible
@@ -1160,22 +1249,26 @@ fn render_container_border(
         && bottom_i < i64::from(buf.area.bottom())
     {
         let y = bottom_i as u32;
-        for xx in h_start as u32..=h_end as u32 {
-            buf.set_char(xx, y, chars.h, style);
-        }
+        let count = (h_end - h_start + 1) as u32;
+        buf.set_char_row(h_start as u32, y, count, chars.h, style);
     }
     let vert_start = top_i.max(i64::from(buf.area.y));
     let vert_end = bottom_i.min(i64::from(buf.area.bottom()).saturating_sub(1));
     let vertical_visible = vert_start <= vert_end;
-    if sides.left && vertical_visible {
-        for yy in vert_start as u32..=vert_end as u32 {
-            set_char_at(buf, left_i, yy, chars.v);
-        }
+    let vert_count = (vert_end - vert_start + 1) as u32;
+    let area = buf.area;
+    let in_columns = |col: i64| col >= i64::from(area.x) && col < i64::from(area.right());
+    if sides.left && vertical_visible && in_columns(left_i) {
+        buf.set_char_column(left_i as u32, vert_start as u32, vert_count, chars.v, style);
     }
-    if sides.right && vertical_visible {
-        for yy in vert_start as u32..=vert_end as u32 {
-            set_char_at(buf, right_i, yy, chars.v);
-        }
+    if sides.right && vertical_visible && in_columns(right_i) {
+        buf.set_char_column(
+            right_i as u32,
+            vert_start as u32,
+            vert_count,
+            chars.v,
+            style,
+        );
     }
 
     if top_i >= i64::from(buf.area.y) && top_i < i64::from(buf.area.bottom()) {
@@ -1250,17 +1343,28 @@ fn render_container_border(
             // (which may be negative when scrolled left); the clipped writer
             // trims any leading columns past the left edge (#247).
             let max_width = (title_right - title_x + 1).max(0) as usize;
-            let mut trimmed = String::new();
+            // Trim by grapheme cluster with the shared width policy (#494):
+            // ambiguous-width glyphs honour `RunConfig::ambiguous_wide`, and a
+            // cluster is never split. The kept prefix is a borrowed slice.
             let mut col_used = 0usize;
-            for ch in title.chars() {
-                let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+            let mut end = 0usize;
+            for (idx, grapheme) in title.grapheme_indices(true) {
+                let cw = crate::cell::display_width(grapheme);
                 if col_used + cw > max_width {
                     break;
                 }
-                trimmed.push(ch);
                 col_used += cw;
+                end = idx + grapheme.len();
             }
-            set_string_clipped_x(buf, title_x, y, &trimmed, ts, None);
+            set_measured_string_clipped_x(
+                buf,
+                title_x,
+                y,
+                &title[..end],
+                u32::try_from(col_used).unwrap_or(u32::MAX),
+                ts,
+                None,
+            );
         }
     }
 }
@@ -1313,7 +1417,7 @@ pub(super) fn truncate_with_ellipsis(text: &str, max_width: usize) -> String {
     // Indic / Thai syllable) that would overflow `target` is dropped whole
     // before the ellipsis, never half-emitted.
     for g in text.graphemes(true) {
-        let ch_width = UnicodeWidthStr::width(g);
+        let ch_width = crate::cell::display_width(g);
         if width + ch_width > target {
             break;
         }
@@ -1326,12 +1430,43 @@ pub(super) fn truncate_with_ellipsis(text: &str, max_width: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
     use super::tree::default_container_config;
     use super::*;
 
+    /// #491: the integer debug-bar formatting must print exactly what the
+    /// float `{:.1}` / `{:.0}` formatting printed, including decimal ties.
     #[test]
-    fn v024_clipped_text_matches_visual_source_cell_positions() {
+    fn issue_491_debug_bar_numbers_match_float_formatting() {
+        let check_ms = |us: u64| {
+            let (whole, tenth) = debug_ms_tenths(us);
+            assert_eq!(
+                format!("{whole}.{tenth}"),
+                format!("{:.1}", us as f64 / 1_000.0),
+                "frame_time_us = {us}"
+            );
+        };
+        (0..2_000_000).for_each(check_ms);
+        for base in [u64::from(u32::MAX), 1 << 40, 1 << 48] {
+            (base..base + 20_000).for_each(check_ms);
+        }
+        let check_fps = |fps: f32| {
+            assert_eq!(
+                debug_fps_whole(fps).to_string(),
+                format!("{:.0}", fps.max(0.0)),
+                "fps = {fps}"
+            );
+        };
+        for i in 0..200_000u32 {
+            check_fps(i as f32 * 0.25);
+            check_fps(i as f32 * 0.01);
+        }
+        for fps in [-3.0, f32::NAN, 0.5, 1.5, 2.5, 59.999, 1e9, 16_777_217.0] {
+            check_fps(fps);
+        }
+    }
+
+    #[test]
+    fn clipped_text_matches_visual_source_cell_positions() {
         let style = Style::new().fg(Color::Red);
         let url = "https://example.com";
         for text in [

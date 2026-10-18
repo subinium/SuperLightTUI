@@ -289,9 +289,10 @@ impl ThemeWatcher {
     ///     println!("reloaded: {:?}", tf.theme.primary);
     /// }
     /// ```
-    // Intentional stderr diagnostic on a half-saved theme file: the hot-reload
-    // loop must surface why a reload was skipped without aborting the app.
-    #[allow(clippy::print_stderr)]
+    #[expect(
+        clippy::print_stderr,
+        reason = "hot reload reports why a half-saved theme was skipped without aborting the app"
+    )]
     pub fn poll(&mut self) -> Option<ThemeFile> {
         // Drain all buffered events; a burst of writes collapses to one reload.
         let mut changed = false;
@@ -337,7 +338,6 @@ impl ThemeWatcher {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
     use super::*;
     use crate::Color;
 
@@ -497,7 +497,6 @@ mod tests {
 
 #[cfg(all(test, feature = "crossterm"))]
 mod render_tests {
-    #![allow(clippy::unwrap_used)]
     use super::*;
     use crate::{ButtonVariant, Color, TestBackend};
 
@@ -518,7 +517,7 @@ mod render_tests {
         // paints `theme.primary` as the label foreground when focused.
         tb.render_with_events(Vec::new(), 0, 1, move |ui| {
             ui.set_theme(tf.theme);
-            let _ = ui.button_with("Go", ButtonVariant::Default);
+            let _ = ui.button("Go").variant(ButtonVariant::Default);
         });
 
         // The widget rendered.
@@ -542,9 +541,11 @@ mod render_tests {
     }
 }
 
-#[cfg(all(test, feature = "theme-watch"))]
+// Split from `cfg(all(..))` so clippy sees `cfg(test)` and applies
+// `allow-unwrap-in-tests` to the non-`#[test]` helpers below.
+#[cfg(test)]
+#[cfg(feature = "theme-watch")]
 mod watch_tests {
-    #![allow(clippy::unwrap_used)]
     use super::*;
     use crate::Color;
     use std::time::{Duration, Instant};

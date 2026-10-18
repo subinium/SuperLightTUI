@@ -1,3 +1,8 @@
+//! Commanding family state — key chords, command palette, screen stack and
+//! mode state.
+//!
+//! Rendered by `context/widgets/commanding.rs`.
+
 /// Default tick budget (~1s at 60Hz) after which a partially-typed chord
 /// is abandoned. Matches the tick clock used by notifications/animation.
 ///
@@ -237,191 +242,34 @@ impl CommandPaletteState {
     }
 }
 
-/// State for a streaming text display.
-///
-/// Accumulates text chunks as they arrive from an LLM stream.
-/// Pass to [`Context::streaming_text`](crate::Context::streaming_text) each frame.
+// ── Command Palette ───────────────────────────────────────────────────
+
+/// A single command entry in the palette.
 #[derive(Debug, Clone)]
-pub struct StreamingTextState {
-    /// The accumulated text content.
-    pub content: String,
-    /// Whether the stream is still receiving data.
-    pub streaming: bool,
-    /// Cursor blink state (for the typing indicator).
-    pub(crate) cursor_visible: bool,
-    pub(crate) cursor_tick: u64,
-    /// Monotonic content version, bumped on every content mutation
-    /// (`push` / `start` / `clear`). See [`StreamingTextState::version`].
-    pub(crate) version: u64,
+pub struct PaletteCommand {
+    /// Primary command label.
+    pub label: String,
+    /// Supplemental command description.
+    pub description: String,
+    /// Optional keyboard shortcut hint.
+    pub shortcut: Option<String>,
 }
 
-impl StreamingTextState {
-    /// Create a new empty streaming text state.
-    pub fn new() -> Self {
+impl PaletteCommand {
+    /// Create a new palette command.
+    pub fn new(label: impl Into<String>, description: impl Into<String>) -> Self {
         Self {
-            content: String::new(),
-            streaming: false,
-            cursor_visible: true,
-            cursor_tick: 0,
-            version: 0,
+            label: label.into(),
+            description: description.into(),
+            shortcut: None,
         }
     }
 
-    /// Append a chunk of text (e.g., from an LLM stream delta).
-    pub fn push(&mut self, chunk: &str) {
-        self.content.push_str(chunk);
-        self.version = self.version.wrapping_add(1);
-    }
-
-    /// Mark the stream as complete (hides the typing cursor).
-    pub fn finish(&mut self) {
-        self.streaming = false;
-    }
-
-    /// Start a new streaming session, clearing previous content.
-    pub fn start(&mut self) {
-        self.content.clear();
-        self.streaming = true;
-        self.cursor_visible = true;
-        self.cursor_tick = 0;
-        self.version = self.version.wrapping_add(1);
-    }
-
-    /// Clear all content and reset state.
-    pub fn clear(&mut self) {
-        self.content.clear();
-        self.streaming = false;
-        self.cursor_visible = true;
-        self.cursor_tick = 0;
-        self.version = self.version.wrapping_add(1);
-    }
-
-    /// Monotonic version counter, bumped on every content mutation
-    /// (`push` / `start` / `clear`).
-    ///
-    /// The stream itself changes every token, so this value is **not** a
-    /// useful cache key for the streaming region. Its purpose is the
-    /// inverse: it lets you detect when the stream *did* change so you can
-    /// decide whether the *surrounding static chrome* is stable. Combine a
-    /// hash of your non-streaming inputs into a key for
-    /// [`ContainerBuilder::cached`](crate::ContainerBuilder::cached) and wrap
-    /// the chrome — not the stream — in it.
-    ///
-    /// Since 0.21.0.
-    ///
-    /// # Example
-    /// ```no_run
-    /// let mut stream = slt::StreamingTextState::new();
-    /// stream.push("hello");
-    /// assert_eq!(stream.version(), 1);
-    /// stream.push(" world");
-    /// assert_eq!(stream.version(), 2);
-    /// ```
-    pub fn version(&self) -> u64 {
-        self.version
-    }
-}
-
-impl Default for StreamingTextState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// State for a streaming markdown display.
-///
-/// Accumulates markdown chunks as they arrive from an LLM stream.
-/// Pass to [`Context::streaming_markdown`](crate::Context::streaming_markdown) each frame.
-#[derive(Debug, Clone)]
-pub struct StreamingMarkdownState {
-    /// The accumulated markdown content.
-    pub content: String,
-    /// Whether the stream is still receiving data.
-    pub streaming: bool,
-    /// Cursor blink state (for the typing indicator).
-    pub cursor_visible: bool,
-    /// Cursor animation tick counter.
-    pub cursor_tick: u64,
-    /// Whether the parser is currently inside a fenced code block.
-    pub in_code_block: bool,
-    /// Language label of the active fenced code block.
-    pub code_block_lang: String,
-    /// Monotonic content version, bumped on every content mutation
-    /// (`push` / `start` / `clear`). See [`StreamingMarkdownState::version`].
-    pub(crate) version: u64,
-}
-
-impl StreamingMarkdownState {
-    /// Create a new empty streaming markdown state.
-    pub fn new() -> Self {
-        Self {
-            content: String::new(),
-            streaming: false,
-            cursor_visible: true,
-            cursor_tick: 0,
-            in_code_block: false,
-            code_block_lang: String::new(),
-            version: 0,
-        }
-    }
-
-    /// Append a markdown chunk (e.g., from an LLM stream delta).
-    pub fn push(&mut self, chunk: &str) {
-        self.content.push_str(chunk);
-        self.version = self.version.wrapping_add(1);
-    }
-
-    /// Start a new streaming session, clearing previous content.
-    pub fn start(&mut self) {
-        self.content.clear();
-        self.streaming = true;
-        self.cursor_visible = true;
-        self.cursor_tick = 0;
-        self.in_code_block = false;
-        self.code_block_lang.clear();
-        self.version = self.version.wrapping_add(1);
-    }
-
-    /// Mark the stream as complete (hides the typing cursor).
-    pub fn finish(&mut self) {
-        self.streaming = false;
-    }
-
-    /// Clear all content and reset state.
-    pub fn clear(&mut self) {
-        self.content.clear();
-        self.streaming = false;
-        self.cursor_visible = true;
-        self.cursor_tick = 0;
-        self.in_code_block = false;
-        self.code_block_lang.clear();
-        self.version = self.version.wrapping_add(1);
-    }
-
-    /// Monotonic version counter, bumped on every content mutation
-    /// (`push` / `start` / `clear`).
-    ///
-    /// As with [`StreamingTextState::version`], use this to detect stream
-    /// deltas and key the *surrounding static chrome* into
-    /// [`ContainerBuilder::cached`](crate::ContainerBuilder::cached) — not to
-    /// cache the stream region itself.
-    ///
-    /// Since 0.21.0.
-    ///
-    /// # Example
-    /// ```no_run
-    /// let mut md = slt::StreamingMarkdownState::new();
-    /// md.push("# Title");
-    /// assert_eq!(md.version(), 1);
-    /// ```
-    pub fn version(&self) -> u64 {
-        self.version
-    }
-}
-
-impl Default for StreamingMarkdownState {
-    fn default() -> Self {
-        Self::new()
+    /// Set a shortcut hint displayed alongside the command.
+    #[must_use]
+    pub fn shortcut(mut self, s: impl Into<String>) -> Self {
+        self.shortcut = Some(s.into());
+        self
     }
 }
 
@@ -473,7 +321,13 @@ pub(crate) struct ScreenFocusUpdate {
 impl Clone for ScreenState {
     fn clone(&self) -> Self {
         let mut focus_state = self.focus_state.clone();
-        if let Some(update) = self.pending_focus.lock().unwrap_or_else(|error| error.into_inner()).update.as_ref() {
+        if let Some(update) = self
+            .pending_focus
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .update
+            .as_ref()
+        {
             focus_state.insert(update.name.to_string(), (update.index, update.count));
         }
         Self {
@@ -506,6 +360,10 @@ impl ScreenState {
     }
 
     /// Return the current screen name (top of the stack).
+    ///
+    /// # Panics
+    ///
+    /// Panics only if an internal invariant is broken: a [`ScreenState`] always holds at least one screen.
     pub fn current(&self) -> &str {
         self.stack
             .last()
@@ -555,7 +413,9 @@ impl ScreenState {
             return false;
         }
         let removed = self.focus_state.remove(name).is_some();
-        if removed { self.cancel_focus_update(name); }
+        if removed {
+            self.cancel_focus_update(name);
+        }
         removed
     }
 
@@ -569,9 +429,18 @@ impl ScreenState {
         let stack = &self.stack;
         self.focus_state
             .retain(|name, _| stack.iter().any(|screen| screen == name) || keep(name));
-        let mut mailbox = self.pending_focus.lock().unwrap_or_else(|error| error.into_inner());
-        mailbox.leases.retain(|name, _| self.focus_state.contains_key(name.as_ref()));
-        if mailbox.update.as_ref().is_some_and(|update| !self.focus_state.contains_key(update.name.as_ref())) {
+        let mut mailbox = self
+            .pending_focus
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        mailbox
+            .leases
+            .retain(|name, _| self.focus_state.contains_key(name.as_ref()));
+        if mailbox
+            .update
+            .as_ref()
+            .is_some_and(|update| !self.focus_state.contains_key(update.name.as_ref()))
+        {
             mailbox.update = None;
         }
         before - self.focus_state.len()
@@ -598,12 +467,18 @@ impl ScreenState {
         if let Some(slot) = self.focus_state.get_mut(name) {
             *slot = (focus_index, focus_count);
         } else {
-            self.focus_state.insert(name.to_string(), (focus_index, focus_count));
+            self.focus_state
+                .insert(name.to_string(), (focus_index, focus_count));
         }
     }
 
     pub(crate) fn restore_focus(&self, name: &str) -> (usize, usize) {
-        if let Some(update) = self.pending_focus.lock().unwrap_or_else(|error| error.into_inner()).update.as_ref()
+        if let Some(update) = self
+            .pending_focus
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .update
+            .as_ref()
             && update.name.as_ref() == name
         {
             return (update.index, update.count);
@@ -612,25 +487,42 @@ impl ScreenState {
     }
 
     pub(crate) fn sync_focus(&mut self) {
-        let pending = self.pending_focus.lock().unwrap_or_else(|error| error.into_inner()).update.take();
+        let pending = self
+            .pending_focus
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .update
+            .take();
         if let Some(update) = pending {
             self.save_focus(&update.name, update.index, update.count);
         }
     }
 
     fn cancel_focus_update(&mut self, name: &str) {
-        let mut mailbox = self.pending_focus.lock().unwrap_or_else(|error| error.into_inner());
+        let mut mailbox = self
+            .pending_focus
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         mailbox.leases.remove(name);
-        if mailbox.update.as_ref().is_some_and(|update| update.name.as_ref() == name) {
+        if mailbox
+            .update
+            .as_ref()
+            .is_some_and(|update| update.name.as_ref() == name)
+        {
             mailbox.update = None;
         }
     }
 
     pub(crate) fn focus_updates(&self, name: &std::sync::Arc<str>) -> (PendingScreenFocus, u64) {
-        let mut mailbox = self.pending_focus.lock().unwrap_or_else(|error| error.into_inner());
+        let mut mailbox = self
+            .pending_focus
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         mailbox.generation = mailbox.generation.wrapping_add(1);
         let generation = mailbox.generation;
-        mailbox.leases.insert(std::sync::Arc::clone(name), generation);
+        mailbox
+            .leases
+            .insert(std::sync::Arc::clone(name), generation);
         (std::sync::Arc::clone(&self.pending_focus), generation)
     }
 }
@@ -696,6 +588,10 @@ impl ModeState {
     ///
     /// Panics if the mode does not exist. For a non-panicking variant that
     /// reports success, use [`Self::try_switch_mode`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if `mode` was never registered with [`ModeState::add_mode`].
     pub fn switch_mode(&mut self, mode: impl Into<String>) {
         let mode = mode.into();
         assert!(self.modes.contains_key(&mode), "mode '{mode}' not found");
@@ -724,6 +620,10 @@ impl ModeState {
     }
 
     /// Get a reference to the active mode's screen state.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if an internal invariant is broken: the active mode is always registered.
     pub fn screens(&self) -> &ScreenState {
         self.modes
             .get(&self.active)
@@ -731,6 +631,10 @@ impl ModeState {
     }
 
     /// Get a mutable reference to the active mode's screen state.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if an internal invariant is broken: the active mode is always registered.
     pub fn screens_mut(&mut self) -> &mut ScreenState {
         self.modes
             .get_mut(&self.active)
@@ -810,111 +714,5 @@ mod mode_state_tests {
         assert!(modes.contains_mode("app"));
         assert!(modes.contains_mode("admin"));
         assert!(!modes.contains_mode("settings"));
-    }
-}
-
-#[cfg(test)]
-mod streaming_version_tests {
-    //! Issue #273 — the monotonic `version()` counter on streaming states.
-    use super::{StreamingMarkdownState, StreamingTextState};
-
-    #[test]
-    fn text_version_starts_at_zero_and_bumps_on_mutation() {
-        let mut s = StreamingTextState::new();
-        assert_eq!(s.version(), 0, "fresh state has version 0");
-        s.push("a");
-        assert_eq!(s.version(), 1);
-        s.push("b");
-        assert_eq!(s.version(), 2);
-        s.start();
-        assert_eq!(s.version(), 3, "start() is a mutation");
-        s.clear();
-        assert_eq!(s.version(), 4, "clear() is a mutation");
-    }
-
-    #[test]
-    fn text_finish_does_not_bump_version() {
-        let mut s = StreamingTextState::new();
-        s.push("x");
-        let v = s.version();
-        s.finish();
-        assert_eq!(s.version(), v, "finish() only toggles the streaming flag");
-    }
-
-    #[test]
-    fn markdown_version_bumps_on_mutation() {
-        let mut s = StreamingMarkdownState::new();
-        assert_eq!(s.version(), 0);
-        s.push("# h");
-        assert_eq!(s.version(), 1);
-        s.start();
-        assert_eq!(s.version(), 2);
-        s.clear();
-        assert_eq!(s.version(), 3);
-        let v = s.version();
-        s.finish();
-        assert_eq!(s.version(), v, "finish() does not bump");
-    }
-}
-
-/// Approval state for a tool call.
-#[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ApprovalAction {
-    /// No action taken yet.
-    Pending,
-    /// User approved the tool call.
-    Approved,
-    /// User rejected the tool call.
-    Rejected,
-}
-
-/// State for a tool approval widget.
-///
-/// Displays a tool call with approve/reject buttons for human-in-the-loop
-/// AI workflows. Pass to [`Context::tool_approval`](crate::Context::tool_approval)
-/// each frame.
-#[derive(Debug, Clone)]
-pub struct ToolApprovalState {
-    /// The name of the tool being invoked.
-    pub tool_name: String,
-    /// A human-readable description of what the tool will do.
-    pub description: String,
-    /// The current approval status.
-    pub action: ApprovalAction,
-}
-
-impl ToolApprovalState {
-    /// Create a new tool approval prompt.
-    pub fn new(tool_name: impl Into<String>, description: impl Into<String>) -> Self {
-        Self {
-            tool_name: tool_name.into(),
-            description: description.into(),
-            action: ApprovalAction::Pending,
-        }
-    }
-
-    /// Reset to pending state.
-    pub fn reset(&mut self) {
-        self.action = ApprovalAction::Pending;
-    }
-}
-
-/// Item in a context bar showing active context sources.
-#[derive(Debug, Clone)]
-pub struct ContextItem {
-    /// Display label for this context source.
-    pub label: String,
-    /// Token count or size indicator.
-    pub tokens: usize,
-}
-
-impl ContextItem {
-    /// Create a new context item with a label and token count.
-    pub fn new(label: impl Into<String>, tokens: usize) -> Self {
-        Self {
-            label: label.into(),
-            tokens,
-        }
     }
 }

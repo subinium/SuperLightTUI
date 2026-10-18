@@ -1,5 +1,5 @@
 use slt::{Border, Color, Context};
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> std::io::Result<()> {
@@ -22,8 +22,7 @@ async fn main() -> std::io::Result<()> {
             updates.drain(0..overflow);
         }
 
-        let _ = ui
-            .bordered(Border::Rounded)
+        ui.bordered(Border::Rounded)
             .title("Async Demo")
             .p(1)
             .gap(1)

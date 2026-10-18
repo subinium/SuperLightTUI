@@ -1,3 +1,6 @@
+//! [`Theme`], the spacing scale, theme color tokens, syntax palettes and the
+//! built-in presets.
+
 use super::*;
 
 /// Spacing scale for consistent padding, margin, and gap values.
@@ -360,6 +363,13 @@ pub struct Theme {
     pub selected_bg: Color,
     /// Foreground color for selected list/table rows.
     pub selected_fg: Color,
+    /// Background for selected text inside `text_input` / `textarea`
+    /// (issue #465). `None` (the default for every preset) uses
+    /// [`selected_bg`](Self::selected_bg) with
+    /// [`selected_fg`](Self::selected_fg); see
+    /// [`text_selection_style`](Self::text_selection_style).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub selection_bg: Option<Color>,
     /// Subtle surface color for card backgrounds and elevated containers.
     pub surface: Color,
     /// Hover/active surface color, one step brighter than `surface`.
@@ -412,20 +422,38 @@ impl Theme {
         Color::contrast_fg(bg)
     }
 
+    /// Style for selected text inside `text_input` / `textarea` (issue #465).
+    ///
+    /// Uses [`selection_bg`](Self::selection_bg) with a contrasting
+    /// foreground when set, otherwise [`selected_bg`](Self::selected_bg) /
+    /// [`selected_fg`](Self::selected_fg), so existing themes need no edits.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::{Color, Theme};
+    ///
+    /// let theme = Theme::dark();
+    /// assert_eq!(theme.text_selection_style().bg, Some(theme.selected_bg));
+    /// let custom = Theme::builder().selection_bg(Color::Rgb(60, 60, 120)).build();
+    /// assert_eq!(custom.text_selection_style().bg, Some(Color::Rgb(60, 60, 120)));
+    /// ```
+    pub fn text_selection_style(&self) -> crate::style::Style {
+        match self.selection_bg {
+            Some(bg) => crate::style::Style::new()
+                .bg(bg)
+                .fg(self.contrast_text_on(bg)),
+            None => crate::style::Style::new()
+                .bg(self.selected_bg)
+                .fg(self.selected_fg),
+        }
+    }
+
     /// Blend a color with the theme's background at the given alpha.
     ///
     /// `alpha = 0.0` returns `self.bg`, `alpha = 1.0` returns `color` unchanged.
     pub fn overlay_f64(&self, color: Color, alpha: f64) -> Color {
         color.blend_f64(self.bg, alpha)
-    }
-
-    /// Deprecated `f32` alias for [`overlay_f64`](Self::overlay_f64).
-    #[deprecated(
-        since = "0.22.2",
-        note = "use Theme::overlay_f64() to keep public float APIs on f64"
-    )]
-    pub fn overlay(&self, color: Color, alpha: f32) -> Color {
-        self.overlay_f64(color, f64::from(alpha))
     }
 
     /// Create a dark theme with cyan primary and white text.
@@ -443,6 +471,7 @@ impl Theme {
             error: Color::Red,
             selected_bg: Color::Cyan,
             selected_fg: Color::Black,
+            selection_bg: None,
             surface: Color::Indexed(236),
             surface_hover: Color::Indexed(238),
             surface_text: Color::Indexed(250),
@@ -467,6 +496,7 @@ impl Theme {
             error: Color::Rgb(220, 38, 38),
             selected_bg: Color::Rgb(37, 99, 235),
             selected_fg: Color::White,
+            selection_bg: None,
             surface: Color::Rgb(241, 245, 249),
             surface_hover: Color::Rgb(226, 232, 240),
             surface_text: Color::Rgb(51, 65, 85),
@@ -506,6 +536,7 @@ impl Theme {
             error: None,
             selected_bg: None,
             selected_fg: None,
+            selection_bg: None,
             surface: None,
             surface_hover: None,
             surface_text: None,
@@ -548,6 +579,7 @@ impl Theme {
             error: Some(base.error),
             selected_bg: Some(base.selected_bg),
             selected_fg: Some(base.selected_fg),
+            selection_bg: base.selection_bg,
             surface: Some(base.surface),
             surface_hover: Some(base.surface_hover),
             surface_text: Some(base.surface_text),
@@ -593,6 +625,7 @@ impl Theme {
             error: Color::Rgb(255, 85, 85),
             selected_bg: Color::Rgb(189, 147, 249),
             selected_fg: Color::Rgb(40, 42, 54),
+            selection_bg: None,
             surface: Color::Rgb(68, 71, 90),
             surface_hover: Color::Rgb(98, 100, 120),
             surface_text: Color::Rgb(191, 194, 210),
@@ -617,6 +650,7 @@ impl Theme {
             error: Color::Rgb(243, 139, 168),
             selected_bg: Color::Rgb(180, 190, 254),
             selected_fg: Color::Rgb(30, 30, 46),
+            selection_bg: None,
             surface: Color::Rgb(49, 50, 68),
             surface_hover: Color::Rgb(69, 71, 90),
             surface_text: Color::Rgb(166, 173, 200),
@@ -641,6 +675,7 @@ impl Theme {
             error: Color::Rgb(191, 97, 106),
             selected_bg: Color::Rgb(136, 192, 208),
             selected_fg: Color::Rgb(46, 52, 64),
+            selection_bg: None,
             surface: Color::Rgb(59, 66, 82),
             surface_hover: Color::Rgb(67, 76, 94),
             surface_text: Color::Rgb(216, 222, 233),
@@ -665,6 +700,7 @@ impl Theme {
             error: Color::Rgb(220, 50, 47),
             selected_bg: Color::Rgb(38, 139, 210),
             selected_fg: Color::Rgb(253, 246, 227),
+            selection_bg: None,
             surface: Color::Rgb(7, 54, 66),
             surface_hover: Color::Rgb(23, 72, 85),
             surface_text: Color::Rgb(147, 161, 161),
@@ -689,6 +725,7 @@ impl Theme {
             error: Color::Rgb(220, 50, 47),
             selected_bg: Color::Rgb(38, 139, 210),
             selected_fg: Color::Rgb(253, 246, 227),
+            selection_bg: None,
             surface: Color::Rgb(238, 232, 213),
             surface_hover: Color::Rgb(227, 221, 201),
             surface_text: Color::Rgb(88, 110, 117),
@@ -713,6 +750,7 @@ impl Theme {
             error: Color::Rgb(247, 118, 142),
             selected_bg: Color::Rgb(122, 162, 247),
             selected_fg: Color::Rgb(26, 27, 38),
+            selection_bg: None,
             surface: Color::Rgb(36, 40, 59),
             surface_hover: Color::Rgb(41, 46, 66),
             surface_text: Color::Rgb(192, 202, 245),
@@ -737,6 +775,7 @@ impl Theme {
             error: Color::Rgb(204, 36, 29),
             selected_bg: Color::Rgb(215, 153, 33),
             selected_fg: Color::Rgb(40, 40, 40),
+            selection_bg: None,
             surface: Color::Rgb(60, 56, 54),
             surface_hover: Color::Rgb(80, 73, 69),
             surface_text: Color::Rgb(189, 174, 147),
@@ -746,7 +785,7 @@ impl Theme {
         }
     }
 
-    /// Compact density preset — base spacing = 1 (matches v0.19 default behavior).
+    /// Compact density preset: base spacing = 1.
     ///
     /// Use when terminal space is tight or you want maximum information
     /// density. Built on [`Theme::dark()`] colors with `Spacing::new(1)`.
@@ -828,6 +867,7 @@ impl Theme {
     /// // Nord colors preserved.
     /// assert_eq!(dense_nord.bg, Theme::nord().bg);
     /// ```
+    #[must_use]
     pub const fn with_spacing(mut self, spacing: Spacing) -> Self {
         self.spacing = spacing;
         self
@@ -848,6 +888,7 @@ impl Theme {
             error: Color::Rgb(224, 108, 117),
             selected_bg: Color::Rgb(97, 175, 239),
             selected_fg: Color::Rgb(40, 44, 52),
+            selection_bg: None,
             surface: Color::Rgb(50, 55, 65),
             surface_hover: Color::Rgb(62, 68, 81),
             surface_text: Color::Rgb(152, 159, 172),
@@ -928,6 +969,7 @@ pub struct ThemeBuilder {
     error: Option<Color>,
     selected_bg: Option<Color>,
     selected_fg: Option<Color>,
+    selection_bg: Option<Color>,
     surface: Option<Color>,
     surface_hover: Option<Color>,
     surface_text: Option<Color>,
@@ -1006,6 +1048,14 @@ impl ThemeBuilder {
     /// Set the selected item foreground color.
     pub const fn selected_fg(mut self, color: Color) -> Self {
         self.selected_fg = Some(color);
+        self
+    }
+
+    /// Set the background of selected text in `text_input` / `textarea`
+    /// (issue #465). Without it, text selection uses `selected_bg` /
+    /// `selected_fg`.
+    pub const fn selection_bg(mut self, color: Color) -> Self {
+        self.selection_bg = Some(color);
         self
     }
 
@@ -1100,6 +1150,10 @@ impl ThemeBuilder {
             selected_fg: match self.selected_fg {
                 Some(c) => c,
                 None => d.selected_fg,
+            },
+            selection_bg: match self.selection_bg {
+                Some(c) => Some(c),
+                None => d.selection_bg,
             },
             surface: match self.surface {
                 Some(c) => c,

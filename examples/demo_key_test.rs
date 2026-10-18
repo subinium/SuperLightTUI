@@ -12,7 +12,6 @@ fn main() -> std::io::Result<()> {
 
     let config = RunConfig::default()
         .tick_rate(Duration::from_millis(33))
-        .mouse(true)
         .kitty_keyboard(kitty)
         .max_fps(30);
 
@@ -42,8 +41,8 @@ fn main() -> std::io::Result<()> {
             mode = (mode + 1) % 4;
         }
 
-        let _ = ui.col(|ui| {
-            let _ = ui.container().h(1).px(1).row(|ui| {
+        ui.col(|ui| {
+            ui.container().h(1).px(1).row(|ui| {
                 let resp = ui.container().row(|ui| {
                     ui.text(format!(" {} ", modes[mode as usize]))
                         .bold()
@@ -58,19 +57,19 @@ fn main() -> std::io::Result<()> {
                 ui.spacer();
                 ui.text("SLT 0.15 Key Test").dim();
             });
-            let _ = ui.separator();
+            ui.separator();
 
-            let _ = ui.container().grow(1).p(1).col(|ui| {
+            ui.container().grow(1).p(1).col(|ui| {
                 ui.text("Events:").bold();
                 ui.text("");
                 for line in log.iter().rev().take(20) {
                     ui.text(line).fg(Color::Green);
                 }
             });
-            let _ = ui.separator();
+            ui.separator();
 
-            let _ = ui.container().px(1).pb(1).col(|ui| {
-                let _ = ui.text_input(&mut input);
+            ui.container().px(1).pb(1).col(|ui| {
+                ui.text_input(&mut input);
                 ui.text("Shift+Tab/F2=mode | Esc | Ctrl+T | Ctrl+C=quit | Click [MODE]")
                     .dim();
             });

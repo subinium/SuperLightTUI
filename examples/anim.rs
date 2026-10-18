@@ -33,7 +33,7 @@ fn main() -> std::io::Result<()> {
     let mut cb_tween = Tween::new(0.0, 100.0, 120);
     let mut cb_fired = false;
 
-    slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut Context| {
+    slt::run_with(slt::RunConfig::default(), |ui: &mut Context| {
         if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(slt::KeyCode::Esc) {
             ui.quit();
         }
@@ -77,20 +77,18 @@ fn main() -> std::io::Result<()> {
         spring.tick();
         let progress = progress_tween.value(ui.tick());
 
-        let _ = ui
-            .bordered(Border::Rounded)
+        ui.bordered(Border::Rounded)
             .title("Animation Primitives — SLT v0.5.0")
             .p(1)
             .gap(1)
             .col(|ui| {
-                let _ = ui
-                    .bordered(Border::Single)
+                ui.bordered(Border::Single)
                     .title("Tween")
                     .p(1)
                     .gap(1)
                     .col(|ui| {
                         ui.text("Press Space to retarget");
-                        let _ = ui.progress(progress);
+                        ui.progress(progress);
                         ui.text(format!(
                             "value {:.2} -> target {:.2} | done {}",
                             progress,
@@ -99,8 +97,7 @@ fn main() -> std::io::Result<()> {
                         ));
                     });
 
-                let _ = ui
-                    .bordered(Border::Single)
+                ui.bordered(Border::Single)
                     .title("Spring")
                     .p(1)
                     .gap(1)
@@ -114,14 +111,13 @@ fn main() -> std::io::Result<()> {
                         ));
                     });
 
-                let _ = ui
-                    .bordered(Border::Single)
+                ui.bordered(Border::Single)
                     .title("Keyframes")
                     .p(1)
                     .gap(1)
                     .col(|ui| {
                         let kf_val = kf.value(ui.tick());
-                        let _ = ui.progress(kf_val / 100.0);
+                        ui.progress(kf_val / 100.0);
                         ui.text(format!(
                             "value {:.1} | done {} | mode PingPong",
                             kf_val,
@@ -130,14 +126,13 @@ fn main() -> std::io::Result<()> {
                         ui.text("4 stops: 0→100→20→80").dim();
                     });
 
-                let _ = ui
-                    .bordered(Border::Single)
+                ui.bordered(Border::Single)
                     .title("Sequence")
                     .p(1)
                     .gap(1)
                     .col(|ui| {
                         let seq_val = seq.value(ui.tick());
-                        let _ = ui.progress(seq_val / 100.0);
+                        ui.progress(seq_val / 100.0);
                         ui.text(format!(
                             "value {:.1} | done {} | mode Repeat",
                             seq_val,
@@ -146,8 +141,7 @@ fn main() -> std::io::Result<()> {
                         ui.text("3 chained: 0→80→20→60").dim();
                     });
 
-                let _ = ui
-                    .bordered(Border::Single)
+                ui.bordered(Border::Single)
                     .title("Stagger")
                     .p(1)
                     .gap(1)
@@ -155,9 +149,9 @@ fn main() -> std::io::Result<()> {
                         let labels = ["Item A", "Item B", "Item C", "Item D", "Item E"];
                         for (i, label) in labels.iter().enumerate() {
                             let val = stagger.value(ui.tick(), i);
-                            let _ = ui.row(|ui| {
+                            ui.row(|ui| {
                                 ui.text(format!("{label}:"));
-                                let _ = ui.progress(val);
+                                ui.progress(val);
                             });
                         }
                         ui.text("5 items, 6-tick delay each").dim();
@@ -166,11 +160,11 @@ fn main() -> std::io::Result<()> {
                 let accent = ui.theme().accent;
                 ui.text("Callback").bold().fg(accent);
                 let val = cb_tween.value(ui.tick());
-                let _ = ui.progress(val / 100.0);
+                ui.progress(val / 100.0);
                 if cb_tween.is_done() && !cb_fired {
                     cb_fired = true;
                 }
-                let _ = ui.container().gap(1).row(|ui| {
+                ui.container().gap(1).row(|ui| {
                     if cb_fired {
                         ui.text("on_complete fired!").fg(Color::Green);
                     }

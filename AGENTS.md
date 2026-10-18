@@ -16,12 +16,13 @@ Run the full Core Gate AND Extended Gate locally BEFORE pushing. The branch must
 - [ ] `cargo fmt -- --check`
 - [ ] `cargo check --all-features`
 - [ ] `cargo clippy --all-features -- -D warnings`
+- [ ] `cargo clippy --all-features --all-targets -- -D warnings`
 - [ ] `cargo test --all-features`
 - [ ] `cargo check --examples --all-features`
 - [ ] `typos`
 - [ ] `bash scripts/api_audit.sh --strict`
 - [ ] `cargo check -p superlighttui --no-default-features`
-- [ ] `cargo check -p slt-wasm --target wasm32-unknown-unknown`
+- [ ] `cargo check -p slt-wasm --target wasm32-unknown-unknown` (local only; not in CI while WASM is deferred)
 - [ ] `cargo hack check -p superlighttui --each-feature --no-dev-deps`
 - [ ] `cargo audit`
 - [ ] `cargo deny check`
@@ -87,8 +88,9 @@ cargo fmt -- --check
 # 2. Compilation
 cargo check --all-features
 
-# 3. Clippy (deny all warnings)
+# 3. Clippy (deny all warnings; lib, then tests / examples / benches)
 cargo clippy --all-features -- -D warnings
+cargo clippy --all-features --all-targets -- -D warnings
 
 # 4. Full test suite
 cargo test --all-features
@@ -107,11 +109,12 @@ typos
 
 # 7. Public API/documentation contract
 bash scripts/api_audit.sh --strict
+python3 scripts/check_doc_examples.py   # compiles every maintained doc snippet, warnings denied
 
 # 8. No-default-features (catches missing #[cfg] gates)
 cargo check -p superlighttui --no-default-features
 
-# 9. WASM target
+# 9. WASM target (local only; not in CI while WASM is deferred)
 cargo check -p slt-wasm --target wasm32-unknown-unknown
 
 # 10. Feature combinations (needs cargo-hack: cargo install cargo-hack)
@@ -130,12 +133,12 @@ cargo deny check
 | Format | `cargo fmt -- --check` | Yes |
 | Check (stable) | `cargo check --all-features` | Yes |
 | Check (MSRV 1.88) | `cargo check --features async,serde` (toolchain 1.88) | Yes |
-| Clippy | `cargo clippy --all-features -- -D warnings` | Yes |
+| Clippy | `cargo clippy --all-features -- -D warnings` + `cargo clippy --all-features --all-targets -- -D warnings` | Yes |
 | Test | `cargo test --all-features` | Yes |
 | Typos | `typos` | Yes |
-| API Audit | `bash scripts/api_audit.sh --strict` | Yes |
+| API Audit | `bash scripts/api_audit.sh --strict` + `python3 scripts/check_doc_examples.py` | Yes |
 | Check (no-default) | `cargo check -p superlighttui --no-default-features` | Yes |
-| Check (WASM) | `cargo check -p slt-wasm --target wasm32-unknown-unknown` | Yes |
+| Check (WASM) | `cargo check -p slt-wasm --target wasm32-unknown-unknown` | No (removed from CI while WASM is deferred; run locally before touching `crates/slt-wasm`) |
 | Feature Combinations | `cargo hack check --each-feature --no-dev-deps` | Yes |
 | Audit | `cargo audit` | Yes |
 | Deny Check | `cargo deny check {advisories,bans,licenses,sources}` | Yes (advisories soft) |
@@ -166,7 +169,17 @@ gh run list --commit $(git rev-parse HEAD) --limit 5
 ## Architecture
 ```
 src/
-├── lib.rs                      # Crate root, public re-exports, run()/frame() entry points
+├── lib.rs                      # Crate root: docs, mod decls, public re-exports, Backend / AppState / frame()
+├── runtime.rs                  # Private run-loop facade; entry points re-exported from lib.rs
+├── runtime/
+│   ├── config.rs               # RunConfig + builder methods
+│   ├── frame_state.rs          # FrameState, FocusState, LayoutFeedbackState, DiagnosticsState, DebugLayer
+│   ├── kernel.rs               # run_frame_kernel, run_frame, input_frame, run-loop event handling
+│   ├── native.rs               # run / run_with / run_inline* / run_static*, event polling (`crossterm`)
+│   ├── async_run.rs            # run_async*, AsyncSender, AsyncRunHandle (`async`)
+│   ├── panic.rs                # Panic hook + recoverable-panic scopes
+│   ├── suspend.rs              # Ctrl+Z suspend / resume (`crossterm`, unix)
+│   └── tests.rs                # Run-loop tests
 ├── context.rs                  # Facade for core context types + widget impl modules
 ├── context/
 │   ├── state.rs                # State<T>, Response
@@ -178,40 +191,84 @@ src/
 │   ├── helpers.rs              # Shared helper functions for widget impls, previous-frame geometry queries
 │   ├── async_tasks.rs          # In-frame async task API (spawn/poll, TaskHandle) — `async` feature
 │   ├── tests.rs, async_tasks_tests.rs, scheduler_tests.rs  # Context unit tests
-│   ├── widgets_display.rs      # Display/layout facade
-│   ├── widgets_display/
-│   │   ├── text.rs             # text, style chains, size/margin helpers
-│   │   ├── rich_output.rs      # big_text, image, streaming, tool approval, context bar
-│   │   ├── status.rs           # alert, breadcrumb, badge, stat, code_block, accordion, empty_state
-│   │   ├── gauge.rs            # gauge / line_gauge builders
-│   │   ├── gutter.rs           # scrollable_with_gutter, GutterOpts
-│   │   ├── split.rs            # split_pane / vsplit_pane
-│   │   ├── tests.rs, line_wrap_tests.rs  # Display widget tests
-│   │   └── layout.rs           # screen, row/col, modal, overlay_at(_offset), tooltip, container, scrollable, form helpers
-│   ├── widgets_interactive.rs  # Interactive facade
-│   ├── widgets_interactive/
-│   │   ├── collections.rs      # grid, list, calendar, file picker
-│   │   ├── selection.rs        # table, tabs, button, checkbox, toggle, select, radio, multi_select
-│   │   ├── rich_markdown.rs    # rich_log, virtual_list, command palette, markdown, key_chord
-│   │   ├── events.rs           # keyboard, mouse, theme, size, quit helpers
-│   │   └── tree_widgets.rs     # tree widget internals
-│   ├── widgets_input.rs        # Input facade
-│   ├── widgets_input/
-│   │   ├── text_input.rs       # text input widget
-│   │   ├── feedback.rs         # spinner, toast, slider
-│   │   ├── textarea_progress.rs # textarea and progress widgets
-│   │   └── tests.rs            # Input widget tests
-│   └── widgets_viz.rs          # charts, sparklines, heatmap, treemap, candlestick, stacked bar, canvas, QR
+│   ├── widgets.rs              # Widget-method facade: one `<family>` module per widget family (see Widget Families)
+│   └── widgets/
+│       ├── display.rs          # Display family facade
+│       ├── display/
+│       │   ├── text.rs         # text, link, timer_display, help_from_keymap, style chains, size/margin helpers
+│       │   ├── status.rs       # breadcrumb, accordion, definition_list, divider_text, key_hint, stat_trend, empty_state
+│       │   ├── status/
+│       │   │   └── builders.rs # help, badge, stat (Help / Badge / Stat builders)
+│       │   └── tests.rs        # Display widget tests
+│       ├── layout.rs           # col/row/line/line_wrap, group, container, scrollable, scrollbar, bordered
+│       ├── layout/
+│       │   ├── separator.rs    # separator (Separator builder)
+│       │   ├── grid.rs         # grid / grid_columns
+│       │   ├── gutter.rs       # scrollable_with_gutter, GutterOpts
+│       │   ├── split.rs        # split_pane / vsplit_pane
+│       │   └── line_wrap_tests.rs
+│       ├── overlay.rs          # Anchor, modal*, overlay*, tooltip
+│       ├── overlay/
+│       │   └── tooltip_wrap.rs # tooltip word wrapping
+│       ├── commanding.rs       # screen stack, command_palette, key_chord
+│       ├── text_input.rs       # text_input, form / form_field / form_submit
+│       ├── text_input/
+│       │   ├── textarea.rs     # textarea
+│       │   ├── number_input.rs # number_input
+│       │   └── tests.rs        # Text-input family tests
+│       ├── selection.rs        # tabs, checkbox, toggle, select, radio, multi_select, color_picker
+│       ├── selection/
+│       │   └── button.rs       # button (Button builder: variant / colors / show)
+│       ├── collections.rs      # Collections family facade
+│       ├── collections/
+│       │   ├── list.rs         # list, list_reorderable, virtual_list(_variable)
+│       │   ├── table.rs        # table, paginator
+│       │   ├── tree.rs         # tree, directory_tree
+│       │   ├── calendar.rs     # calendar
+│       │   └── file_picker.rs  # file_picker
+│       ├── feedback.rs         # spinner, toast, alert, confirm
+│       ├── feedback/
+│       │   ├── slider.rs       # slider (Slider builder)
+│       │   ├── progress.rs     # progress / progress_bar (ProgressBar builder)
+│       │   ├── gauge.rs        # gauge / line_gauge builders
+│       │   └── tests.rs        # Feedback family tests
+│       ├── rich.rs             # Rich-content family facade
+│       ├── rich/
+│       │   ├── rich_log.rs     # rich_log
+│       │   ├── markdown.rs     # markdown and inline-markdown helpers
+│       │   ├── streaming.rs    # streaming_text, streaming_markdown, tool_approval, context_bar
+│       │   ├── code_block.rs   # code_block builder
+│       │   ├── fallback_highlight.rs # keyword fallback highlighter, tree-sitter line renderer
+│       │   └── tests.rs        # Rich-content family tests
+│       ├── media.rs            # big_text, image, kitty_image, sixel_image, iterm_image
+│       ├── media/
+│       │   ├── prepare.rs      # image preparation caches, encoders, half-block / RGBA fallback
+│       │   ├── font8x8.rs      # 8x8 bitmap font for big_text
+│       │   └── tests.rs        # Media family tests
+│       ├── viz.rs              # Viz family facade + shared viz-root helpers
+│       ├── viz/
+│       │   ├── bars.rs         # bar_chart, grouped and stacked bars
+│       │   ├── charts.rs       # sparkline, candlestick(_hd), chart, scatter, histogram
+│       │   ├── line_chart.rs   # line_chart / area_chart (LineChart builder)
+
+│       │   ├── heat_tree.rs    # heatmap, heatmap_halfblock, treemap, TreemapItem
+│       │   ├── canvas.rs       # canvas / try_canvas / canvas_with
+│       │   ├── qr.rs           # qr_code
+│       │   └── tests.rs        # Viz family tests
+│       └── events.rs           # keyboard, mouse, paste, scroll, theme, size, tick, quit, debug helpers
 │
-├── widgets.rs                  # Single `widgets` module: the files below are spliced in with `include!()`
-│                               # (not separate Rust modules); validators.rs is included inside `pub mod validators`
+├── widgets.rs                  # Facade: private family submodules below, glob re-exported (`pub use text_input::*;` …)
+│                               # so every state type stays at `slt::widgets::*`; `validators` is `pub mod`
 ├── widgets/
-│   ├── input.rs                # StaticOutput, TextInputState, Validator, AsyncValidation, FormField, FormState, ToastState, ToastMessage, ToastLevel, AlertLevel, TextareaState, SpinnerState, SliderOpts, NumberInputState
-│   ├── collections.rs          # ListState, FilePickerState, TabsState, TableState, PaginatorState, ScrollState, HighlightRange, SplitPaneState, GridColumn
-│   ├── feedback.rs             # RichLogState, RichLogEntry, CalendarState, ButtonVariant, Trend, SchedulerState
-│   ├── selection.rs            # SelectState, RadioState, MultiSelectState, TreeState, DirectoryTreeState, PaletteCommand
-│   ├── commanding.rs           # ChordState, CommandPaletteState, streaming states, ScreenState, ModeState, tool approval types, ContextItem
-│   ├── responses.rs            # FormFieldResponse, BreadcrumbResponse, GaugeResponse, SplitPaneResponse, GutterResponse
+│   ├── display.rs              # Trend, BreadcrumbResponse
+│   ├── layout.rs               # ScrollState, HighlightRange, SplitPaneState, GridColumn, SplitPaneResponse, GutterResponse
+│   ├── commanding.rs           # ChordState, CommandPaletteState, PaletteCommand, ScreenState, ModeState
+│   ├── text_input.rs           # TextInputState, Validator, AsyncValidation, ValidateTrigger, FormField, FormState, FormFieldResponse, TextareaState, NumberInputState
+│   ├── selection.rs            # SelectState, RadioState, MultiSelectState, TabsState, ButtonVariant, PickerMode, ColorPickerState
+│   ├── collections.rs          # ListState, ListResponse, FilePickerState, FileEntry, TableState, TableColumn, PaginatorState, TreeState, TreeNode, DirectoryTreeState, CalendarState, CalDate
+│   ├── feedback.rs             # ToastState, ToastMessage, ToastLevel, AlertLevel, SpinnerState, SpinnerPreset, SliderOpts, GaugeResponse
+│   ├── rich.rs                 # RichLogState, RichLogEntry, StreamingTextState, StreamingMarkdownState, ToolApprovalState, ApprovalAction, ContextItem
+│   ├── runtime.rs              # Non-widget runtime state: StaticOutput, SchedulerState
 │   ├── validators.rs           # Built-in FormField validators (`slt::validators`)
 │   └── tests.rs                # Widget state tests (`mod tests`)
 │
@@ -231,12 +288,23 @@ src/
 │   ├── theme.rs                # Theme struct, Spacing, ThemeColor, 11 color presets + 3 density variants, ThemeBuilder, contrast helpers
 │   └── theme_io.rs             # TOML ThemeFile loading (`serde`) and ThemeWatcher hot reload (`theme-watch`)
 │
-├── terminal.rs                 # Terminal backend
+├── terminal.rs                 # Terminal backend facade: buffer helpers, Sink, Terminal, InlineTerminal
 │   ├── Terminal                # Full-screen mode
 │   ├── InlineTerminal          # Inline mode
-│   └── ANSI diff output, synchronized output, event polling
+│   └── submodule re-exports    # Capabilities, ColorScheme, clipboard, bench hooks
 ├── terminal/
-│   └── selection.rs            # SelectionState, text selection overlay rendering
+│   ├── kitty.rs                # KittyImageManager: upload dedup, placement diff, compression
+│   ├── cell_pixel.rs           # CSI 16 t cell-pixel probe + cache
+│   ├── capabilities.rs         # Capabilities, BlitterSupport, Blitter, host / multiplexer / env policy
+│   ├── query.rs                # Reply reader, DA1/DA2/DECRPM/XTGETTCAP parsing, sync-output resolution
+│   ├── session.rs              # Session registry/guard, enter/exit/cleanup writers, panic cleanup, suspend/resume
+│   ├── osc.rs                  # OSC 11 color scheme, OSC 52 clipboard, base64
+│   ├── flush.rs                # flush_buffer_diff*, cursor, SGR style delta
+│   ├── sprixel.rs              # Graphics emission policy, raw-sequence + sprixel flush
+│   ├── bench_hooks.rs          # `#[doc(hidden)]` __bench_* fixtures
+│   ├── selection.rs            # SelectionState, text selection overlay rendering
+│   ├── tests.rs                # Test facade
+│   └── tests/                  # capability / detection / flush / graphics / lifecycle / query / selection tests
 │
 ├── anim.rs                     # Tween, Spring, Keyframes, Sequence, Stagger
 ├── chart.rs                    # ChartBuilder, ChartConfig, Dataset, Marker
@@ -258,13 +326,39 @@ src/
 ├── event/
 │   ├── reply.rs                # Terminal query replies; preserves input consumed during probes (`crossterm`)
 │   ├── native.rs               # Owned nonblocking Unix input reader (`crossterm`, unix)
-│   ├── native/parse.rs         # Escape-sequence parser adapted from Crossterm 0.28.1
+│   ├── native/parse.rs         # Escape-sequence parser adapted from Crossterm 0.28.1 (unchanged in 0.29)
 │   └── native/lifecycle_tests.rs, reply/review_tests.rs  # Input tests
 ├── halfblock.rs                # Half-block image rendering
 ├── keymap.rs                   # KeyMap, Binding structs
 ├── palette.rs                  # 256-color palette definitions
 └── test_utils.rs               # TestBackend, EventBuilder for headless testing
 ```
+
+## Documentation Map
+```
+docs/
+├── README.md            # Index — must link every maintained page (tests/docs_contract.rs)
+├── guide/NN-*.md        # Learning path, read in order: quick start → state (canonical
+│                        #   previous-frame rule) → patterns → interaction → overlays →
+│                        #   theming → animation → testing → runtime modes → browser →
+│                        #   terminal compatibility
+├── coming-from/         # web.md, ratatui.md
+├── reference/           # widgets, state, cookbook, examples, features, migration,
+│                        #   debugging, ai-guide, complete-reference (condensed AI map)
+├── internals/           # design-principles (API rules + naming), architecture,
+│                        #   custom-backends, performance, rustdoc-guide, demo-guide
+├── archive/             # Dated snapshots, not maintained
+├── README.{ko,ja,es,zh-CN}.md  # Translated summaries; English is authoritative
+└── <OLD_NAME>.md        # One-line "This page moved to ..." stubs for pre-0.26 paths
+```
+- Each concept has one canonical page; others link to it. The previous-frame rule lives in
+  `docs/guide/02-state.md#the-previous-frame-rule`.
+- Every ```` ```rust ```` fence in README.md, docs/ and the skills is either compiled
+  (`<!-- slt-check: {"name": ..., "features": [...], "context": "module"|"ui"} -->`, built with
+  `#![deny(warnings)]`) or marked `<!-- slt-check-skip: <reason> -->`. Only `docs/internals/`
+  and `docs/archive/` may use the file-level illustrative default. Run
+  `python3 scripts/check_doc_examples.py` after any doc or API change.
+- `.agents/skills/` and `.claude/skills/` must stay byte-identical.
 
 ## Commit Style
 - Conventional Commits: `feat:`, `fix:`, `refactor:`, `perf:`, `test:`, `docs:`, `chore:`

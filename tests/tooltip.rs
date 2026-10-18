@@ -1,3 +1,5 @@
+//! Tooltip visibility: hidden unless the anchored widget is hovered.
+
 use slt::event::Event;
 use slt::rect::Rect;
 use slt::{Backend, Buffer, RunConfig, frame};
@@ -45,7 +47,11 @@ impl Backend for FrameBackend {
 fn tooltip_hidden_when_widget_not_hovered() {
     let mut backend = FrameBackend::new(80, 24);
     let mut state = slt::AppState::new();
-    let config = RunConfig::default().mouse(true);
+    // Immediate tooltips (the pre-0.26 behavior) keep this test about
+    // visibility; the dwell delay has its own tests in tests/tooltip_delay.rs.
+    let config = RunConfig::default()
+        .mouse(true)
+        .tooltip_delay(std::time::Duration::ZERO);
 
     frame(&mut backend, &mut state, &config, &[], &mut |ui| {
         let _ = ui.button("Save");
@@ -71,7 +77,11 @@ fn tooltip_hidden_when_widget_not_hovered() {
 fn tooltip_renders_when_widget_hovered() {
     let mut backend = FrameBackend::new(80, 24);
     let mut state = slt::AppState::new();
-    let config = RunConfig::default().mouse(true);
+    // Immediate tooltips (the pre-0.26 behavior) keep this test about
+    // visibility; the dwell delay has its own tests in tests/tooltip_delay.rs.
+    let config = RunConfig::default()
+        .mouse(true)
+        .tooltip_delay(std::time::Duration::ZERO);
 
     frame(&mut backend, &mut state, &config, &[], &mut |ui| {
         let _ = ui.button("Save");

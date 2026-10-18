@@ -1,3 +1,7 @@
+//! Inline and file `insta` snapshots for basic widgets and layouts (text,
+//! bordered columns, rows, button, progress, tabs, table, calendar, list,
+//! separator).
+
 use slt::widgets::{CalendarState, ListState, TableState, TabsState};
 use slt::{Border, TestBackend};
 

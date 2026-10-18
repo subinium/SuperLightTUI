@@ -1,3 +1,6 @@
+//! PTY lifecycle tests for the native event reader: cursor-query timeouts,
+//! reset and release isolation.
+
 use super::*;
 
 fn marker(text: &str) {

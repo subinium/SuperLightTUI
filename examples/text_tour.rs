@@ -16,8 +16,8 @@
 //!   4. Pretext  — mouse-reactive text reflow (raw `draw` API)
 //!   5. CLI      — cargo-style package manager UI
 //!
-//! Note on §7 of `docs/DEMO_GUIDE.md` (BMP ASCII titles): the audit V7
-//! rule only scans `examples/v020_*.rs`, not this file, so the embedded
+//! Note on §7 of `docs/internals/demo-guide.md` (BMP ASCII titles): the audit V7
+//! rule only scans the `widgets_tour` demos, not this file, so the embedded
 //! demos may legitimately use wide-character titles to exercise CJK
 //! rendering. The tour's *own* wrapper title stays BMP ASCII so the outer
 //! border alignment is guaranteed regardless of terminal width-reporting
@@ -74,7 +74,7 @@ impl Default for TourState {
 
 fn main() -> std::io::Result<()> {
     let mut state = TourState::default();
-    slt::run_with(RunConfig::default().mouse(true), move |ui: &mut Context| {
+    slt::run_with(RunConfig::default(), move |ui: &mut Context| {
         // Tour-level quit: Ctrl-Q always, Esc ONLY at the top of the
         // frame. We intentionally do NOT consume `q` here — the IME and
         // CLI tabs both host text inputs that need to receive `q` as
@@ -87,30 +87,29 @@ fn main() -> std::io::Result<()> {
         }
 
         let pad = ui.spacing().xs();
-        let _ = ui
-            .bordered(Border::Rounded)
+        ui.bordered(Border::Rounded)
             .title("Text Tour: i18n and text input")
             .p(pad)
             .grow(1)
             .col(|ui| {
-                let _ = ui.tabs(&mut state.tabs);
-                let _ = ui.separator();
+                ui.tabs(&mut state.tabs);
+                ui.separator();
 
                 // Wrap the tab body in a vertical scrollable so the
                 // intro's long help text and any overflowing demo
                 // content stay reachable. Mouse wheel outside any inner
                 // scroll region scrolls the whole tab; when the body
                 // fits the viewport this is a no-op.
-                let _ = ui.scrollable(&mut state.tab_scroll).grow(1).col(|ui| {
-                    match state.tabs.selected {
+                ui.scrollable(&mut state.tab_scroll)
+                    .grow(1)
+                    .col(|ui| match state.tabs.selected {
                         0 => render_intro(ui),
                         1 => demo_cjk::render_frame(ui, &mut state.cjk_name, &mut state.cjk_tag),
                         2 => demo_ime::render(ui, &mut state.ime),
                         3 => demo_pretext::render(ui, &mut state.pretext),
                         4 => demo_cli::render(ui, &mut state.cli),
                         _ => {}
-                    }
-                });
+                    });
             });
 
         // `q` is checked AFTER demos render so a focused text_input
@@ -126,7 +125,7 @@ fn main() -> std::io::Result<()> {
 
 /// Tab 1: Intro. Pure overview — no embedded demo.
 fn render_intro(ui: &mut Context) {
-    let _ = ui.col(|ui| {
+    ui.col(|ui| {
         let pad = ui.spacing().xs();
         ui.text("Welcome to the Text Tour.").bold();
         ui.text("");
@@ -137,8 +136,7 @@ fn render_intro(ui: &mut Context) {
         ui.text("a tab is exactly the standalone demo's render path.")
             .dim();
         ui.text("");
-        let _ = ui
-            .bordered(Border::Single)
+        ui.bordered(Border::Single)
             .title("Tabs at a glance")
             .p(pad)
             .col(|ui| {
@@ -181,7 +179,7 @@ fn render_intro(ui: &mut Context) {
 
 /// One label/description row for the intro feature list.
 fn row_pair(ui: &mut Context, label: &str, desc: &str) {
-    let _ = ui.container().gap(1).row(|ui| {
+    ui.container().gap(1).row(|ui| {
         ui.text(format!("{label:<8}")).bold().fg(Color::Cyan);
         ui.text(desc).dim();
     });

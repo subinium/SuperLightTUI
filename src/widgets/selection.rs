@@ -1,3 +1,12 @@
+//! Selection family state — select, radio, multi-select, tabs, button
+//! variants and the color picker.
+//!
+//! Rendered by `context/widgets/selection.rs`.
+
+use super::*;
+
+// ── Select / Dropdown ─────────────────────────────────────────────────
+
 /// State for a dropdown select widget.
 ///
 /// Renders as a single-line button showing the selected option. When activated,
@@ -6,7 +15,9 @@
 pub struct SelectState {
     /// Selectable option labels.
     items: Vec<String>,
-    /// Selected option index.
+    /// Selected option, as a data index into [`items`](SelectState::items).
+    /// The type-to-filter query only narrows the open dropdown; it never
+    /// changes what this index refers to.
     pub selected: usize,
     /// Whether the dropdown list is currently open.
     pub open: bool,
@@ -17,6 +28,9 @@ pub struct SelectState {
     /// open/close and on selection. Printable keys append; Backspace pops.
     /// Public so callers can pre-fill or inspect the live query.
     pub filter: String,
+    /// Whether the floating dropdown (and its light-dismiss backdrop) was
+    /// drawn on the previous frame, so this frame's presses hit it (#459).
+    pub(crate) dropdown_drawn: bool,
 }
 
 impl SelectState {
@@ -29,6 +43,7 @@ impl SelectState {
             placeholder: String::new(),
             cursor: 0,
             filter: String::new(),
+            dropdown_drawn: false,
         }
     }
 
@@ -76,6 +91,7 @@ impl SelectState {
     }
 
     /// Set placeholder text shown when no item can be displayed.
+    #[must_use]
     pub fn placeholder(mut self, p: impl Into<String>) -> Self {
         self.placeholder = p.into();
         self
@@ -104,7 +120,7 @@ impl SelectState {
 pub struct RadioState {
     /// Radio option labels.
     pub items: Vec<String>,
-    /// Selected option index.
+    /// Selected option, as an index into [`items`](RadioState::items).
     pub selected: usize,
 }
 
@@ -196,235 +212,54 @@ impl MultiSelectState {
     }
 }
 
-// ── Tree ──────────────────────────────────────────────────────────────
-
-/// A node in a tree view.
-#[derive(Debug, Clone)]
-pub struct TreeNode {
-    /// Display label for this node.
-    pub label: String,
-    /// Child nodes.
-    pub children: Vec<TreeNode>,
-    /// Whether the node is expanded in the tree view.
-    pub expanded: bool,
-}
-
-impl TreeNode {
-    /// Create a collapsed tree node with no children.
-    pub fn new(label: impl Into<String>) -> Self {
-        Self {
-            label: label.into(),
-            children: Vec::new(),
-            expanded: false,
-        }
-    }
-
-    /// Mark this node as expanded.
-    pub fn expanded(mut self) -> Self {
-        self.expanded = true;
-        self
-    }
-
-    /// Set child nodes for this node.
-    pub fn children(mut self, children: Vec<TreeNode>) -> Self {
-        self.children = children;
-        self
-    }
-
-    /// Returns `true` when this node has no children.
-    pub fn is_leaf(&self) -> bool {
-        self.children.is_empty()
-    }
-
-    fn flatten(&self, depth: usize, out: &mut Vec<FlatTreeEntry>) {
-        out.push(FlatTreeEntry {
-            depth,
-            label: self.label.clone(),
-            is_leaf: self.is_leaf(),
-            expanded: self.expanded,
-        });
-        if self.expanded {
-            for child in &self.children {
-                child.flatten(depth + 1, out);
-            }
-        }
-    }
-}
-
-pub(crate) struct FlatTreeEntry {
-    pub depth: usize,
-    pub label: String,
-    pub is_leaf: bool,
-    pub expanded: bool,
-}
-
-/// State for a hierarchical tree view widget.
-#[derive(Debug, Clone)]
-pub struct TreeState {
-    /// Root nodes of the tree.
-    pub nodes: Vec<TreeNode>,
-    /// Selected row index in the flattened visible tree.
+/// State for a tab navigation widget.
+///
+/// Pass a mutable reference to `Context::tabs` each frame. Left/Right arrow
+/// keys cycle through tabs when the widget is focused.
+#[derive(Debug, Clone, Default)]
+pub struct TabsState {
+    /// The tab labels displayed in the bar.
+    pub labels: Vec<String>,
+    /// Index of the currently active tab.
     pub selected: usize,
 }
 
-impl TreeState {
-    /// Create tree state from root nodes.
-    pub fn new(nodes: Vec<TreeNode>) -> Self {
-        Self { nodes, selected: 0 }
-    }
-
-    pub(crate) fn flatten(&self) -> Vec<FlatTreeEntry> {
-        let mut entries = Vec::new();
-        for node in &self.nodes {
-            node.flatten(0, &mut entries);
-        }
-        entries
-    }
-
-    pub(crate) fn toggle_at(&mut self, flat_index: usize) {
-        let mut counter = 0usize;
-        Self::toggle_recursive(&mut self.nodes, flat_index, &mut counter);
-    }
-
-    fn toggle_recursive(nodes: &mut [TreeNode], target: usize, counter: &mut usize) -> bool {
-        for node in nodes.iter_mut() {
-            if *counter == target {
-                if !node.is_leaf() {
-                    node.expanded = !node.expanded;
-                }
-                return true;
-            }
-            *counter += 1;
-            if node.expanded && Self::toggle_recursive(&mut node.children, target, counter) {
-                return true;
-            }
-        }
-        false
-    }
-}
-
-/// State for the directory tree widget.
-#[derive(Debug, Clone)]
-pub struct DirectoryTreeState {
-    /// The underlying tree state (reuses existing TreeState).
-    pub tree: TreeState,
-    /// Whether to show file/folder icons.
-    pub show_icons: bool,
-}
-
-impl DirectoryTreeState {
-    /// Create directory tree state from root nodes.
-    pub fn new(nodes: Vec<TreeNode>) -> Self {
+impl TabsState {
+    /// Create tabs with the given labels. The first tab is active initially.
+    pub fn new(labels: Vec<impl Into<String>>) -> Self {
         Self {
-            tree: TreeState::new(nodes),
-            show_icons: true,
+            labels: labels.into_iter().map(Into::into).collect(),
+            selected: 0,
         }
     }
 
-    /// Build a directory tree from slash-delimited paths.
-    pub fn from_paths(paths: &[&str]) -> Self {
-        let mut roots: Vec<TreeNode> = Vec::new();
-
-        for raw_path in paths {
-            let parts: Vec<&str> = raw_path
-                .split('/')
-                .filter(|part| !part.is_empty())
-                .collect();
-            if parts.is_empty() {
-                continue;
-            }
-            insert_path(&mut roots, &parts, 0);
-        }
-
-        Self::new(roots)
-    }
-
-    /// Return selected node label if a node is selected.
+    /// Get the currently selected tab label, or `None` if there are no tabs.
     pub fn selected_label(&self) -> Option<&str> {
-        let mut cursor = 0usize;
-        selected_label_in_nodes(&self.tree.nodes, self.tree.selected, &mut cursor)
+        self.labels.get(self.selected).map(String::as_str)
     }
 }
 
-impl Default for DirectoryTreeState {
-    fn default() -> Self {
-        Self::new(Vec::<TreeNode>::new())
-    }
-}
-
-fn insert_path(nodes: &mut Vec<TreeNode>, parts: &[&str], depth: usize) {
-    let Some(label) = parts.get(depth) else {
-        return;
-    };
-
-    let is_last = depth + 1 == parts.len();
-    let idx = nodes
-        .iter()
-        .position(|node| node.label == *label)
-        .unwrap_or_else(|| {
-            let mut node = TreeNode::new(*label);
-            if !is_last {
-                node.expanded = true;
-            }
-            nodes.push(node);
-            nodes.len() - 1
-        });
-
-    if is_last {
-        return;
-    }
-
-    nodes[idx].expanded = true;
-    insert_path(&mut nodes[idx].children, parts, depth + 1);
-}
-
-fn selected_label_in_nodes<'a>(
-    nodes: &'a [TreeNode],
-    target: usize,
-    cursor: &mut usize,
-) -> Option<&'a str> {
-    for node in nodes {
-        if *cursor == target {
-            return Some(node.label.as_str());
-        }
-        *cursor += 1;
-        if node.expanded
-            && let Some(found) = selected_label_in_nodes(&node.children, target, cursor)
-        {
-            return Some(found);
-        }
-    }
-    None
-}
-
-// ── Command Palette ───────────────────────────────────────────────────
-
-/// A single command entry in the palette.
-#[derive(Debug, Clone)]
-pub struct PaletteCommand {
-    /// Primary command label.
-    pub label: String,
-    /// Supplemental command description.
-    pub description: String,
-    /// Optional keyboard shortcut hint.
-    pub shortcut: Option<String>,
-}
-
-impl PaletteCommand {
-    /// Create a new palette command.
-    pub fn new(label: impl Into<String>, description: impl Into<String>) -> Self {
-        Self {
-            label: label.into(),
-            description: description.into(),
-            shortcut: None,
-        }
-    }
-
-    /// Set a shortcut hint displayed alongside the command.
-    pub fn shortcut(mut self, s: impl Into<String>) -> Self {
-        self.shortcut = Some(s.into());
-        self
-    }
+/// Visual variant for buttons.
+///
+/// Controls the color scheme used when rendering a button. Pass to
+/// [`crate::Context::button_with`] to create styled button variants.
+///
+/// - `Default` — theme text color, primary when focused (same as `button()`)
+/// - `Primary` — primary color background with contrasting text
+/// - `Danger` — error/red color for destructive actions
+/// - `Outline` — bordered appearance without fill
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ButtonVariant {
+    /// Standard button style.
+    #[default]
+    Default,
+    /// Filled button with primary background color.
+    Primary,
+    /// Filled button with error/danger background color.
+    Danger,
+    /// Bordered button without background fill.
+    Outline,
 }
 
 // ── Color Picker ──────────────────────────────────────────────────────
@@ -568,6 +403,7 @@ impl ColorPickerState {
     /// let picker = ColorPickerState::tailwind().columns(6);
     /// assert_eq!(picker.columns, 6);
     /// ```
+    #[must_use]
     pub fn columns(mut self, n: usize) -> Self {
         self.columns = n.max(1);
         self

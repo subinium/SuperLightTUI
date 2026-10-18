@@ -1,3 +1,9 @@
+//! `Backend` / `frame()` contract for custom backends.
+//!
+//! Covers flush-error propagation, quit semantics, hook and tick
+//! persistence through `AppState`, resize handling, headless clipboard and
+//! error recovery, and the `RunConfig` FPS cap defaults.
+
 use std::io;
 
 use slt::{AppState, Backend, Buffer, Context, EventBuilder, Rect, RunConfig, frame};

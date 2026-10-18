@@ -30,25 +30,24 @@ fn main() -> std::io::Result<()> {
             scroll.offset = scroll.offset.saturating_sub(2);
         }
 
-        let _ = ui
-            .bordered(Border::Rounded)
+        ui.bordered(Border::Rounded)
             .title("Kitty Image Gallery")
             .grow(1)
             .col(|ui| {
-                let _ = ui.row(|ui| {
+                ui.row(|ui| {
                     ui.text("j/k scroll | q quit").dim();
                     ui.spacer();
                     ui.text(format!("offset: {}", scroll.offset)).dim();
                 });
 
-                let _ = ui.scrollable(&mut scroll).grow(1).col(|ui| {
+                ui.scrollable(&mut scroll).grow(1).col(|ui| {
                     for (i, (label, rgba, w, h)) in images.iter().enumerate() {
                         ui.text(format!("{}. {}", i + 1, label))
                             .bold()
                             .fg(Color::Yellow);
-                        let _ = ui.kitty_image(rgba, *w, *h, 30, 8);
+                        ui.kitty_image(rgba, *w, *h, 30, 8);
                         if i < images.len() - 1 {
-                            let _ = ui.separator();
+                            ui.separator();
                         }
                     }
                     ui.text("");
@@ -87,7 +86,7 @@ fn checkerboard_image(
     let mut rgba = Vec::with_capacity((width * height * 4) as usize);
     for y in 0..height {
         for x in 0..width {
-            let is_dark = ((x / cell_size) + (y / cell_size)) % 2 == 0;
+            let is_dark = ((x / cell_size) + (y / cell_size)).is_multiple_of(2);
             let v = if is_dark { 40u8 } else { 200u8 };
             rgba.extend_from_slice(&[v, v, v, 255]);
         }

@@ -2,6 +2,792 @@
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-10-18
+
+### Highlights
+
+- **Faster than ratatui on every matched workload** (#482-#491, #493-#495).
+  The frame kernel, buffer, flush and text paths were rebuilt: v0.25.0 was
+  1.7-3.5x *slower* than ratatui on the same workloads; 0.26.0 is 2.2x to
+  27x faster, and `ui.list` / `ui.table` make no allocation of their own on
+  a steady frame. `bench/ratatui-compare`, both arms through their real
+  per-frame path into a `Vec<u8>`, median µs per frame (median of three
+  runs):
+
+  | Workload | SLT 0.25.0 | SLT 0.26.0 | ratatui 0.30.2 | 0.26.0 vs ratatui |
+  |---|---|---|---|---|
+  | Dashboard, 200x60 | 213.6 | **10.2** | 106.9 | 10.5x faster |
+  | 10k-item `ui.list`, 100x50 | 1,834.0 | **23.0** | 622.1 | 27x faster |
+  | Table 1000x6, 200x60 | 1,037.9 | **55.8** | 997.5 | 17.9x faster |
+  | 60 nested bordered boxes, 240x80 | 1,104.8 | **157.8** | 340.0 | 2.2x faster |
+  | One cell changes per frame, 200x60 | 218.1 | **10.2** | 107.0 | 10.5x faster |
+  | Idle (nothing changes), 200x60 | 213.2 | **10.3** | 106.8 | 10.4x faster |
+
+  Steady allocations per frame (SLT 0.26.0 / ratatui): dashboard 21 / 79,
+  list 0 / 20,056, table 0 / 25,104, nested boxes 60 / 273. Apple M3 Pro,
+  macOS, rustc 1.98.0, 2026-10-18, on a shared host (load average ~4-5);
+  the 0.25.0 column was recorded earlier on the same host and toolchain.
+  Absolute numbers carry noise; the ratios held across runs. Method and
+  caveats: docs/internals/performance.md#vs-ratatui-matched-harness.
+- **Web-grade pointer model, mouse on by default** (#438-#444, #452): plain
+  `slt::run` captures clicks, wheel and drags (`MouseMode::Drag`, `Click`
+  over SSH/mosh, hover opt-in); one press activates one target; presses
+  carry press / release / drag capture; nested scrollables chain the wheel;
+  scrollables anchor content and can stick to the bottom; tooltips wait for
+  a dwell delay.
+- **Focus and shortcut correctness** (#453, #454, #462, #464): focus follows
+  the widget instead of the slot number, keys a focused text field edits
+  with never reach `ui.key(..)` shortcuts in either call order, the new
+  `ui.shortcut(..)` matches modifiers exactly, and `modal()` traps focus by
+  default.
+- **Text selection, clipboard and undo in text fields** (#465, #415):
+  keyboard and mouse selection in `text_input` / `textarea` that never
+  splits a grapheme, Ctrl+C / Ctrl+X over OSC 52, undo / redo in
+  `text_input`, and a byte-bounded delta undo history.
+- **Menus, popovers, disabled scopes and state styles** (#458, #459):
+  `popover`, `context_menu`, `menu_bar`, `ui.disabled(cond, ..)`, and the CSS
+  pseudo-classes as builder calls (`hover_bg`, `focus_bg`,
+  `focus_within_bg`, `active_bg`, ...).
+- **New widgets and modes**: `ui.code_editor` (#466), `ui.diff` (#467), an
+  opt-in `ratatui` feature that renders ratatui widgets inside SLT
+  containers (#470), and an accessible linear output mode for screen
+  readers and pipelines (`SLT_ACCESSIBLE=1`, #469).
+- **One meaning per name** (#456, #457, #460, #463): option builders
+  (`ui.button(..).variant(..).colors(..)`), a scoped `Text` builder,
+  `slt::prelude`, and removal of everything deprecated in 0.20-0.22.
+- **Docs as a learning path** (#480, #492): a numbered guide (01-11),
+  `coming-from/` pages for web and ratatui developers, reference and
+  internals sections, and every user-facing Rust snippet compiled with
+  warnings denied.
+
+### Breaking
+
+- Upgrade notes for every item below, with before / after code:
+  [docs/reference/migration.md](docs/reference/migration.md#v025x--v0260)
+  ("v0.25.x → v0.26.0").
+- The mouse is on by default (#444, owner decision).
+  `RunConfig::default()` resolves to `MouseMode::Drag` locally (clicks,
+  wheel, drag handles, scrollbar thumbs and the built-in text selection) and
+  to `MouseMode::Click` when an SSH or mosh session is detected, so plain
+  `slt::run` apps react to the mouse out of the box without a motion flood.
+  Inline and static runs (`run_inline*`, `run_static*`) default to
+  `MouseMode::Off` so CLI-style apps keep the terminal's scrollback wheel and
+  native selection (`RunConfig::effective_inline_mouse_mode()`).
+  Hover styling and tooltips need `MouseMode::Hover`. The `RunConfig::mouse`
+  field is replaced by `mouse_mode: Option<MouseMode>` (`None` = automatic);
+  `RunConfig::mouse(true)` is kept and maps to `Hover` (the previous
+  any-motion behavior), `mouse(false)` to `Off`. While the mouse is captured
+  the terminal's native selection is replaced by SLT's; most emulators still
+  select natively with Shift-drag, or use `MouseMode::Off`.
+- Each mouse press now activates only the topmost, innermost
+  interactive slot under the pointer (#439). A button in a non-modal
+  `overlay` no longer also clicks the container behind it, and a clickable row
+  inside a clickable card sets `clicked` on the row only. `right_clicked` and
+  `double_clicked` follow the same rule; `hovered` keeps its containment
+  meaning. Overlay roots, `overlay_at`/`modal_at` positioning wrappers and
+  tooltips are transparent to hit-testing, so only overlay content blocks the
+  widgets underneath. Migration: read `Response::clicked_any` for the old
+  containment check, or call `.bubble_clicks()` on the outer container.
+- `Context::text`, `styled`, `link` and `timer_display` return a
+  scoped `slt::Text<'_>` builder instead of `&mut Context` (#457). Its style,
+  size and margin options (`bold`, `fg`, `gradient`, `w`, `m`, `wrap`,
+  `truncate`, `align`, `with_if`, ...) edit that one element in place, so
+  `ui.text("x").bold().fg(c);` keeps working while
+  `ui.text("x").bold().button("Save")` no longer compiles. `Text::show()`
+  returns the element's `Response`. The builder adds no allocation per call.
+  `scripts/api_audit.sh` V1 now only counts non-deprecated `impl Context`
+  methods, shrinking its allowlist from 31 to 7 entries.
+- `button`, `badge`, `stat`, `help`, `separator`, `progress`,
+  `progress_bar`, `slider`, `line_chart` and `area_chart` return builders
+  instead of `Response` (#460). Field access, `.on_click(ui, ..)` /
+  `.on_hover(ui, ..)` chains and statements compile unchanged; storing the
+  result as a `Response` value needs `.show()`. Rendering without options is
+  unchanged (cell-for-cell, checked against 0.25 in the plain, focused and
+  hovered states).
+- `Response` is no longer `#[must_use]` as a type (#456): `ui.col(..)`,
+  `ui.row(..)`, `ui.separator()`, `ui.badge(..)`, `ui.alert(..)` and the other
+  layout/display calls are plain statements without `let _ =`, and
+  `Response::{on_hover, on_hover_ui, on_click, ..}` can end a chain. Only
+  the button keeps `#[must_use]` (on the `Button` builder type since #460),
+  because its `clicked` flag is its only output.
+- `Context::modal(f)` is now exactly `modal_with(ModalOpts::default(), f)` and
+  traps focus by default, as `ModalOptions` already documented (#462).
+  `modal_with(ModalOpts::new().tab_trap(false), f)` restores the old
+  behavior. `modal_at` / `modal_at_offset` became thin wrappers over
+  `modal_with` and trap too.
+- Tests: `TestBackend::run_with_events` keeps the focus state
+  carried from the previous frame instead of resetting it to slot 0 before
+  every call (#464), so "press Tab, then type" reaches the second input.
+  `render_with_events(events, 0, 0, f)` still forces slot 0. Every in-repo
+  `run_with_events` test passed unchanged under the new behaviour.
+- Behaviour: `list`, `list_colored`, `list_reorderable*` and unpaged
+  `table` / `table_colored` / `table_with` now scroll themselves (#487). They
+  are at most as tall as the content height their parent leaves below them
+  (the terminal height at the top level), build only the rows that fit, and
+  keep the selected row in view; table headers and the rule stay pinned.
+  Lists and tables that fit render exactly as before. An app that wrapped a
+  long `ui.list` in its own `scrollable` now gets a list sized to that
+  viewport that scrolls itself, instead of all rows for the outer scroller.
+  Siblings below a long list need a sized parent (`.grow(1)`, `.h(n)`,
+  `.max_h(n)`) to stay visible, as before. Paged tables, `virtual_list` and
+  `virtual_list_variable` are unchanged.
+- Public dependencies upgraded to `crossterm` 0.29 and
+  `compact_str` 0.10 (#475). The `slt::crossterm` re-export and
+  `event::from_crossterm` now use crossterm 0.29 types, and `Cell::symbol` is a
+  `compact_str` 0.10 `CompactString`. Default native builds now compile a single
+  `rustix` (1.x) instead of 0.38 + 1.x. crossterm is built with its 0.28 default
+  feature set (`bracketed-paste`, `events`, `windows`); 0.29's `derive-more`
+  feature is not enabled by SLT. Event decoding behaviour is unchanged.
+  Migration: apps that pass events to `from_crossterm` or name crossterm types
+  must use crossterm 0.29 (or `slt::crossterm`) to avoid two crossterm
+  versions; code that names `CompactString` for `Cell::symbol` must use
+  `compact_str` 0.10. MSRV stays at 1.88; `tree-sitter-highlight` stays on 0.26
+  because 0.27 requires Rust 1.90, and the MSRV CI job now checks
+  `--all-features` (every `syntax-*` grammar) on 1.88.
+- Behaviour: while a text-entry widget (`text_input`,
+  `textarea`, `form_field`, an open `command_palette`) owns focus, `key`,
+  `key_code`, `key_mod`, `consume_key` and `consume_key_code` no longer report
+  the keys it edits with: printable keys without Ctrl / Super / Meta,
+  Backspace, Delete, Left, Right, Home, End, and for multi-line editors Enter,
+  Up and Down (#453). The result no longer depends on whether the check runs
+  before or after the widget, so the Quick Start `if ui.key('q') { ui.quit() }`
+  is safe next to a form. Ownership follows the slot focused as the frame
+  starts (a click that moves focus releases the keys in the same batch); on an
+  app's first frame nothing is withheld. Ctrl/Super/Meta chords (#349), Esc,
+  Tab and F-keys are unchanged. Migration: code that intentionally reads typed
+  characters while a field is focused switches to `raw_key`.
+- Behaviour: a focused `text_input` now handles Ctrl+A, Ctrl+Z,
+  Ctrl+Y and, while text is selected, Ctrl+C / Ctrl+X itself (#465); a
+  focused `textarea` additionally owns Ctrl+K as before. Those chords are
+  withheld from `key_mod` / `shortcut` while the widget owns focus, in either
+  call order. Ctrl+C without a selection still reaches the app. Copying with
+  Ctrl+C needs `RunConfig::handle_ctrl_c(false)`, because the default config
+  quits on Ctrl+C before the frame runs.
+- `Context::line` returns `Response`, like `ContainerBuilder::line`, instead
+  of `&mut Self` (#463).
+- `use_state_named` and `use_state_keyed` share one slot map (#463): the same
+  id from either call is one slot, and `remove_state_keyed` /
+  `retain_state_keyed` / `keyed_state_count` include named ids. Before, the
+  two were independent maps.
+- Items deprecated in 0.20 - 0.22 are removed (#463); the full list and each
+  replacement are under Removed.
+- `Response` gained public fields (`disabled`, `clicked_any`, `hovered_top`,
+  `pressed`, `released`, `drag_started`, `dragging`, `drag_delta`,
+  `middle_clicked`, `modifiers`; #439, #442, #458): code that builds a
+  `Response { .. }` literal must add `..Response::default()`.
+- `ModalOptions` is renamed `ModalOpts` and is `#[non_exhaustive]` (#462):
+  `ModalOptions { tab_trap: true }` literals no longer compile; write
+  `ModalOpts::new().tab_trap(true)`. The old name stays as a deprecated alias.
+- Behaviour changes listed under Changed that existing apps and snapshot
+  tests can observe: tooltip dwell delay (#452), scroll anchoring on by
+  default (#443), wheel chaining between nested scrollables (#440, under
+  Fixed), focus that follows the widget (#454), `group_hover_*` per instance
+  and not on focus (#458), the select dropdown as an overlay (#459), richer
+  color-depth detection with `TERM=dumb` as `NoColor` (#447), the Kitty
+  keyboard probe (#448), the OSC 52 payload cap (#446), the window title
+  restore (#468) and the byte-bounded undo history (#415).
+
+### Added
+
+- Idle frame skipping, opt-in (#490): `RunConfig::idle_redraw(false)` makes
+  `run_with`, `run_inline_with`, `run_static_with` and `run_async_with` skip
+  the frame pipeline on ticks where nothing can change (no input, resize,
+  async message or task completion, resume, due frame request, or pending
+  follow-up frame). An idle app then writes no bytes and builds no frames.
+  New `Context::request_frame()` / `request_frame_after(Duration)` let a
+  closure that shows time-dependent state ask for the next frame; built-in
+  animations (`Tween`, `Spring`, `Keyframes`, `Sequence`, `Stagger`,
+  `animate_bool` / `animate_value` and their `_keyed` forms), spinners,
+  toasts, notifications,
+  streaming cursors, scheduler timers, `elapsed`, tooltip delay, hover
+  timeout, chord timeout and selection auto-scroll request their own frames.
+  The default stays `idle_redraw(true)` (every tick renders) because SLT cannot
+  see clock or cross-thread reads inside the closure. `Context::tick()` counts
+  rendered frames, so it does not advance while an opted-in loop is idle.
+  Measurements are in docs/internals/performance.md#idle-cost.
+- Widget builders with one configuration mechanism each (#460):
+  `ui.button(label)` returns `Button` with `.variant(..)` and `.colors(..)`,
+  which compose (`ui.button("Delete").variant(ButtonVariant::Danger)
+  .colors(&c)` was impossible before); `badge`, `stat`, `separator`,
+  `progress` / `progress_bar` return `Badge` / `Stat` / `Separator` /
+  `ProgressBar` with `.color(..)`, `help` returns `Help` with `.key_color(..)`
+  / `.text_color(..)`, `slider` returns `Slider` with `.step(..)`, and
+  `line_chart` / `area_chart` return `LineChart` with `.color(..)`. Every
+  builder dereferences to its `Response` and has `.show()`. `grid_columns`
+  is the new name of `grid_with`. Each builder records its widget where it
+  is written: immediately (`Button`, the display builders, like `Text`) or,
+  when an option changes input handling or rasterization (`Slider`,
+  `LineChart`), when the response is first read or at the end of the
+  statement, before anything else can be recorded. No extra allocation per
+  call.
+- `slt::prelude` (#463): `use slt::prelude::*;` imports the run entry points,
+  `Context`, the builders, the style vocabulary, `KeyCode` / `KeyModifiers`,
+  `MouseMode` and the common widget states, but not the `crossterm`
+  re-export, so a glob import no longer shadows the application's own
+  `crossterm` dependency.
+- `StateHandle<T>`, an alias of `State<T>` that names the hook handle apart
+  from widget state structs (#463).
+- `ContainerBuilder::fg` (same as `text_color`) and
+  `ContainerBuilder::w_ratio` / `h_ratio` (same as `Constraints`) (#463).
+- `scripts/api_audit.sh` checks V8 (`_with` needs a closure parameter), V9
+  (`_colored` takes `&WidgetColors` and the set is frozen) and V10 (the 0.26
+  removed / renamed names stay gone, `Context::line` returns `Response`), all
+  gated in `--strict`; `scripts/check_doc_examples.py` compiles maintained
+  recipes with `#![deny(deprecated)]` (#460, #463).
+- Element-level interactive state styles on `ContainerBuilder` (#458), the
+  CSS pseudo-classes as builder calls: `hover_bg` / `hover_fg` /
+  `hover_border_fg` (`:hover`, from the container's own previous-frame rect,
+  so identical code in a loop styles each row on its own), `focus_bg` /
+  `focus_fg` / `focus_border_fg` (`:focus`, the focusable registered right
+  before the container), `focus_within_bg` / `focus_within_border_fg`
+  (`:focus-within`), and `active_bg` / `active_fg` / `active_border_fg`
+  (`:active`, left button held after pressing). `ContainerStyle` gains the
+  same fields. Containers that set none of them do no extra work.
+- `Context::disabled(cond, |ui| ..)` and `Context::is_disabled()` (#458):
+  widgets inside keep their focus slot (focus indices after them do not move
+  when `cond` toggles) but Tab, Shift+Tab and click-to-focus skip them, they
+  ignore clicks, Enter, Space and typing, render with the theme's `text_dim`,
+  and report the new `Response::disabled`. Works for every built-in widget and
+  for custom widgets on `register_focusable` / `interaction`.
+- `Context::animate_bool_keyed` / `animate_value_keyed` take a runtime
+  `impl Into<String>` key (stored with `use_state_keyed` state, so
+  `remove_state_keyed` / `retain_state_keyed` compact them) for per-row
+  transitions (#458).
+- Element-anchored overlays and menus (#459): `Context::popover(rect,
+  Placement, f)` floats a bordered panel next to an element, flipping to the
+  opposite side at a screen edge and clamping inside the terminal
+  (`PopoverResponse::{placement, dismissed}`); `Context::context_menu(&mut
+  MenuState, &response)` opens at the pointer on right click or below a
+  focused trigger on `Shift+F10` / `Menu`; `Context::menu_bar(&mut
+  MenuBarState)` opens with a click, `F10` or `Alt+letter`. Menus support
+  shortcut hints, separators, disabled items and submenus, skip disabled
+  items on the keyboard, close on `Esc` or an outside click that does not
+  reach the widget underneath, and return focus to the trigger. New types:
+  `Placement`, `MenuItem`, `MenuState`, `MenuBarState`, `PopoverResponse`.
+  New example: `menus`.
+- `ModalOpts` (#462) at the crate root, `#[non_exhaustive]` with builders
+  `ModalOpts::new().tab_trap(bool).anchor(Anchor).offset(dx, dy)`, so
+  anchored modals can trap focus.
+- `TestBackend::step(events, &mut f)`, `press(code, &mut f)` and
+  `type_text(s, &mut f)` (#464): chainable one-frame steps that borrow a
+  single `FnMut` render closure and keep focus, so a multi-step interaction
+  test runs over plain `&mut` state without `RefCell`.
+  `EventBuilder::hover(x, y)` is an alias of `mouse_move` for hover tests.
+- Accessible linear output mode for screen readers and pipelines (#469):
+  `RunConfig::accessible(bool)`, enabled by default with `SLT_ACCESSIBLE=1`
+  (an explicit call wins). `run`, `run_inline` and `run_static` then never
+  take over the screen (no alternate screen, cursor movement, colors or mouse)
+  and stdin / stdout need not be terminals. Display text is printed once when
+  it changes, focus moves are announced (`Focused: Username, text field`), and
+  `text_input` (masked input read without echo), `textarea`, `select`,
+  `radio`, `multi_select`, `checkbox`, `toggle`, `confirm`, `button` and
+  `form_field` become sequential prompts whose answers reach the widget as
+  normal `changed` / `submitted` / `clicked` responses; validation errors are
+  printed and the field is asked again. New `Context::a11y_label` names the
+  next widget and `Context::is_accessible` lets apps drop visual-only hints.
+  The visual path pays one `bool` check per widget. `run_async` keeps the
+  visual renderer for now. Screen-reader walkthroughs (VoiceOver, Orca) are
+  not yet recorded; see docs/guide/11-terminal-compatibility.md#accessibility.
+- `Response::clicked_any` (raw "a press landed in my rect"), `Response::hovered_top`
+  (the single slot a press at the pointer would hit) and
+  `ContainerBuilder::bubble_clicks()` to let an ancestor also receive clicks
+  from its descendants (#439).
+- Pointer event model (#442): no press is dropped any more. Presses that
+  arrive in one input batch are dispatched one per frame, like sequential DOM
+  events, so each is hit-tested against the layout the previous press
+  produced (two clicks in one batch activate two widgets). `Response` gains
+  `pressed`, `released`,
+  `drag_started`, `dragging`, `drag_delta`, `middle_clicked` and `modifiers`.
+  A press captures the pointer for its target until the release. Capture
+  follows the widget's stable key (keyed or named focusable, text widgets,
+  `ui.group`) through slots inserted or removed before it; anonymous
+  containers are captured by slot position.
+  `RunConfig::click_on_release(bool)` (default `false`) makes `clicked` fire
+  on a release inside the pressed widget, so dragging off cancels.
+  `TestBackend::with_run_config` renders headless frames with a custom
+  `RunConfig`.
+- `ContainerBuilder::overscroll_contain()` keeps wheel events inside a
+  scrollable at its limit, like CSS `overscroll-behavior: contain` (#440).
+- Scroll anchoring and stick-to-bottom for every `scrollable` (#443).
+  `ScrollState::anchor` (default `true`) keeps the visible content in place
+  when content above the viewport changes height; `ScrollState::stick_to_bottom`
+  (field, plus the `stick_to_bottom(bool)` builder) follows appended content
+  while the view is at the end. Focus reveal wins on the frame focus moves.
+- `MouseMode::{Off, Click, Drag, Hover}` and `RunConfig::mouse_mode(..)` /
+  `RunConfig::effective_mouse_mode()` choose how much pointer activity the
+  terminal reports (#444). Each mode writes only its DEC modes (`?1000h ?1006h`
+  for Click, plus `?1002h` for Drag or `?1003h` for Hover) and restores them in
+  reverse order on exit, panic and suspend; the urxvt `?1015` encoding is no
+  longer requested. `Terminal::new` / `InlineTerminal::new` accept a
+  `MouseMode` (a `bool` still works).
+- Tooltip dwell delay, hover timeout and pointer shapes (#452):
+  `RunConfig::tooltip_delay(Duration)` (default 500 ms),
+  `RunConfig::hover_timeout(Option<Duration>)` (default `None`) and
+  `ContainerBuilder::pointer_shape(PointerShape)` (OSC 22, opt-in via
+  `RunConfig::pointer_shapes(true)`, follows the hovered slot with CSS
+  `cursor` inheritance). The pointer shape travels with the terminal
+  metadata (#468): written only on change and reset to the default pointer
+  on exit, panic and suspend. The text cursor shape is the #468
+  `set_cursor_shape(CursorShape)` setter. `EventBuilder::mouse_move` and
+  `PtyBackend::with_run_config` support testing them.
+- `ContainerBuilder::draggable()` marks a custom drag handle so pressing it
+  never starts the built-in text selection (#438).
+- `RunConfig::text_selection(bool)` (default `true`) turns SLT's built-in
+  text selection and copy-on-release off for apps with their own drag or
+  selection model (#438).
+- `ListState` and `TableState` selection helpers that are correct under a
+  filter or sort (#455): `selected_index()` / `set_selected_index()` (data
+  index), `selected_view_index()` / `set_selected_view_index()` (view index)
+  and `remove_selected()`, which removes the item or row the user sees
+  highlighted. The table setters switch to the row's page when paged.
+- `ui.code_editor(&mut CodeEditorState)` (#466): an editable,
+  syntax-highlighted code field built on `TextareaState` (same keys,
+  selection, clipboard and undo / redo) with a right-aligned line-number
+  gutter, current-line tint, bracket-match highlight, horizontal scrolling or
+  soft wrap, Tab / Shift+Tab indentation (selection-aware, spaces to the next
+  tab stop or hard tabs) and Enter auto-indent. Highlighting uses the
+  `syntax-*` features (plain fallback with identical editing) and is cached
+  per chunk of top-level items, so a keystroke re-highlights only the edited
+  chunk; only visible rows are rendered. New bench `benches/code_editor.rs`
+  measures keystroke-to-render on a 2,000-line Rust file (0.31 ms median,
+  0.37 ms p99 on Apple Silicon with `syntax-rust`, versus 9.8 ms to
+  re-highlight the whole document), and
+  `cargo run --example code_editor` demos it. While focused the editor owns
+  Tab / Shift+Tab (`CodeEditorState::tab_indents(false)` opts out).
+- `TextareaState::history_max_bytes(bytes)` (default 8 MiB) bounds the bytes
+  retained by undo records, with `history_bytes()` / `history_bytes_cap()`
+  getters (#415). New bench `benches/textarea_history.rs`, alloc diagnostic
+  modes `SLT_AUDIT_FILTER=textarea_paste` / `textarea_wrapped_idle`, and the
+  ignored measurement `tests/textarea_retained_memory.rs`.
+- `Context::register_focusable_keyed(key)` for custom widgets whose focus
+  should follow a stable `Hash` key, `Context::focused_key()`, and
+  `TextInputState::focus_key()` / `TextareaState::focus_key()` (#454).
+- Text-input builders (#461): `TextInputState::clear()` (value, cursor,
+  validation errors, suggestion popup), `set_value(..)` (clamped to
+  `max_length` graphemes, cursor at the end, line breaks become spaces),
+  `masked(bool)` builder and `TextInputState::password()`;
+  `FormField::masked(bool)` / `password()` / `key(..)`; keyed form access via
+  `FormState::get(key)` and `FormState::field_mut(key)` (explicit key first,
+  then the label of unkeyed fields), which survives field reordering.
+- Text selection in `text_input` and `textarea` (#465): Shift + arrows /
+  Home / End, Shift+Ctrl/Alt + Left/Right by word (also new plain
+  Ctrl/Alt + Left/Right word movement in `text_input`), Shift+Up/Down in
+  `textarea`, Ctrl+A select all (`ctrl_a_select_all(false)` opts out), and
+  with mouse capture press-drag, double-click word and triple-click
+  everything (`text_input`) or the line (`textarea`). Typing, Enter or paste
+  replaces the selection as one undo step; Backspace/Delete remove it; Ctrl+C
+  copies and Ctrl+X cuts through OSC 52 (`copy_to_clipboard`). Masked inputs
+  never copy plaintext (copy is a no-op, cut only deletes) and a
+  double-click there selects everything rather than revealing word
+  boundaries. Ranges are grapheme indices, so CJK, ZWJ emoji, flags and
+  combining marks are never split; wide graphemes highlight both cells and
+  soft-wrapped textarea lines highlight per visual line. API:
+  `selection()`, `selected_text()`, `select_all()`, `set_selection(..)`,
+  `clear_selection()` on both states (`(row, col)` pairs for textarea).
+  `TextInputState` gains undo/redo (Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z, 100 steps,
+  typing bursts coalesce). New theme token `Theme::selection_bg`
+  (`ThemeBuilder::selection_bg`, default `None` = `selected_bg` /
+  `selected_fg`) and `Theme::text_selection_style()`. A drag inside a text
+  widget no longer starts the screen-level selection overlay.
+- `Context::set_title`, `set_progress`, `set_status`, and `set_cursor_shape`
+  with `Progress` (OSC 9;4), `ProgramState` / `ProgramStatus` (OSC 7501), and
+  `CursorShape` (DECSCUSR). Setters persist until changed, emit only on
+  change, are capability-gated (progress only on known hosts, status only on
+  direct terminals, nothing for `TERM=dumb`), and are undone on exit, suspend,
+  and panic cleanup. `terminal_title`, `terminal_progress`, `program_status`,
+  and `cursor_shape` expose the recorded state, including on `TestBackend`.
+  New `SLT_FORCE_PROGRESS` / `SLT_DISABLE_PROGRESS` and
+  `SLT_FORCE_PROGRAM_STATUS` / `SLT_DISABLE_PROGRAM_STATUS` flags (#468).
+- `Context::clipboard_status` and `ClipboardStatus` (`Sent`, `TooLarge`,
+  `WriteFailed`) report the previous frame's OSC 52 outcome.
+  `RunConfig::clipboard_passthrough(true)` wraps OSC 52 for tmux
+  (`ESC P tmux;` with doubled `ESC`) and GNU screen (DCS chunks);
+  `RunConfig::clipboard_max_bytes` caps the payload (#446).
+- `ColorDepth::resolve(&Capabilities)` applies the environment chain plus the
+  startup probe (#447).
+- `Capabilities::kitty_keyboard` is populated from the `CSI ? u` probe (#448).
+- `RunConfig::ambiguous_wide(true)` measures East Asian Ambiguous characters as
+  two columns in the buffer, layout, wrapping, and truncation;
+  `RunConfig::width_conservative` and the opt-in startup `RunConfig::width_probe`
+  (CPR measurement of VS16, ZWJ, skin-tone, and flag clusters on fullscreen
+  direct terminals) resolve the cluster-width policy. The flush-side cursor
+  reposition that consumes it lands with #441 (#449).
+- Opt-in `ratatui` feature (#470): `ContainerBuilder::ratatui(|area, buf| …)`
+  and `ratatui_widget(widget)` render ratatui-core `Widget`s inside SLT
+  containers, honouring scroll/clip geometry, wide graphemes and the parent
+  background; `From` conversions map `Color`, `Modifiers` and `Style` both
+  ways (lossy cases documented in `slt::ratatui_compat`). Depends only on
+  `ratatui-core` 0.1 (ratatui 0.30, no backend) and is not part of `full`, so
+  default and `full` dependency trees are unchanged.
+- Diff viewer widget (#467): `DiffState::from_unified(patch)` parses
+  multi-file unified / `git diff` output (renames, copies, created/deleted
+  files, binary markers reported but not rendered, `\ No newline at end of
+  file`) with no new dependency, returning `DiffParseError` for malformed
+  input instead of panicking; `DiffState::to_unified()` writes it back.
+  `ui.diff(&mut state)` renders it unified or side by side
+  (`.layout(DiffLayout::Split)`, unified below `.split_min_width`) with an
+  old/new line-number gutter, collapsible hunks (Enter/Space or a click on the
+  header), keyboard navigation (`j`/`k`, `]`/`[`, `n`/`p`, configurable via
+  `DiffKeys`) and per-hunk accept/reject reported once in
+  `DiffResponse::hunk_actions`. Rendering is virtualized (one command per
+  visible row), long lines truncate at grapheme boundaries with tab expansion,
+  and syntax highlighting reuses the `syntax-*` features per file extension.
+  Added/removed backgrounds derive from the theme's `success` / `error`
+  colors; override them with `DiffColors`. New example: `diff_viewer`.
+- `Context::shortcut(code, modifiers)`: order-independent shortcut query with
+  exact modifier matching (Shift ignored for characters) that follows the
+  text-focus key rule (#453, see Breaking), and `Context::raw_key(c)`, which ignores both the
+  modal guard and text-focus ownership (#453). `raw_key_code` / `raw_key_mod`
+  now also document that they ignore text-focus ownership.
+
+### Changed
+
+- `TextareaState` and `TextInputState` undo history stores each step as an
+  edit record (the changed rows, or bytes for a text input, before and
+  after) against one shared copy of the document instead of a full copy per
+  step, and evicts the oldest steps when records exceed the byte budget
+  (#415). Undo/redo results, typing-burst coalescing, selection replacement
+  as one step, code-editor indent/dedent steps and rejected-paste behavior
+  are unchanged; direct writes to `lines` / `value` between edits are still
+  captured exactly.
+- `Response` is `Copy` (#460), so `Response` methods chain off a builder.
+- Variant buttons (`.variant(..)`, formerly `button_with`) honour the
+  `RunConfig::widget_theme` button colors like the plain button does; with
+  the default widget theme they render as before (#460).
+- An open `select` dropdown floats in an overlay below the trigger (above it
+  near the bottom edge) instead of pushing the widgets after it down, and a
+  click outside closes it without reaching the widget underneath (#459).
+- `group_hover_bg` / `group_hover_border_style` (and `is_group_hovered`
+  inside a group) follow the hovered group *instance*: rows that share a
+  group name no longer all highlight together. They also no longer fire when
+  a child of the group has keyboard focus; use `focus_within_bg` /
+  `focus_within_border_fg` for that (#458). The text-level
+  `Context::group_hover_fg` / `group_hover_bg` follow the hovered instance
+  too but still also react to focus.
+- Hover tooltips wait for `RunConfig::tooltip_delay` (500 ms by default) while
+  the pointer rests on the same target, instead of appearing on the first
+  hovered frame (#452). `tooltip_delay(Duration::ZERO)` restores the old
+  behavior. Tooltip panels are transparent to clicks (#439).
+- Scrollables anchor by default (#443): collapsing or growing content above
+  the viewport now adjusts `ScrollState::offset` by the height change instead
+  of letting the visible text jump. Set `ScrollState::anchor = false` for the
+  previous raw-offset behavior.
+- Focus follows the widget, not the slot number (#454). `text_input`,
+  `textarea` and `form_field` key their focus slot by a process-unique id
+  stored in their state (a `Clone` gets a fresh id), and
+  `register_focusable_named` keys its slot by the name. When focusables are
+  inserted or removed before the focused widget, focus (and
+  `gained_focus` / `lost_focus`) stays on that widget; clicks and
+  `focus_by_name` resolve to the identity of their target. If the focused
+  widget itself disappears, focus moves to the nearest surviving slot
+  (clamped instead of wrapped) on the next frame. Explicit moves (Tab,
+  `set_focus_index`, `focus_next`, group navigation, screen and modal focus
+  traps) keep their positional semantics. A keyed widget whose key was not
+  registered on the previous frame (for example state rebuilt inside the
+  closure each frame) keeps the 0.25 positional behaviour.
+- Color depth auto-detection resolves a precedence chain (#447): `NO_COLOR` /
+  `TERM=dumb` (now `NoColor`), then `COLORTERM` or a probe-confirmed XTGETTCAP
+  `Tc`, then terminal identity (`TERM` `xterm-kitty` / `xterm-ghostty` /
+  `wezterm`, `TERM_PROGRAM` `iTerm.app` / `WezTerm` / `ghostty` / `vscode`),
+  then a VT-enabled Windows console, then `256color`. Many terminals now get
+  more colors; explicit `RunConfig::color_depth` still wins over everything.
+- `RunConfig::kitty_keyboard(true)` pushes the protocol only when the terminal
+  answers `CSI ? u` (sent with the DA1 sentinel, no extra timeout), or when
+  `SLT_FORCE_KITTY_KEYBOARD` is set; hosts where queries are skipped keep the
+  policy-only behavior (#448).
+- The window title is emitted through the backend flush, only when it
+  changes, and restored on exit via the XTWINOPS title stack (#468).
+- Clipboard writes go through the backend flush after the frame bytes; write
+  errors no longer `eprintln!` over the UI or abort the frame, and payloads
+  over `RunConfig::clipboard_max_bytes` (default 74,994 bytes) are not sent
+  (#446).
+- tmux is identified from `TMUX` even when `TERM` is `screen-256color`
+  (without GNU screen's `STY`) (#446).
+- By-value builders are `#[must_use]` (#479): `ContainerStyle`, `Tween`,
+  `Keyframes`, `Sequence`, `Stagger`, `Spring`, `WidgetColors` and
+  `WidgetTheme` as types, and the `Self`-returning builder methods on
+  `Rect`, `Color`, `KeyMap`, `Bar`, `ModalOpts`, widget state types and
+  `TestBackend` / `TestSequence`. Discarding a builder call such as
+  `style.p(1);` now warns instead of silently doing nothing. `Context`
+  widget builders (`ui.text(..).bold();`) and the `Response::on_*`
+  callbacks are unchanged. Public functions that can panic document it
+  under `# Panics`.
+- `slt-wasm` is not released with 0.26.0 (#367): browser support is
+  deferred, the crate is `publish = false`, and CI and the release workflow
+  no longer build, test or publish it. crates.io keeps slt-wasm 0.25.0
+  (with superlighttui 0.25.0); `cargo check -p slt-wasm --target
+  wasm32-unknown-unknown` remains a local check.
+- Internal structure (no public path changes): the run loop moved from
+  `lib.rs` into `runtime/`, `terminal.rs` split into responsibility
+  submodules, widget state and method files share one family taxonomy
+  (`src/widgets/<family>.rs` and `src/context/widgets/<family>.rs`), and
+  `include!()` wiring became real submodules. CI asserts rendered terminal
+  output in tmux, adds a Windows ConPTY smoke test, and runs clippy on all
+  targets with warnings denied.
+
+### Deprecated
+
+- `_with` / `_colored` variants that did not mean "plus a closure" / "plus
+  `&WidgetColors`" (#460): `button_with`, `button_colored`, `slider_with`,
+  `grid_with`, `separator_colored`, `badge_colored`, `stat_colored`,
+  `progress_bar_colored`, `line_chart_colored`, `area_chart_colored` and
+  `help_colored`, in favour of the builder methods above. Each forward
+  renders the same buffer as its replacement.
+- `use_state_named` / `use_state_named_default`, in favour of
+  `use_state_keyed` / `use_state_keyed_default` (#463).
+- `ModalOptions` is renamed `ModalOpts`, and `Context::modal_at` /
+  `modal_at_offset` are deprecated in favour of
+  `modal_with(ModalOpts::new().anchor(a).offset(dx, dy), f)` (#462).
+- `TextInputState::validate` is renamed `TextInputState::validate_now`
+  (#461). On `FormField`, `validate` attaches a validator; on
+  `TextInputState` it ran immediately, so copied code silently changed
+  meaning. The old name remains as a deprecated alias.
+- The `Context` "modify the last text" modifiers (`bold`, `dim`, `italic`,
+  `underline`, `reversed`, `strikethrough`, `fg`, `bg`, `gradient`,
+  `gradient_stops_f64`, `bg_gradient`, `bg_gradient_stops_f64`,
+  `group_hover_fg`, `group_hover_bg`, `wrap`, `truncate`, `grow`, `align`,
+  `text_center`, `text_right`, `w`, `h`, `min_w`, `max_w`, `min_h`, `max_h`,
+  `m`, `mx`, `my`, `mt`, `mr`, `mb`, `ml`, `with`, `with_if`) in favour of the
+  same methods on `Text` (#457). They keep their 0.25 behaviour, including
+  silently doing nothing after a non-text widget, and will be removed in the
+  next breaking release.
+- the public `ListState::selected` and `TableState::selected`
+  fields (#455). They hold a view index, so `list.remove_item(list.selected)`
+  removed a different item while a filter (or, for tables, a sort) was active.
+  Use the accessors above; the fields become private in a later release.
+
+### Removed
+
+- Items deprecated in 0.20 - 0.22 (#463): `ContainerBuilder::pad`,
+  `min_width`, `max_width`, `min_height`, `max_height`; `Context::col_gap`,
+  `row_gap`, `key_seq`, `code_block_lang`, `code_block_numbered`,
+  `code_block_numbered_lang`, `use_state_named_with`, `use_memo_ref`,
+  `gradient_stops`, `bg_gradient_stops`; `FilePickerState::selected`;
+  `ScrollState::progress`; `FormState::validate`; `AppState::fps`; the `f32`
+  `Color::{luminance, blend, lighten, darken, contrast_ratio, from_hsl,
+  from_hsv, rotate_hue}` and `Theme::overlay`. docs/reference/migration.md lists each
+  replacement.
+
+### Fixed
+
+- Under tmux older than 3.5 (detected from `TERM_PROGRAM_VERSION`, or tmux
+  with an unknown version), width-conservative mode emits VS16 emoji such as
+  `❤️` without U+FE0F (text presentation) and keeps the blank fill for the
+  buffer's second column. Those tmux versions widen a VS16 cluster but mark
+  its padding cell one column too far right (fixed upstream in tmux 3.5), so
+  every redraw shifted the rest of the row by one column. tmux 3.5 and later,
+  and `width_conservative(false)`, keep the emoji presentation (#441).
+- Border titles are truncated by grapheme cluster with the frame's
+  ambiguous-width setting (`RunConfig::ambiguous_wide`, #449) instead of per
+  `char` with the Unicode default, so a title never splits a cluster and
+  never overruns the corner on CJK-configured terminals (#494).
+- Inserting into a `max_length`-limited `text_input` / `textarea` now keeps
+  the longest prefix whose resulting text fits even when inserted text joins
+  the graphemes around the cursor (ZWJ emoji sequences, conjoining Hangul
+  jamo, CR+LF, Indic conjuncts) (#496). The old search only examined a fixed
+  window of `budget + 2` clusters and could drop text that fits.
+- `list` and unpaged `table` showed a selection below the viewport off
+  screen, and clicks mapped to the wrong row once scrolled; clicks now map
+  to `offset + row` (below the header for tables) (#487).
+- `menu_bar`: a click on another title in the same frame in which hover
+  switches the open dropdown to it is now handled like any click on that
+  title (it opens and stays open) instead of being skipped and left
+  unconsumed for widgets and `raw_events` (#459).
+- The modal focus trap no longer leaves focus on a disabled slot: when the
+  modal opens (or focus was clamped into it) on a disabled widget, focus moves
+  to the next enabled slot inside the modal, and Tab / Shift+Tab keep skipping
+  disabled slots. A modal whose slots are all disabled focuses nothing and
+  Tab stays a no-op inside it (#458).
+- The built-in text selection works on any text, including top-level
+  `ui.text` outside containers (#445). A selection that starts inside a
+  `scrollable` is kept in content coordinates, so the highlight stays on its
+  text while the region scrolls (rows scrolled out of view stay selected but
+  are not drawn), and dragging onto or past the region's top or bottom row
+  auto-scrolls it one step per frame. Copying still reads the visible part of
+  the selection only.
+- Dragging a split handle, a scrollbar thumb, or any widget that consumes the
+  press no longer highlights text or overwrites the clipboard over OSC 52
+  (#438). The selection tracker skips consumed events, and a consumed press
+  keeps it idle until the release even when later drags leave the widget.
+  Clipboard writes now go through the terminal backend's own output stream,
+  ordered with the frame bytes.
+- Nested scrollables chain the wheel (#440): once an inner scrollable reaches
+  its end, further wheel events over it scroll the enclosing scrollable
+  instead of being swallowed. Each event goes to the innermost region on its
+  axis that can still move, so a burst fills the inner region and spills the
+  rest outward. Events no region can absorb stay unconsumed for frame-global
+  wheel helpers.
+- Split-pane and scrollbar drags no longer stick to the pointer when the
+  release is lost: they end on terminal focus loss, on resize, on a press
+  elsewhere and on motion reported without a held button (#442).
+- Typing after a plain click in a `text_input` or `textarea` no longer drops
+  the first character (#465 follow-up). The click left an empty
+  `anchor == cursor` selection, the first typed character grew it into a
+  one-character selection and the second replaced it (`abc` became `bc`).
+  `set_selection(a, a)` now clears the selection on both states, and typing
+  or deleting drops an empty anchor (also left by a drag or Shift+arrow back
+  to its start).
+- Wide emoji clusters that terminals measure inconsistently (VS16, ZWJ,
+  skin-tone modifiers, regional-indicator flags) are no longer padded with a
+  literal space (#441): terminals that advance two columns (tmux 3.5a, the
+  Unicode-conformant behaviour) shifted the rest of the row and left stale
+  glyphs on the next update. The flush blanks the cluster's columns, draws
+  it from its own column and positions the next cell explicitly.
+- A grapheme that starts with a control code point (a lone C0 / DEL / C1, or
+  CR LF) normalizes to exactly one U+FFFD, and clusters wider than two
+  columns are cleared and extended as one unit (#484). Both cases left an
+  orphan continuation cell, so the previous frame's glyph stayed on screen.
+
+### Performance
+
+- Frame kernel, buffer and flush rebuilt (#483-#486, #489, #493, #495): each
+  grapheme is normalized once on the cell-write path and printable ASCII
+  skips segmentation, bidi and normalization (#484); the buffer tracks the
+  written span of every row, so `reset` re-blanks only those spans (#485)
+  and the flush compares only written spans instead of hashing every cell
+  of both buffers (#486); container backgrounds are filled in bulk instead
+  of one `set_string` per cell (#493); narrow non-ASCII glyphs such as box
+  drawing overwrite in place; `Cell` equality compares short symbols inline;
+  and the frame is assembled by a hand-rolled CSI writer into one reused
+  buffer and handed to the sink with one `write_all`, instead of a
+  `queue!` / `write!` per escape (#495). Each updated frame writes one SGR
+  reset per site instead of two (#489): the one-cell frame drops from 44 to
+  36 bytes. These changes, plus the allocation and text work below, take
+  the matched-harness frame from 1.7-3.5x slower than ratatui 0.30.2 in
+  v0.25.0 to faster on every workload (see Highlights).
+- Textarea undo memory scales with edit size (#415): 150 one-byte edits of
+  a 1 MB document at the default cap of 100 retain 1.59 MB instead of
+  156 MB (cap 8: 1.57 MB instead of 12.5 MB), and 100 Backspaces in a 1 MB
+  `text_input` retain 1.0 MB instead of 100 MB. Undo / redo on a 1 MB
+  document take about half the time (ASCII undo 1.40 -> 0.59 ms) because
+  they apply one record instead of cloning the document; a 100 KB paste into
+  it makes 26,897 instead of 51,283 allocations (p50 1.00 -> 0.77 ms).
+- A soft-wrapped textarea reuses its wrap layout across frames while the
+  text and width are unchanged (#415): an idle frame of a wrapped 1 MB
+  document drops from 12.8 ms (ASCII) / 5.9 ms (CJK) to ~0.08 ms. Matched
+  runs at v0.23 / v0.24 / v0.25 show no v0.24 wrapped-idle regression; the
+  cost was the per-frame whole-document wrap. Details in
+  docs/internals/performance.md "Textarea undo history and large
+  documents".
+- The layout tree's storage is reused across frames (#488): containers get
+  their `children` vectors back from a `FrameState`-owned arena and text
+  nodes reuse their payload boxes, flexbox scratch for containers over 16
+  children comes from a per-thread pool, and `LayoutNode` shrank from 368 to
+  336 bytes. Retained storage is trimmed after 120 consecutive frames that
+  use much less of it. Steady-state allocations per frame (matched harness,
+  `bench/ratatui-compare`): dashboard 200x60 54 → 24 calls and 27,664 →
+  984 requested bytes (ratatui 0.30.2: 79 / 8,445), 60 nested boxes 285 →
+  136 and 168,254 → 11,902 B (ratatui: 273 / 45,965), 10k `ui.list` 109 →
+  51, table 1000x6 129 → 61. Frame time drops 1–11% (dashboard 15.3 → 13.6
+  µs, table 177 → 169 µs, nested 182 → 180 µs; 5-round interleaved A/B
+  medians).
+- No allocation of SLT's own on the steady-state frame path: container
+  commands store their arguments inline instead of boxing them (one
+  allocation per container per frame before; `Command` grows from 104 to
+  136 bytes, only a rare `title` is boxed), and `ui.list`, `ui.table`,
+  separators, progress bars and the virtual-list / pager hints format their
+  row text into strings recycled from the previous frame's layout tree (a
+  bounded per-session pool). Steady allocations per frame (matched harness):
+  10k `ui.list` 51 → 0, table 1000x6 61 → 0 (paged 63 → 0), 60 nested boxes
+  136 → 60, dashboard 24 → 21 (984 → 172 B). What remains is text the app
+  creates: its `format!` rows, and the `String` that `ui.text` makes from a
+  `&str`.
+- Mostly-ASCII text with a few non-ASCII glyphs (table rules, list markers,
+  dashes, box drawing, CJK) no longer runs the grapheme segmenter and bidi
+  class lookups over the whole string: printable-ASCII runs are written in
+  bulk, scalars that always form their own grapheme skip segmentation, bidi
+  lookups are prefiltered by code-point range, and widths are measured per
+  scalar where no width sequence can apply. Exhaustive tests check the
+  segmentation and bidi tables these shortcuts rely on, and differential
+  proptests check the output against the general path. Border edges are
+  drawn as runs. Matched harness, median µs per frame (0.26 base → now;
+  ratatui 0.30.2): dashboard 13.2 → 10.3 (110.2), 10k `ui.list` 72.3 → 23.0
+  (622.2), table 166.4 → 55.6 (998.2), 60 nested boxes 175.4 → 159.0
+  (344.2), idle 13.2 → 10.3 (110.3). Criterion `widget_table_50_rows`
+  103.8 → 40.9 µs.
+- Each text node's display width (each segment, for rich text) is measured
+  once per frame, when the tree is built, and render and caret geometry
+  reuse it (#494); before, render measured each plain text twice more and
+  each segment once more. Layout's remaining per-grapheme measurements use
+  the shared printable-ASCII fast path.
+- Smaller release binaries (#491): `ContainerBuilder::col` / `row` / `line`,
+  the `Context` row/col helpers, `line_wrap` and `button_colored` keep only a
+  thin generic shim per closure or label type, the frame kernel takes the
+  frame closure as `dyn` (one copy for native, accessible and test runs), and
+  the F12 debug bar no longer links float formatting (identical output).
+  Stripped release sizes on aarch64 macOS: hello-world 1,198,888 →
+  1,164,360 B (−2.9%; ratatui 0.30.2: 553,384 B), `examples/demo` 2,698,200
+  → 2,070,704 B (−23%), `examples/widgets_tour` 1,715,256 → 1,466,920 B
+  (−14%). Frame time is unchanged within noise. Breakdown, the rejected
+  `str_width` change and follow-ups: docs/internals/performance.md "Binary size";
+  re-measure with `bash bench/ratatui-compare/size.sh`.
+- Programs link only the parts of text handling and graphics they use
+  (#491): grapheme segmentation and the `unicode-width` string walk keep one
+  out-of-line copy instead of one per codegen unit (printable ASCII is still
+  measured inline), and the Kitty / Sixel / iTerm2 flush passes are linked
+  only by programs that draw an image. Output is byte-identical. Stripped
+  release sizes, aarch64 macOS, default features: hello-world 1,232,400 →
+  1,165,744 B (−5.4%), a list / table / gauge dashboard 1,367,208 →
+  1,267,480 B (−7.3%; ratatui 0.30.2 equivalent: 759,976 B),
+  `examples/demo` −7.7%, `examples/widgets_tour` −9.4%. Frame time is
+  unchanged (−1.1% to +1.0% per workload). `bench/ratatui-compare/size.sh`
+  now also measures the dashboard and a size profile (`opt-level = "z"`,
+  fat LTO, one codegen unit, `panic = "abort"`, `strip`), which takes the
+  hello-world to 688,320 B; the recipe and its trade-offs are in
+  docs/internals/performance.md "Binary size". Re-measured on the final 0.26.0
+  tree (2026-10-18): hello-world 1,149,216 B (ratatui 553,384 B, 2.07x),
+  dashboard 1,267,480 B (1.66x).
+- `list` and unpaged `table` per-frame work is proportional to the visible
+  rows instead of the item count (#487): a 10k-item list at 100x50 drops
+  from ~1,875 to ~255 µs and from 20,018 to 109 allocations per frame; a
+  1000x6 table at 200x60 from ~995 to ~600 µs (ratatui `Table`: ~1,035 µs)
+  and from 9,038 to 129 allocations (matched harness, `bench/ratatui-compare`).
+- Table rows are built into one `String` each, with no per-cell `String`, and
+  the header and rule no longer clone labels or join per-column strings.
+- `ListState::set_items` / `clear_items` release view-index, prefix-sum and
+  item-height buffers sized for a much larger previous list (#416): replacing
+  100k items with 10 now retains under 1 KB instead of ~1.6 MB.
+  `TableState::set_rows` already released them; filter changes keep capacity.
+
+### Security
+
+- `Context::link` (and Markdown links) now only open `http`, `https` and
+  `mailto` URLs, rejecting other schemes, whitespace and control characters
+  before anything is spawned. Windows opens links via
+  `rundll32 url.dll,FileProtocolHandler` instead of the command shell, no
+  opener is spawned in SSH/mosh sessions (OSC 8 is still emitted), the
+  opener's output is detached, and failures show a warning toast instead of
+  writing to stderr. (GHSA-h7r7-gv76-cqqf)
+
+### Docs
+
+- `docs/` is a learning-path information architecture (#480): a numbered
+  guide (`guide/01-quick-start.md` to `guide/11-terminal-compatibility.md`),
+  `coming-from/web.md` and `coming-from/ratatui.md`, `reference/`,
+  `internals/` and `archive/`, moved with `git mv` so history follows. The
+  previous-frame rule lives once, in `guide/02-state.md`, and every other
+  page links to it. The pre-0.26 flat `docs/*.md` paths are one-line
+  redirect stubs, so existing links keep working; translated READMEs are
+  compact summaries that link the English guides.
+- The v0.25 guides were corrected against the source, and interaction, web
+  and terminal-compatibility guides were added (#492). The guides describe
+  the default-on mouse and `MouseMode`, the shipped emoji reposition
+  (#441), and an experimental subsecond hot-reload pattern
+  (`reference/debugging.md`).
+- `scripts/check_doc_examples.py` compiles every `rust` fence in README.md,
+  `docs/**` and both skill trees with warnings denied; each fence is
+  compiled or carries a stated skip reason.
+- Layout and display calls in docs and examples no longer carry `let _ =`
+  (#456).
+- Source comments state invariants instead of release history, public
+  functions that can panic document it under `# Panics`, and
+  `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features` passes.
+- docs/internals/performance.md and `bench/ratatui-compare/README.md`
+  record the final matched-harness, allocation and binary-size numbers for
+  this release, with method, host and load caveats.
+- The browser guide states that `slt-wasm` is deferred in 0.26 (#367): it is
+  not published with 0.26.0, and the latest published version is 0.25.0.
+
 ## [0.25.0] - 2026-09-09
 
 ### Added

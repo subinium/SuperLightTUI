@@ -106,7 +106,6 @@ jobs:
       - run: bash scripts/api_audit.sh --strict
       - run: python3 scripts/check_doc_examples_test.py --toolchain stable --compile-negative
       - run: python3 scripts/check_doc_examples.py --toolchain stable
-      - run: python3 -m unittest discover -s scripts -p smoke_wasm_release_test.py
       - run: python3 -m unittest discover -s scripts -p smoke_native_release_test.py
 
   msrv:
@@ -144,42 +143,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo check -p superlighttui --no-default-features
-
-  wasm-backend:
-    name: Check (WASM backend)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ env.RELEASE_TAG }}
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@wasm-pack
-      - uses: browser-actions/setup-chrome@v2
-      - uses: nanasess/setup-chromedriver@v2
-      - name: Install CJK fonts for browser pixel checks
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y fonts-noto-cjk
-          fc-match 'monospace:lang=ko'
-      - run: cargo check -p slt-wasm --all-features --target wasm32-unknown-unknown
-      - run: cargo clippy -p slt-wasm --all-features --target wasm32-unknown-unknown -- -D warnings
-      - run: cargo test -p slt-wasm --all-features
-      - run: chrome --version || google-chrome --version
-      - run: chromedriver --version
-      - run: CHROMEDRIVER="$(command -v chromedriver)" wasm-pack test --headless --chrome crates/slt-wasm
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: crates/slt-wasm/examples/browser/package-lock.json
-      - run: npm ci --prefix crates/slt-wasm/examples/browser
-      - run: wasm-pack build crates/slt-wasm/examples/browser --target web --dev -- --features browser-tests
-      - run: CHROME_EXECUTABLE="$(command -v chrome || command -v google-chrome)" npm test --prefix crates/slt-wasm/examples/browser
-      - run: cargo package --workspace --no-default-features --target wasm32-unknown-unknown --target-dir "$(mktemp -d "$RUNNER_TEMP/slt-package.XXXXXX")" --locked
 
   feature-check:
     name: Feature Combinations
@@ -225,19 +188,8 @@ jobs:
           set -euo pipefail
           TAG="${RELEASE_TAG#v}"
           ROOT_VER=$(awk -F'"' '/^version =/ { print $2; exit }' Cargo.toml)
-          WASM_VER=$(awk -F'"' '/^version =/ { print $2; exit }' crates/slt-wasm/Cargo.toml)
-          WASM_DEP=$(sed -n 's/.*superlighttui = { version = "\([^"]*\)".*/\1/p' crates/slt-wasm/Cargo.toml)
-
           if [ "$TAG" != "$ROOT_VER" ]; then
             echo "::error::Tag v$TAG does not match Cargo.toml version $ROOT_VER"
-            exit 1
-          fi
-          if [ "$TAG" != "$WASM_VER" ]; then
-            echo "::error::Tag v$TAG does not match slt-wasm version $WASM_VER"
-            exit 1
-          fi
-          if [ "$TAG" != "$WASM_DEP" ]; then
-            echo "::error::Tag v$TAG does not match slt-wasm dependency $WASM_DEP"
             exit 1
           fi
           echo "Version verified: $TAG"
@@ -255,7 +207,6 @@ jobs:
       - msrv
       - typos
       - check-no-default
-      - wasm-backend
       - feature-check
       - audit
       - deny
@@ -281,8 +232,8 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-  publish-slt-wasm:
-    name: Publish slt-wasm
+  verify-published:
+    name: Verify Published Packages
     needs: [publish-superlighttui]
     runs-on: ubuntu-latest
     steps:
@@ -307,51 +258,12 @@ jobs:
           done
           echo "::error::superlighttui $VERSION did not appear in crates.io index"
           exit 1
-      - name: Publish slt-wasm if needed
-        run: |
-          set -euo pipefail
-          VERSION="${RELEASE_TAG#v}"
-          INDEX_URL="https://index.crates.io/sl/t-/slt-wasm"
-          if curl --fail --silent --show-error --location "$INDEX_URL" \
-            | grep -F "\"vers\":\"$VERSION\"" >/dev/null; then
-            echo "slt-wasm $VERSION is already published"
-            exit 0
-          fi
-          CARGO_TARGET_DIR="$(mktemp -d "$RUNNER_TEMP/slt-wasm-publish.XXXXXX")" cargo publish -p slt-wasm --locked
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
-  verify-published:
-    name: Verify Published Packages
-    needs: [publish-superlighttui, publish-slt-wasm]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ env.RELEASE_TAG }}
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@wasm-pack
-      - uses: browser-actions/setup-chrome@v2
-      - uses: nanasess/setup-chromedriver@v2
-      - name: Install CJK fonts for browser pixel checks
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y fonts-noto-cjk
-          fc-match 'monospace:lang=ko'
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '24'
-      - run: npm ci --prefix crates/slt-wasm/examples/browser
       - run: bash scripts/smoke_release.sh "${RELEASE_TAG#v}"
       - run: python3 scripts/smoke_native_release.py "${RELEASE_TAG#v}" --expect-commit "$(git rev-parse HEAD)"
-      - run: CHROME_EXECUTABLE="$(command -v chrome || command -v google-chrome)" python3 scripts/smoke_wasm_release.py "${RELEASE_TAG#v}" --expect-commit "$(git rev-parse HEAD)"
 
   github-release:
     name: GitHub Release
-    needs: [publish-superlighttui, publish-slt-wasm, verify-published]
+    needs: [publish-superlighttui, verify-published]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

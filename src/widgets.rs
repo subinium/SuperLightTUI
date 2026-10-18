@@ -8,13 +8,12 @@ use crate::clock::{SystemTime, UNIX_EPOCH};
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
-use unicode_width::UnicodeWidthStr;
 
 use crate::Style;
 use crate::context::Response;
 
-/// Bare function-pointer validator used by the deprecated positional
-/// [`FormState::validate`](crate::widgets::FormState::validate) API.
+/// Bare function-pointer validator, the shape taken by the positional
+/// `FormState::validate` API (removed in 0.26).
 ///
 /// Retained for backward compatibility. New code should attach
 /// [`Validator`] closures per field via
@@ -23,23 +22,32 @@ use crate::context::Response;
 pub type FormValidator = fn(&str) -> Result<(), String>;
 type TextInputValidator = Box<dyn Fn(&str) -> Result<(), String>>;
 
-/// Built-in field validator constructors (required / length / email / range /
-/// regex / one-of).
-///
-/// Each function returns a closure suitable for
-/// [`FormField::validate`](crate::widgets::FormField::validate) or
-/// [`Validator::new`](crate::widgets::Validator::new). All matchers are
-/// handwritten — there is no `regex` or email-parsing dependency.
-pub mod validators {
-    include!("widgets/validators.rs");
-}
+pub mod validators;
 
-include!("widgets/input.rs");
-include!("widgets/collections.rs");
-include!("widgets/feedback.rs");
-include!("widgets/selection.rs");
-include!("widgets/commanding.rs");
-include!("widgets/responses.rs");
+// One file per widget family; each pairs with the `Context` method file of
+// the same name under `src/context/widgets/`. `runtime` holds non-widget
+// runtime state driven by `src/context/runtime.rs`.
+mod collections;
+mod commanding;
+mod display;
+mod feedback;
+mod layout;
+mod overlay;
+mod rich;
+mod runtime;
+mod selection;
+mod text_input;
+
+pub use collections::*;
+pub use commanding::*;
+pub use display::*;
+pub use feedback::*;
+pub use layout::*;
+pub use overlay::*;
+pub use rich::*;
+pub use runtime::*;
+pub use selection::*;
+pub use text_input::*;
 
 #[cfg(test)]
 mod tests;

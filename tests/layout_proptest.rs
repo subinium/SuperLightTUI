@@ -1,3 +1,7 @@
+//! Property tests: the flexbox layout never panics for arbitrary terminal
+//! sizes, gaps, padding, grow factors, nesting depth, grids, and
+//! percentage sizes.
+
 use proptest::prelude::*;
 use slt::TestBackend;
 

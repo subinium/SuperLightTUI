@@ -31,6 +31,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo generate-lockfile
       - run: cargo check -p superlighttui --features async,serde
+      # Every optional dependency (incl. all `syntax-*` tree-sitter crates)
+      # must build on the declared MSRV; tree-sitter-highlight is pinned to
+      # 0.26 because 0.27 requires Rust 1.90 (#475).
+      - run: cargo check -p superlighttui --all-features
       - run: cargo clippy -p superlighttui --all-features -- -D warnings
 
   test:
@@ -40,9 +44,9 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      # `tests/v020_perf_alloc.rs` serialises every `#[test]` in the binary
+      # `tests/alloc_budget.rs` serialises every `#[test]` in the binary
       # via the file-wide `measure_lock` mutex (see
-      # `tests/v020_perf_alloc.rs::enter_perf_test`), so the parallel test
+      # `tests/alloc_budget.rs::enter_perf_test`), so the parallel test
       # runner is safe — the previous `--test-threads=1` workaround was
       # removed in v0.20.1 (#240) once the global-allocator-counter
       # cross-test contamination was fixed at the source.
@@ -68,9 +72,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: bash scripts/api_audit.sh --strict
-      - run: python3 scripts/check_doc_examples_test.py --toolchain stable --compile-negative
-      - run: python3 scripts/check_doc_examples.py --toolchain stable
-      - run: python3 -m unittest discover -s scripts -p smoke_wasm_release_test.py
+      - name: Doc snippet checker self-test (unmarked fence, E0599, discarded must_use)
+        run: python3 scripts/check_doc_examples_test.py --toolchain stable --compile-negative
+      # No paths: README.md, docs/**/*.md and both skill trees. Every Rust fence
+      # must be classified; maintained ones compile with #![deny(warnings)].
+      - name: Compile every maintained doc snippet (warnings denied)
+        run: python3 scripts/check_doc_examples.py --toolchain stable
       - run: python3 -m unittest discover -s scripts -p smoke_native_release_test.py
 
   platform-test:
@@ -96,6 +103,9 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --all-features -- -D warnings
+      # Unit-test modules, integration tests, examples and benches too
+      # (clippy.toml: allow-unwrap-in-tests / allow-print-in-tests).
+      - run: cargo clippy --all-features --all-targets -- -D warnings
 
   fmt:
     name: Format
@@ -147,40 +157,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo check -p superlighttui --no-default-features
-
-  check-wasm:
-    name: Check (WASM backend)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@wasm-pack
-      - uses: browser-actions/setup-chrome@v2
-      - uses: nanasess/setup-chromedriver@v2
-      - name: Install CJK fonts for browser pixel checks
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y fonts-noto-cjk
-          fc-match 'monospace:lang=ko'
-      - run: cargo check -p slt-wasm --all-features --target wasm32-unknown-unknown
-      - run: cargo clippy -p slt-wasm --all-features --target wasm32-unknown-unknown -- -D warnings
-      - run: cargo test -p slt-wasm --all-features
-      - run: chrome --version || google-chrome --version
-      - run: chromedriver --version
-      - run: CHROMEDRIVER="$(command -v chromedriver)" wasm-pack test --headless --chrome crates/slt-wasm
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: crates/slt-wasm/examples/browser/package-lock.json
-      - run: npm ci --prefix crates/slt-wasm/examples/browser
-      - run: wasm-pack build crates/slt-wasm/examples/browser --target web --dev -- --features browser-tests
-      - run: CHROME_EXECUTABLE="$(command -v chrome || command -v google-chrome)" npm test --prefix crates/slt-wasm/examples/browser
-      - run: cargo package --workspace --no-default-features --target wasm32-unknown-unknown --target-dir "$(mktemp -d "$RUNNER_TEMP/slt-package.XXXXXX")" --locked
 
   feature-check:
     name: Feature Combinations
@@ -444,11 +420,133 @@ jobs:
           run_case(False)
           run_case(True)
           PY
+      # Issue #450: the steps above prove input arrives; this one proves what
+      # tmux actually displays and where clicks land. It compares
+      # `capture-pane` against SLT's own TestBackend frame (box, CJK, VS16,
+      # ZWJ rows; first paint plus two incremental updates), checks SGR with
+      # `capture-pane -e`, and asserts mouse coordinates through an attached
+      # client (status line on top, mouse off and on) and `send-keys -H`.
+      - name: Build terminal render probe
+        if: matrix.kind == 'tmux'
+        run: cargo build --manifest-path tests/fixtures/terminal_probe/Cargo.toml --target-dir target/terminal-probe
+      - name: Assert tmux render geometry and mouse coordinates
+        if: matrix.kind == 'tmux'
+        run: |
+          set -euo pipefail
+          # Strict expected-fail markers: the row must fail while the bug is
+          # observable on this tmux, and an unexpected pass fails the step.
+          # TODO(#449): remove `--known-issue 449` when per-terminal cluster widths land.
+          for attempt in 1 2; do
+            if timeout 240s python3 scripts/tmux_render_check.py \
+                --probe target/terminal-probe/debug/slt-terminal-probe \
+                --artifacts "$RUNNER_TEMP/slt-mux-smoke/render-attempt-$attempt" \
+                --known-issue 449; then
+              exit 0
+            fi
+            echo "::warning::tmux render check attempt $attempt failed"
+          done
+          exit 1
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: terminal-smoke-${{ matrix.name }}
-          path: ${{ runner.temp }}/slt-mux-smoke/*.log
+          path: |
+            ${{ runner.temp }}/slt-mux-smoke/*.log
+            ${{ runner.temp }}/slt-mux-smoke/render-attempt-*/
+
+  # Issue #450: a session-level Windows test. The probe runs inside a real
+  # ConPTY pseudo-console (portable-pty, confined to the standalone
+  # tests/fixtures/terminal_probe crate so the main crate gains no
+  # dev-dependency), and the driver asserts on a vt100 model of what ConPTY
+  # rendered: alternate-screen enter/exit, rendered text, a key, a resize and
+  # a clean exit status.
+  windows-conpty-smoke:
+    name: Terminal smoke (Windows ConPTY)
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build probe and ConPTY driver
+        run: cargo build --manifest-path tests/fixtures/terminal_probe/Cargo.toml --target-dir target/terminal-probe --features pty-driver
+      - name: Drive the probe through ConPTY
+        shell: pwsh
+        timeout-minutes: 8
+        run: |
+          $logs = Join-Path $env:RUNNER_TEMP 'slt-conpty'
+          New-Item -ItemType Directory -Force -Path $logs | Out-Null
+          foreach ($attempt in 1, 2) {
+            & target/terminal-probe/debug/slt-pty-smoke.exe target/terminal-probe/debug/slt-terminal-probe.exe (Join-Path $logs "raw-$attempt.log")
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            Write-Output "::warning::ConPTY smoke attempt $attempt failed"
+          }
+          exit 1
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: terminal-smoke-windows-conpty
+          path: ${{ runner.temp }}/slt-conpty/
+
+  # Issue #450: a real GUI terminal emulator, headless. xterm runs the probe
+  # under Xvfb; xdotool types and clicks through XTEST like a user. Nothing is
+  # compared as pixels: the probe reports xterm's CPR cursor advances and the
+  # events it received (key effect, click cell, widget toggle, exit status).
+  xterm-smoke:
+    name: Terminal smoke (xterm under Xvfb)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install xterm, Xvfb and xdotool
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y xterm xvfb xauth xdotool xfonts-base
+          xterm -version
+      # Every X client (xdotool opens the display even for `version`) needs
+      # a running server, so start Xvfb once, export DISPLAY to all later
+      # steps and wait until it accepts connections.
+      - name: Start Xvfb
+        run: |
+          set -euo pipefail
+          display=:99
+          mkdir -p "$RUNNER_TEMP/slt-xterm"
+          nohup Xvfb "$display" -screen 0 1280x1024x24 -nolisten tcp \
+            >"$RUNNER_TEMP/slt-xterm/xvfb.log" 2>&1 &
+          echo "DISPLAY=$display" >> "$GITHUB_ENV"
+          for _ in $(seq 1 50); do
+            if DISPLAY="$display" xdotool getdisplaygeometry >/dev/null 2>&1; then
+              DISPLAY="$display" xdotool version
+              exit 0
+            fi
+            sleep 0.2
+          done
+          echo "::error::Xvfb did not accept connections on $display"
+          cat "$RUNNER_TEMP/slt-xterm/xvfb.log"
+          exit 1
+      - name: Build terminal probe
+        run: cargo build --manifest-path tests/fixtures/terminal_probe/Cargo.toml --target-dir target/terminal-probe
+      - name: Drive the probe in xterm
+        run: |
+          set -euo pipefail
+          test -n "$DISPLAY"
+          for attempt in 1 2; do
+            if timeout 240s python3 scripts/xterm_smoke.py \
+                --probe target/terminal-probe/debug/slt-terminal-probe \
+                --artifacts "$RUNNER_TEMP/slt-xterm/attempt-$attempt"; then
+              exit 0
+            fi
+            echo "::warning::xterm smoke attempt $attempt failed"
+          done
+          exit 1
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: terminal-smoke-xterm
+          path: ${{ runner.temp }}/slt-xterm/
 
   # VHS gallery gate (issue #274). Renders every `.tape` in the repo through
   # VHS and asserts each produces its declared `Output` asset at a non-trivial

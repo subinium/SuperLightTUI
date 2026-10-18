@@ -1,3 +1,6 @@
+//! [`Color`] (named, 256-color indexed and RGB), luminance, contrast and
+//! blending helpers, and color-depth downsampling.
+
 /// Terminal color.
 ///
 /// Covers the standard 16 named colors, 256-color palette indices, and
@@ -109,15 +112,6 @@ impl Color {
         0.2126 * rf + 0.7152 * gf + 0.0722 * bf
     }
 
-    /// Deprecated `f32` alias for [`luminance_f64`](Self::luminance_f64).
-    #[deprecated(
-        since = "0.22.2",
-        note = "use Color::luminance_f64() to keep public float APIs on f64"
-    )]
-    pub fn luminance(self) -> f32 {
-        self.luminance_f64() as f32
-    }
-
     /// Return a contrasting foreground color for the given background.
     ///
     /// Uses the WCAG 2.1 relative luminance threshold (0.179) to decide
@@ -156,6 +150,7 @@ impl Color {
     /// let gray = white.blend_f64(black, 0.5);
     /// // ≈ Rgb(128, 128, 128)
     /// ```
+    #[must_use]
     pub fn blend_f64(self, other: Color, alpha: f64) -> Color {
         let alpha = if alpha.is_finite() {
             alpha.clamp(0.0, 1.0)
@@ -176,47 +171,22 @@ impl Color {
         Color::Rgb(r, g, b)
     }
 
-    /// Deprecated `f32` alias for [`blend_f64`](Self::blend_f64).
-    #[deprecated(
-        since = "0.22.2",
-        note = "use Color::blend_f64() to keep public float APIs on f64"
-    )]
-    pub fn blend(self, other: Color, alpha: f32) -> Color {
-        self.blend_f64(other, f64::from(alpha))
-    }
-
     /// Lighten this color by the given amount (0.0–1.0).
     ///
     /// Blends toward white. `amount = 0.0` returns the original color;
     /// `amount = 1.0` returns white.
+    #[must_use]
     pub fn lighten_f64(self, amount: f64) -> Color {
         Color::Rgb(255, 255, 255).blend_f64(self, amount)
-    }
-
-    /// Deprecated `f32` alias for [`lighten_f64`](Self::lighten_f64).
-    #[deprecated(
-        since = "0.22.2",
-        note = "use Color::lighten_f64() to keep public float APIs on f64"
-    )]
-    pub fn lighten(self, amount: f32) -> Color {
-        self.lighten_f64(f64::from(amount))
     }
 
     /// Darken this color by the given amount (0.0–1.0).
     ///
     /// Blends toward black. `amount = 0.0` returns the original color;
     /// `amount = 1.0` returns black.
+    #[must_use]
     pub fn darken_f64(self, amount: f64) -> Color {
         Color::Rgb(0, 0, 0).blend_f64(self, amount)
-    }
-
-    /// Deprecated `f32` alias for [`darken_f64`](Self::darken_f64).
-    #[deprecated(
-        since = "0.22.2",
-        note = "use Color::darken_f64() to keep public float APIs on f64"
-    )]
-    pub fn darken(self, amount: f32) -> Color {
-        self.darken_f64(f64::from(amount))
     }
 
     /// Compute the WCAG 2.1 contrast ratio between two colors.
@@ -238,15 +208,6 @@ impl Color {
         if la > lb { la / lb } else { lb / la }
     }
 
-    /// Deprecated `f32` alias for [`contrast_ratio_f64`](Self::contrast_ratio_f64).
-    #[deprecated(
-        since = "0.22.2",
-        note = "use Color::contrast_ratio_f64() to keep public float APIs on f64"
-    )]
-    pub fn contrast_ratio(a: Color, b: Color) -> f32 {
-        Self::contrast_ratio_f64(a, b) as f32
-    }
-
     /// Returns `true` if the contrast ratio between two colors meets WCAG AA
     /// for normal text (ratio >= 4.5).
     pub fn meets_contrast_aa(fg: Color, bg: Color) -> bool {
@@ -262,6 +223,7 @@ impl Color {
     ///
     /// Named colors (`Red`, `Green`, etc.) and `Reset` pass through at
     /// depths other than `NoColor`.
+    #[must_use]
     pub fn downsampled(self, depth: ColorDepth) -> Color {
         match depth {
             ColorDepth::TrueColor => self,
@@ -358,15 +320,6 @@ impl Color {
         Color::Rgb(r, g, b)
     }
 
-    /// Deprecated `f32` alias for [`from_hsl_f64`](Self::from_hsl_f64).
-    #[deprecated(
-        since = "0.22.2",
-        note = "use Color::from_hsl_f64() to keep public float APIs on f64"
-    )]
-    pub fn from_hsl(h: f32, s: f32, l: f32) -> Color {
-        Self::from_hsl_f64(f64::from(h), f64::from(s), f64::from(l))
-    }
-
     /// Construct an [`Color::Rgb`] from HSV (a.k.a. HSB) components.
     ///
     /// `h` is the hue in degrees (wrapped into `0..360`), `s` is the
@@ -386,15 +339,6 @@ impl Color {
         Color::Rgb(r, g, b)
     }
 
-    /// Deprecated `f32` alias for [`from_hsv_f64`](Self::from_hsv_f64).
-    #[deprecated(
-        since = "0.22.2",
-        note = "use Color::from_hsv_f64() to keep public float APIs on f64"
-    )]
-    pub fn from_hsv(h: f32, s: f32, v: f32) -> Color {
-        Self::from_hsv_f64(f64::from(h), f64::from(s), f64::from(v))
-    }
-
     /// Rotate the hue of this color by `degrees` around the HSL color wheel.
     ///
     /// The color is resolved to RGB, converted to HSL, rotated, and converted
@@ -411,20 +355,12 @@ impl Color {
     /// // Rotating pure red by 120° lands on pure green.
     /// assert_eq!(Color::Rgb(255, 0, 0).rotate_hue_f64(120.0), Color::Rgb(0, 255, 0));
     /// ```
+    #[must_use]
     pub fn rotate_hue_f64(self, degrees: f64) -> Color {
         let (r, g, b) = self.to_rgb();
         let (h, s, l) = rgb_to_hsl(r, g, b);
         let (nr, ng, nb) = hsl_to_rgb(h + degrees, s, l);
         Color::Rgb(nr, ng, nb)
-    }
-
-    /// Deprecated `f32` alias for [`rotate_hue_f64`](Self::rotate_hue_f64).
-    #[deprecated(
-        since = "0.22.2",
-        note = "use Color::rotate_hue_f64() to keep public float APIs on f64"
-    )]
-    pub fn rotate_hue(self, degrees: f32) -> Color {
-        self.rotate_hue_f64(f64::from(degrees))
     }
 }
 
@@ -866,33 +802,286 @@ mod color_depth_tests {
 }
 
 impl ColorDepth {
-    /// Detect the terminal's color depth from environment variables.
+    /// Detect the terminal's color depth from environment variables only.
     ///
-    /// Order of precedence:
+    /// Order of precedence (first match wins):
     /// 1. `NO_COLOR` (any non-empty value) → [`ColorDepth::NoColor`]
-    /// 2. `COLORTERM=truecolor|24bit` → [`ColorDepth::TrueColor`]
-    /// 3. `TERM` contains `256color` → [`ColorDepth::EightBit`]
-    /// 4. Fallback → [`ColorDepth::Basic`] (16 colors)
+    /// 2. `TERM=dumb` → [`ColorDepth::NoColor`]
+    /// 3. `COLORTERM=truecolor|24bit` → [`ColorDepth::TrueColor`]
+    /// 4. Truecolor terminal identity: `TERM` is `xterm-kitty`,
+    ///    `xterm-ghostty` or `wezterm`, or `TERM_PROGRAM` is `iTerm.app`,
+    ///    `WezTerm`, `ghostty` or `vscode` → [`ColorDepth::TrueColor`]
+    /// 5. Windows Terminal (`WT_SESSION` set) → [`ColorDepth::TrueColor`]
+    /// 6. `TERM` contains `256color` → [`ColorDepth::EightBit`]
+    /// 7. Fallback → [`ColorDepth::Basic`] (16 colors)
+    ///
+    /// The run loops use `ColorDepth::resolve` instead, which also consults
+    /// the startup terminal probe. An explicit [`crate::RunConfig::color_depth`]
+    /// always wins over both.
     pub fn detect() -> Self {
-        // https://no-color.org — ANY non-empty value disables color.
-        if std::env::var("NO_COLOR")
-            .ok()
-            .is_some_and(|v| !v.is_empty())
-        {
-            return Self::NoColor;
+        let env = ColorEnv::from_process();
+        resolve_color_depth(&env.view(), false)
+    }
+
+    /// Resolve the color depth from the environment plus the negotiated
+    /// terminal [`Capabilities`](crate::Capabilities).
+    ///
+    /// Same chain as [`ColorDepth::detect`], with two extra positive signals
+    /// for [`ColorDepth::TrueColor`]: a probe-confirmed XTGETTCAP `Tc` reply
+    /// (`caps.truecolor`, for example over SSH where `COLORTERM` is not
+    /// forwarded), and on Windows a console with virtual-terminal processing
+    /// enabled (Windows 10+). `NO_COLOR` and `TERM=dumb` still resolve to
+    /// [`ColorDepth::NoColor`] first.
+    ///
+    /// The built-in run loops call this when [`crate::RunConfig::color_depth`]
+    /// is `None`; an explicit depth is never replaced.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// let depth = slt::ColorDepth::resolve(&slt::capabilities());
+    /// # let _ = depth;
+    /// ```
+    #[cfg(feature = "crossterm")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
+    pub fn resolve(caps: &crate::Capabilities) -> Self {
+        let mut env = ColorEnv::from_process();
+        env.windows_vt = env.windows_vt || windows_vt_enabled();
+        resolve_color_depth(&env.view(), caps.truecolor)
+    }
+}
+
+/// Whether the Windows console accepts VT sequences (Windows 10+ with virtual
+/// terminal processing). Always `false` elsewhere.
+#[cfg(feature = "crossterm")]
+fn windows_vt_enabled() -> bool {
+    #[cfg(windows)]
+    {
+        crossterm::ansi_support::supports_ansi()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// Owned snapshot of the environment inputs to color-depth resolution.
+#[derive(Debug, Default)]
+struct ColorEnv {
+    no_color: bool,
+    colorterm: String,
+    term: String,
+    term_program: String,
+    windows_vt: bool,
+}
+
+impl ColorEnv {
+    fn from_process() -> Self {
+        let var = |name: &str| std::env::var(name).unwrap_or_default();
+        Self {
+            // https://no-color.org — ANY non-empty value disables color.
+            no_color: !var("NO_COLOR").is_empty(),
+            colorterm: var("COLORTERM"),
+            term: var("TERM"),
+            term_program: var("TERM_PROGRAM"),
+            // Windows Terminal always runs a VT-enabled ConPTY host.
+            windows_vt: cfg!(windows) && std::env::var_os("WT_SESSION").is_some(),
         }
-        if let Ok(ct) = std::env::var("COLORTERM") {
-            let ct = ct.to_lowercase();
-            if ct == "truecolor" || ct == "24bit" {
-                return Self::TrueColor;
-            }
+    }
+
+    fn view(&self) -> ColorEnvView<'_> {
+        ColorEnvView {
+            no_color: self.no_color,
+            colorterm: &self.colorterm,
+            term: &self.term,
+            term_program: &self.term_program,
+            windows_vt: self.windows_vt,
         }
-        if let Ok(term) = std::env::var("TERM")
-            && term.contains("256color")
-        {
-            return Self::EightBit;
+    }
+}
+
+/// Injected environment for [`resolve_color_depth`], so the precedence chain
+/// is testable without mutating process env.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct ColorEnvView<'a> {
+    pub(crate) no_color: bool,
+    pub(crate) colorterm: &'a str,
+    pub(crate) term: &'a str,
+    pub(crate) term_program: &'a str,
+    pub(crate) windows_vt: bool,
+}
+
+/// `TERM` values of terminals that always render 24-bit color.
+const TRUECOLOR_TERMS: &[&str] = &["xterm-kitty", "xterm-ghostty", "wezterm"];
+/// `TERM_PROGRAM` values (lowercased) of terminals that always render 24-bit color.
+const TRUECOLOR_TERM_PROGRAMS: &[&str] = &["iterm.app", "wezterm", "ghostty", "vscode"];
+
+/// Auto-detected color depth (issue #447). Explicit configuration is applied
+/// by the caller and never reaches this function.
+///
+/// Precedence: `NO_COLOR` / `TERM=dumb` → `NoColor`; `COLORTERM` or a
+/// probe-confirmed `Tc` → `TrueColor`; truecolor terminal identity →
+/// `TrueColor`; a VT-enabled Windows console → `TrueColor`; `TERM` containing
+/// `256color` → `EightBit`; otherwise `Basic`.
+pub(crate) fn resolve_color_depth(env: &ColorEnvView<'_>, probe_truecolor: bool) -> ColorDepth {
+    let term = env.term.to_ascii_lowercase();
+    if env.no_color || term == "dumb" {
+        return ColorDepth::NoColor;
+    }
+    let colorterm = env.colorterm.to_ascii_lowercase();
+    if colorterm == "truecolor" || colorterm == "24bit" || probe_truecolor {
+        return ColorDepth::TrueColor;
+    }
+    let term_program = env.term_program.to_ascii_lowercase();
+    if TRUECOLOR_TERMS.contains(&term.as_str())
+        || TRUECOLOR_TERM_PROGRAMS.contains(&term_program.as_str())
+    {
+        return ColorDepth::TrueColor;
+    }
+    if env.windows_vt {
+        return ColorDepth::TrueColor;
+    }
+    if term.contains("256color") {
+        return ColorDepth::EightBit;
+    }
+    ColorDepth::Basic
+}
+
+/// Effective run-loop color depth: an explicit configuration wins over every
+/// detected signal, including `NO_COLOR` (#284 invariant).
+#[cfg(feature = "crossterm")]
+pub(crate) fn effective_color_depth(
+    explicit: Option<ColorDepth>,
+    detected: impl FnOnce() -> ColorDepth,
+) -> ColorDepth {
+    explicit.unwrap_or_else(detected)
+}
+
+#[cfg(all(test, feature = "crossterm"))]
+mod color_resolve_tests {
+    use super::{ColorDepth, ColorEnvView, effective_color_depth, resolve_color_depth};
+
+    fn env<'a>(term: &'a str, colorterm: &'a str, term_program: &'a str) -> ColorEnvView<'a> {
+        ColorEnvView {
+            no_color: false,
+            colorterm,
+            term,
+            term_program,
+            windows_vt: false,
         }
-        Self::Basic
+    }
+
+    #[test]
+    fn issue_447_env_matrix() {
+        // Windows Terminal-like: no TERM, no COLORTERM, VT enabled.
+        let mut wt = env("", "", "");
+        wt.windows_vt = true;
+        assert_eq!(resolve_color_depth(&wt, false), ColorDepth::TrueColor);
+        // The same host without VT processing (legacy conhost) stays Basic.
+        assert_eq!(
+            resolve_color_depth(&env("", "", ""), false),
+            ColorDepth::Basic
+        );
+        // SSH to a truecolor host: the probe decides TrueColor vs EightBit.
+        let ssh = env("xterm-256color", "", "");
+        assert_eq!(resolve_color_depth(&ssh, true), ColorDepth::TrueColor);
+        assert_eq!(resolve_color_depth(&ssh, false), ColorDepth::EightBit);
+        // Identity without COLORTERM.
+        for term in ["xterm-kitty", "xterm-ghostty", "wezterm"] {
+            assert_eq!(
+                resolve_color_depth(&env(term, "", ""), false),
+                ColorDepth::TrueColor,
+                "{term}"
+            );
+        }
+        for program in ["iTerm.app", "WezTerm", "ghostty", "vscode"] {
+            assert_eq!(
+                resolve_color_depth(&env("xterm-256color", "", program), false),
+                ColorDepth::TrueColor,
+                "{program}"
+            );
+        }
+        assert_eq!(
+            resolve_color_depth(&env("dumb", "", ""), false),
+            ColorDepth::NoColor
+        );
+        assert_eq!(
+            resolve_color_depth(&env("linux", "", ""), false),
+            ColorDepth::Basic
+        );
+        assert_eq!(
+            resolve_color_depth(&env("xterm-ghostty", "truecolor", ""), false),
+            ColorDepth::TrueColor
+        );
+        assert_eq!(
+            resolve_color_depth(&env("xterm", "24bit", ""), false),
+            ColorDepth::TrueColor
+        );
+    }
+
+    #[test]
+    fn issue_447_precedence_chain() {
+        // NO_COLOR beats probe, identity, Windows VT and COLORTERM.
+        let mut no_color = env("xterm-kitty", "truecolor", "ghostty");
+        no_color.no_color = true;
+        no_color.windows_vt = true;
+        assert_eq!(resolve_color_depth(&no_color, true), ColorDepth::NoColor);
+        // TERM=dumb beats a stray COLORTERM / probe.
+        assert_eq!(
+            resolve_color_depth(&env("dumb", "truecolor", ""), true),
+            ColorDepth::NoColor
+        );
+        // Probe beats the TERM fallback.
+        assert_eq!(
+            resolve_color_depth(&env("linux", "", ""), true),
+            ColorDepth::TrueColor
+        );
+        // Identity beats `256color`.
+        assert_eq!(
+            resolve_color_depth(&env("xterm-256color", "", "vscode"), false),
+            ColorDepth::TrueColor
+        );
+        // Under tmux the probe is skipped; COLORTERM passthrough still wins.
+        assert_eq!(
+            resolve_color_depth(&env("tmux-256color", "truecolor", "tmux"), false),
+            ColorDepth::TrueColor
+        );
+        assert_eq!(
+            resolve_color_depth(&env("tmux-256color", "", "tmux"), false),
+            ColorDepth::EightBit
+        );
+    }
+
+    #[test]
+    fn issue_447_explicit_depth_wins_over_probe_and_no_color() {
+        let mut no_color = env("xterm-kitty", "truecolor", "");
+        no_color.no_color = true;
+        assert_eq!(
+            effective_color_depth(Some(ColorDepth::TrueColor), || {
+                resolve_color_depth(&no_color, true)
+            }),
+            ColorDepth::TrueColor
+        );
+        let ssh = env("xterm-256color", "", "");
+        assert_eq!(
+            effective_color_depth(Some(ColorDepth::Basic), || resolve_color_depth(&ssh, true)),
+            ColorDepth::Basic
+        );
+        assert_eq!(
+            effective_color_depth(None, || resolve_color_depth(&ssh, true)),
+            ColorDepth::TrueColor
+        );
+    }
+
+    /// Windows CI (`windows-latest`) runs the VT-enabled resolution path under
+    /// the platform's own `cfg`, matching the runtime branch.
+    #[cfg(windows)]
+    #[test]
+    fn issue_447_windows_vt_path_resolves_truecolor() {
+        let mut host = env("", "", "");
+        let _ = super::windows_vt_enabled();
+        host.windows_vt = true;
+        assert_eq!(resolve_color_depth(&host, false), ColorDepth::TrueColor);
     }
 }
 
@@ -1045,7 +1234,6 @@ fn xterm256_to_rgb(idx: u8) -> (u8, u8, u8) {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
     use super::*;
 
     #[test]
@@ -1180,7 +1368,7 @@ mod tests {
         );
     }
 
-    // --- v0.21.1: ergonomic constructors / conversions ---
+    // --- Ergonomic constructors / conversions ---
 
     use std::str::FromStr;
 

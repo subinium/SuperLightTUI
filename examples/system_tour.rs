@@ -75,7 +75,7 @@ impl Default for TourState {
 
 fn main() -> std::io::Result<()> {
     let mut state = TourState::default();
-    slt::run_with(RunConfig::default().mouse(true), move |ui: &mut Context| {
+    slt::run_with(RunConfig::default(), move |ui: &mut Context| {
         // Tour-level quit: Ctrl-Q only at the top of the frame. We
         // intentionally do NOT consume Esc here so embedded demos can
         // route their own Esc handling.
@@ -85,14 +85,13 @@ fn main() -> std::io::Result<()> {
         }
 
         let pad = ui.spacing().xs();
-        let _ = ui
-            .bordered(Border::Rounded)
+        ui.bordered(Border::Rounded)
             .title("System Tour: runtime modes")
             .p(pad)
             .grow(1)
             .col(|ui| {
-                let _ = ui.tabs(&mut state.tabs);
-                let _ = ui.separator();
+                ui.tabs(&mut state.tabs);
+                ui.separator();
 
                 // Wrap the tab body in a vertical scrollable so
                 // description-only tabs (Async / Inline code blocks)
@@ -100,16 +99,16 @@ fn main() -> std::io::Result<()> {
                 // terminals. Mouse wheel outside any inner scroll
                 // region scrolls the whole tab; no-op when content
                 // fits.
-                let _ = ui.scrollable(&mut state.tab_scroll).grow(1).col(|ui| {
-                    match state.tabs.selected {
+                ui.scrollable(&mut state.tab_scroll)
+                    .grow(1)
+                    .col(|ui| match state.tabs.selected {
                         0 => render_intro(ui),
                         1 => render_async(ui),
                         2 => render_error_boundary(ui, &mut state.error_boundary),
                         3 => render_inline(ui),
                         4 => overlay_anchor::render(ui),
                         _ => {}
-                    }
-                });
+                    });
             });
 
         // 'q' / 'Esc' handled AFTER demos render so embedded interactive
@@ -122,7 +121,7 @@ fn main() -> std::io::Result<()> {
 
 /// Tab 1: Intro. Pure overview — no embedded demo.
 fn render_intro(ui: &mut Context) {
-    let _ = ui.col(|ui| {
+    ui.col(|ui| {
         let pad = ui.spacing().xs();
         ui.text("System Tour — runtime modes and system-archetype demos.")
             .bold();
@@ -136,8 +135,7 @@ fn render_intro(ui: &mut Context) {
         ui.text("`cargo run --example <name>` pointer for the standalone form.")
             .dim();
         ui.text("");
-        let _ = ui
-            .bordered(Border::Single)
+        ui.bordered(Border::Single)
             .title("Tabs at a glance")
             .p(pad)
             .col(|ui| {
@@ -163,7 +161,7 @@ fn render_intro(ui: &mut Context) {
 
 /// One label/description row for the intro feature list.
 fn row_pair(ui: &mut Context, label: &str, desc: &str) {
-    let _ = ui.container().gap(1).row(|ui| {
+    ui.container().gap(1).row(|ui| {
         ui.text(format!("{label:<9}")).bold().fg(Color::Cyan);
         ui.text(desc).dim();
     });
@@ -179,7 +177,7 @@ fn row_pair(ui: &mut Context, label: &str, desc: &str) {
 /// out of scope. Run the standalone binary to see the actual async flow.
 fn render_async(ui: &mut Context) {
     let pad = ui.spacing().xs();
-    let _ = ui
+    ui
         .bordered(Border::Rounded)
         .title("async_demo: run_async + tokio task")
         .p(pad)
@@ -192,12 +190,12 @@ fn render_async(ui: &mut Context) {
             ui.text("can push messages into the render closure without polling.")
                 .dim();
             ui.text("");
-            let _ = ui
+            ui
                 .bordered(Border::Single)
                 .title("typical usage")
                 .p(pad)
                 .col(|ui| {
-                    let _ = ui
+                    ui
                         .code_block(
                             "#[tokio::main(flavor = \"current_thread\")]\nasync fn main() -> std::io::Result<()> {\n    let run = slt::run_async(move |ui, messages: &mut Vec<String>| {\n        for m in messages.drain(..) { /* ... */ }\n        ui.text(\"...\");\n    })?;\n    let tx = run.sender();\n    tokio::spawn(async move {\n        loop { tx.send(\"tick\".into()).await.ok(); }\n    });\n    run.join().await.map_err(std::io::Error::other)\n}",
                         )
@@ -228,8 +226,7 @@ fn render_async(ui: &mut Context) {
 /// DEMO_GUIDE §5 C3 (otherwise the count would reset every frame).
 fn render_error_boundary(ui: &mut Context, state: &mut ErrorBoundaryState) {
     let pad = ui.spacing().xs();
-    let _ = ui
-        .bordered(Border::Rounded)
+    ui.bordered(Border::Rounded)
         .title("error_boundary_with: panic recovery in widgets")
         .p(pad)
         .gap(1)
@@ -242,7 +239,8 @@ fn render_error_boundary(ui: &mut Context, state: &mut ErrorBoundaryState) {
                 .fg(Color::Cyan);
 
             let trigger_panic = ui
-                .button_with("Panic in boundary", ButtonVariant::Danger)
+                .button("Panic in boundary")
+                .variant(ButtonVariant::Danger)
                 .clicked
                 || ui.key('p');
 
@@ -270,7 +268,7 @@ fn render_error_boundary(ui: &mut Context, state: &mut ErrorBoundaryState) {
 /// state. Description-only per DEMO_GUIDE §9 macOS quirks + §5 C2.
 fn render_inline(ui: &mut Context) {
     let pad = ui.spacing().xs();
-    let _ = ui
+    ui
         .bordered(Border::Rounded)
         .title("inline: run_inline / InlineTerminal mode")
         .p(pad)
@@ -285,12 +283,12 @@ fn render_inline(ui: &mut Context) {
             ui.text("preserved; the inline region updates in place each frame.")
                 .dim();
             ui.text("");
-            let _ = ui
+            ui
                 .bordered(Border::Single)
                 .title("typical usage")
                 .p(pad)
                 .col(|ui| {
-                    let _ = ui
+                    ui
                         .code_block(
                             "fn main() -> std::io::Result<()> {\n    let mut count: i32 = 0;\n    slt::run_inline(4, |ui| {\n        if ui.key('k') { count += 1; }\n        if ui.key('j') { count -= 1; }\n        ui.text(format!(\"Inline count: {count}\"));\n    })\n}",
                         )

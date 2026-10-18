@@ -54,17 +54,17 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
     let theme = *ui.theme();
     let term_h = ui.height();
 
-    let _ = ui.col(|ui| {
-        let _ = ui.container().grow(1).gap(1).p(1).col(|ui| {
+    ui.col(|ui| {
+        ui.container().grow(1).gap(1).p(1).col(|ui| {
             ui.text("IME Input Demo").bold().fg(theme.primary);
             ui.text("Hangul / Japanese / Chinese composition input")
                 .dim();
-            let _ = ui.separator();
+            ui.separator();
 
-            let _ = ui.container().gap(2).row(|ui| {
-                let _ = ui.container().grow(1).gap(1).col(|ui| {
+            ui.container().gap(2).row(|ui| {
+                ui.container().grow(1).gap(1).col(|ui| {
                     ui.text("Name").bold();
-                    let _ = ui.text_input(&mut state.name);
+                    ui.text_input(&mut state.name);
                     if !state.name.value.is_empty() {
                         ui.line(|ui| {
                             ui.text("-> ");
@@ -75,9 +75,9 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                     }
                 });
 
-                let _ = ui.container().grow(1).gap(1).col(|ui| {
+                ui.container().grow(1).gap(1).col(|ui| {
                     ui.text("Search").bold();
-                    let _ = ui.text_input(&mut state.search);
+                    ui.text_input(&mut state.search);
 
                     let query = state.search.value.to_lowercase();
                     let tokens: Vec<&str> = query.split_whitespace().collect();
@@ -94,11 +94,11 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                 });
             });
 
-            let _ = ui.separator();
+            ui.separator();
 
             ui.text("Message").bold();
             let rows = term_h.saturating_sub(16).max(5);
-            let _ = ui.textarea(&mut state.message, rows);
+            ui.textarea(&mut state.message, rows);
 
             let total: usize = state.message.lines.iter().map(|l| l.chars().count()).sum();
             ui.text(format!(
@@ -109,7 +109,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
             .dim();
         });
 
-        let _ = ui.help(&[
+        ui.help(&[
             ("^Q/Esc", "quit"),
             ("Tab", "next field"),
             ("Type", "CJK input"),
@@ -120,7 +120,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 fn main() -> std::io::Result<()> {
     let mut state = DemoState::default();
     slt::run_with(
-        RunConfig::default().mouse(true).kitty_keyboard(true),
+        RunConfig::default().kitty_keyboard(true),
         move |ui: &mut Context| {
             if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
                 ui.quit();

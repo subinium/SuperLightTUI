@@ -1,3 +1,7 @@
+//! The [`Context`] struct and the per-frame state it carries: command list,
+//! hook slots, focus bookkeeping, previous-frame geometry and the rollback
+//! snapshot used by error boundaries.
+
 use super::*;
 
 /// The main rendering context passed to your closure each frame.
@@ -17,6 +21,10 @@ use super::*;
 /// ```
 pub struct Context {
     pub(crate) commands: Vec<Command>,
+    /// Cleared text buffers from the previous frame's layout tree, lent by
+    /// `FrameState::layout_arena` for widgets that format their own rows
+    /// (see [`Context::pooled_string`]). Returned before the tree is built.
+    pub(crate) string_pool: crate::layout::StringPool,
     pub(crate) geometry_cursor: usize,
     pub(crate) geometry_stack: Vec<(usize, Option<usize>)>,
     pub(crate) geometry_pending_interaction: Option<usize>,
@@ -55,21 +63,16 @@ pub struct Context {
     pub(crate) prev_group_rects: Vec<(std::sync::Arc<str>, Rect)>,
     pub(crate) prev_focus_groups: Vec<Option<std::sync::Arc<str>>>,
     pub(crate) mouse_pos: Option<(u32, u32)>,
-    pub(crate) click_pos: Option<(u32, u32)>,
-    /// Issue #208: position of the most recent `MouseButton::Right` `Down`
-    /// event in this frame. Mirrors `click_pos` for the right-button. Used
-    /// by `response_for` to populate `Response::right_clicked`.
-    pub(crate) right_click_pos: Option<(u32, u32)>,
-    /// v0.21.1: position of a detected double-click this frame (second
-    /// `MouseButton::Left` `Down` on the same cell within the double-click
-    /// window). `None` when no double-click occurred. Hit-tested by
-    /// `response_for` to populate `Response::double_clicked`.
-    pub(crate) double_click_pos: Option<(u32, u32)>,
-    /// v0.21.1: position of the most recent scroll-wheel event this frame, used
+    /// Issue #439: every press this frame plus the previous frame's hit-test
+    /// z-order, used to resolve each press to one topmost, innermost slot.
+    /// Replaces the single `click_pos` / `right_click_pos` /
+    /// `double_click_pos` slots that dropped all but the last press.
+    pub(crate) pointer: PointerFrame,
+    /// Position of the most recent scroll-wheel event this frame, used
     /// to hover-gate `Response::scroll_delta`. `None` when the wheel did not
     /// move.
     pub(crate) scroll_pos: Option<(u32, u32)>,
-    /// v0.21.1: net vertical wheel delta accumulated this frame (positive =
+    /// Net vertical wheel delta accumulated this frame (positive =
     /// up, negative = down). Surfaced per-widget through
     /// `Response::scroll_delta` when `scroll_pos` falls inside the widget rect.
     pub(crate) scroll_delta_frame: i32,
@@ -154,6 +157,18 @@ pub struct Context {
     /// start of the next frame. Outlives a single frame so the resolution
     /// happens against `focus_name_map_prev`.
     pub(crate) pending_focus_name: Option<String>,
+    /// Issues #453 / #454: per-slot focus metadata for this and the previous
+    /// frame. Moved in from `FrameState` at frame start, handed back by
+    /// [`Context::finish_focus_identity`] at frame end.
+    pub(crate) focus_identity: crate::runtime::FocusIdentity,
+    /// Issue #465: a text widget handled a mouse press / drag / release this
+    /// frame for its own selection, so the screen-level selection overlay
+    /// must not start or copy.
+    pub(crate) text_pointer_capture: bool,
+    /// Issue #469: this frame runs under the accessible linear runtime.
+    /// Interactive widgets check this one flag before recording accessible
+    /// nodes or applying a line answer, so the visual path pays nothing else.
+    pub(crate) accessible: bool,
     /// Issue #248: wall-clock instant sampled once at frame start. All
     /// frame-clock timer deadlines (`schedule`/`every`/`debounce`) compare
     /// against this single instant so every timer sampled in the same frame
@@ -164,6 +179,10 @@ pub struct Context {
     /// frame start and moved back at frame end (where untouched slots are
     /// GC'd), identical to the `named_states` lifetime.
     pub(crate) scheduler: SchedulerState,
+    /// Issue #490: earliest instant this frame asked to be redrawn at
+    /// ([`Context::request_frame`] / [`Context::request_frame_after`]). A
+    /// `Cell` so `&self` paths such as [`Context::elapsed`] can request too.
+    pub(crate) frame_request: std::cell::Cell<Option<crate::clock::Instant>>,
     /// Issue #234: in-frame async task registry backing
     /// [`Context::spawn`](crate::Context::spawn) /
     /// [`Context::poll`](crate::Context::poll). Round-tripped through
@@ -171,6 +190,19 @@ pub struct Context {
     /// exist (zero overhead) when the feature is off.
     #[cfg(feature = "async")]
     pub(crate) async_tasks: AsyncTasks,
+}
+
+impl Context {
+    /// An empty `String` with room for `len` bytes, recycled from the
+    /// previous frame's text when possible.
+    ///
+    /// Widgets that build their own row text (list rows, table rows,
+    /// separators, progress bars) format into this instead of a fresh
+    /// `String`, so a steady-state frame allocates nothing for it.
+    #[inline]
+    pub(crate) fn pooled_string(&mut self, len: usize) -> String {
+        self.string_pool.take(len)
+    }
 }
 
 type RawDrawCallback = Box<dyn FnOnce(&mut crate::buffer::Buffer, Rect)>;
@@ -220,6 +252,12 @@ pub(crate) struct ContextRollbackState {
     pub(crate) modal_restore_index: Option<usize>,
     pub(crate) last_text_idx: Option<usize>,
     pub(crate) focus_count: usize,
+    /// Issue #453: text-entry ownership claimed this frame by a widget that
+    /// takes keys without a focus slot (an open command palette).
+    pub(crate) text_entry_claim: Option<crate::runtime::TextEntryKind>,
+    /// Issue #454: slot that took focus through the key rule this frame.
+    /// Once set, no other slot reports focus while the key rule applies.
+    pub(crate) focus_key_match: Option<usize>,
     /// Issue #208: id assigned by the most recent `register_focusable()` /
     /// `register_focusable_named(...)` call. `begin_widget_interaction`
     /// reads this to compute `Response::gained_focus` / `lost_focus`
@@ -255,6 +293,11 @@ pub(crate) struct ContextRollbackState {
     pub(crate) scroll_count: usize,
     pub(crate) group_count: usize,
     pub(crate) group_stack: Vec<std::sync::Arc<str>>,
+    /// Issue #458: hover state of each open `group()` instance, innermost
+    /// last, so rows sharing a group name style independently.
+    pub(crate) group_hover_stack: smallvec::SmallVec<[bool; 8]>,
+    /// Issue #458: nesting depth of `Context::disabled(true, ..)` scopes.
+    pub(crate) disabled_depth: u32,
     pub(crate) overlay_depth: usize,
     pub(crate) modal_active: bool,
     pub(crate) modal_focus_start: usize,
@@ -288,6 +331,15 @@ pub(super) struct ContextCheckpoint {
     /// (and any nested ones) — keeping the recorded keys consistent with the
     /// commands that actually survived the rollback.
     region_versions_cur_len: usize,
+    /// Pointer records made by a panicking subtree (#439/#440/#443/#452):
+    /// hit-test flags of its slots, overscroll containment, scroll anchoring
+    /// policies and pointer shapes.
+    pointer_contain_len: usize,
+    pointer_policies_len: usize,
+    pointer_shapes_len: usize,
+    pointer_passthrough_depth: u32,
+    pointer_slot_keys_len: usize,
+    pointer_pending_key: Option<u64>,
     rollback: ContextRollbackState,
 }
 
@@ -306,6 +358,12 @@ impl ContextCheckpoint {
             pending_tooltips_len: ctx.pending_tooltips.len(),
             pending_screen_nav_len: ctx.pending_screen_nav.len(),
             screen_nav_depth: ctx.screen_nav_depth,
+            pointer_contain_len: ctx.pointer.contain.len(),
+            pointer_policies_len: ctx.pointer.scroll_policies.len(),
+            pointer_shapes_len: ctx.pointer.shapes.len(),
+            pointer_passthrough_depth: ctx.pointer.passthrough_depth,
+            pointer_slot_keys_len: ctx.pointer.slot_keys.len(),
+            pointer_pending_key: ctx.pointer.pending_key,
             screen_focus_scopes_len: ctx.screen_focus_scopes.len(),
             region_versions_cur_len: ctx.region_versions_cur.len(),
             rollback: ctx.rollback.clone(),
@@ -338,5 +396,19 @@ impl ContextCheckpoint {
         // Issue #273: drop `cached` keys recorded by the panicking subtree.
         ctx.region_versions_cur
             .truncate(self.region_versions_cur_len);
+        // Slots allocated by the panicking subtree are reused by the
+        // fallback: they must not inherit its passthrough/bubble/drag flags.
+        let first_rolled_back = self.rollback.interaction_count;
+        if ctx.pointer.hit_flags.len() > first_rolled_back {
+            ctx.pointer.hit_flags.truncate(first_rolled_back);
+        }
+        ctx.pointer.contain.truncate(self.pointer_contain_len);
+        ctx.pointer
+            .scroll_policies
+            .truncate(self.pointer_policies_len);
+        ctx.pointer.shapes.truncate(self.pointer_shapes_len);
+        ctx.pointer.passthrough_depth = self.pointer_passthrough_depth;
+        ctx.pointer.slot_keys.truncate(self.pointer_slot_keys_len);
+        ctx.pointer.pending_key = self.pointer_pending_key;
     }
 }

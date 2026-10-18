@@ -1,0 +1,779 @@
+# SLT Cookbook
+
+Copy-paste recipes for common TUI apps. The source for each of the first five recipes lives at `examples/cookbook_<name>.rs`. Those files are not standalone Cargo targets (`Cargo.toml` sets `autoexamples = false`); they are compiled into one tabbed binary — run them all with `cargo run --example cookbook_tour`.
+
+Recipes assume familiarity with the core mental model from [Quick start](../guide/01-quick-start.md). If a widget surprises you, cross-check [Widget guide](widgets.md) for the full API table and [Patterns guide](../guide/03-patterns.md) for composition advice.
+
+## Index
+
+- [Login Form with Validation](#login-form-with-validation) — `cargo run --example cookbook_tour`
+- [Data Table with Search and Sort](#data-table-with-search-and-sort) — `cargo run --example cookbook_tour`
+- [Modal Confirmation with Toast](#modal-confirmation-with-toast) — `cargo run --example cookbook_tour`
+- [Real-time Dashboard with Charts](#real-time-dashboard-with-charts) — `cargo run --example cookbook_tour`
+- [File Picker with Preview](#file-picker-with-preview) — `cargo run --example cookbook_tour`
+- [Components with Shared State](#components-with-shared-state) — `provide` / `use_context` (v0.19.0)
+- [Common pitfalls](#common-pitfalls)
+
+## Prerequisites
+
+Add SLT to a fresh project:
+
+```toml
+# Cargo.toml
+[dependencies]
+superlighttui = "0.26"
+```
+
+Every recipe follows the same outer shape:
+
+<!-- slt-check: {"name":"cookbook_outer_shape","features":["crossterm"],"context":"module"} -->
+```rust
+fn main() -> std::io::Result<()> {
+    // 1. Create state once, outside the closure.
+    let mut clicks = 0u32;
+
+    // 2. Your closure runs each frame. The mouse is on by default: clicks,
+    //    the scroll wheel, and drags reach SLT, and keyboard focus +
+    //    Enter/Space activate buttons too. Hover styling and tooltips need
+    //    `slt::run_with(RunConfig::default().mouse_mode(MouseMode::Hover), ..)`.
+    slt::run(|ui: &mut slt::Context| {
+        // Global shortcuts first.
+        if ui.key('q') || ui.key_code(slt::KeyCode::Esc) {
+            ui.quit();
+        }
+
+        // Describe your UI.
+        ui.text(format!("hello, {clicks} clicks"));
+        if ui.button("+1").clicked {
+            clicks += 1;
+        }
+    })
+}
+```
+
+None of the recipes below rely on hover, so they all start with plain `slt::run(...)`; clicks, clickable rows, and scroll regions work with the default mouse mode.
+
+The closure is the whole app. Plain Rust variables hold state; `slt::Context` mutates on interaction. No framework object, no stores.
+
+---
+
+## Login Form with Validation
+
+### What it shows
+
+- Two `TextInputState` fields with `add_validator(...)` chains that run every frame.
+- Password masking via the `TextInputState::masked(true)` builder
+  (`TextInputState::password()` for an input without a placeholder).
+- Automatic Tab / Shift+Tab focus cycling — no manual focus handling required.
+- Submit button that is only enabled when both fields pass validation.
+
+### Full code
+
+<!-- slt-check: {"name":"cookbook_login","features":["crossterm"],"context":"module"} -->
+```rust
+use slt::{AlertLevel, Border, Color, Context, KeyCode, TextInputState};
+
+fn main() -> std::io::Result<()> {
+    let mut email = TextInputState::with_placeholder("you@example.com");
+    email.add_validator(|v| {
+        if v.is_empty() {
+            Err("Email is required".into())
+        } else if !v.contains('@') || !v.contains('.') {
+            Err("Invalid email format".into())
+        } else {
+            Ok(())
+        }
+    });
+
+    let mut password = TextInputState::with_placeholder("At least 8 characters").masked(true);
+    password.add_validator(|v| {
+        if v.len() < 8 {
+            Err("Password must be at least 8 characters".into())
+        } else {
+            Ok(())
+        }
+    });
+
+    let mut submitted: Option<String> = None;
+
+    slt::run(|ui: &mut Context| {
+        if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
+            ui.quit();
+        }
+
+        // Run validators every frame; cheap because inputs are tiny.
+        email.run_validators();
+        password.run_validators();
+        let valid = email.errors().is_empty() && password.errors().is_empty();
+
+        ui
+            .bordered(Border::Rounded)
+            .title("Sign In")
+            .p(2)
+            .gap(1)
+            .col(|ui| {
+                ui.text("Welcome back").bold().fg(Color::Cyan);
+                ui.text("Use Tab / Shift+Tab to move between fields.").dim();
+                ui.separator();
+
+                ui.text("Email").bold();
+                ui.text_input(&mut email);
+                for err in email.errors() {
+                    ui.text(format!("  {err}")).fg(Color::Red);
+                }
+
+                ui.text("Password").bold();
+                ui.text_input(&mut password);
+                for err in password.errors() {
+                    ui.text(format!("  {err}")).fg(Color::Red);
+                }
+
+                ui.separator();
+                ui.row(|ui| {
+                    // Disable the button when invalid by swapping the label.
+                    let label = if valid { "Submit" } else { "Submit (fix errors)" };
+                    if ui.button(label).clicked && valid {
+                        submitted = Some(email.value.clone());
+                    }
+                    ui.spacer();
+                    if let Some(ref user) = submitted {
+                        ui.alert(
+                            &format!("Signed in as {user}"),
+                            AlertLevel::Success,
+                        );
+                    }
+                });
+            });
+    })
+}
+```
+
+### Key patterns
+
+- `add_validator(|v| -> Result<(), String>)` is additive — call it once per rule. `run_validators()` populates `errors()`, which is the source of truth for the UI.
+- Never guard `ui.text_input(...)` behind an `if`. Call it every frame; otherwise focus and key consumption state drifts.
+- Focus cycling is handled by SLT. Register widgets in the order you want them traversed.
+- The submit button stays rendered even when invalid — this keeps hook order stable. We gate the effect (`submitted = ...`) instead.
+
+---
+
+## Data Table with Search and Sort
+
+### What it shows
+
+- `TableState` with built-in search, pagination, and column sort.
+- A `TextInputState` driving the filter each frame.
+- Column sort (`toggle_sort`) via keyboard shortcuts `1` / `2` / `3`.
+- Zebra rows + row-size footer with live row count.
+
+### Full code
+
+<!-- slt-check: {"name":"cookbook_table","features":["crossterm"],"context":"module"} -->
+```rust
+use slt::{Border, Color, Context, KeyCode, TableState, TextInputState};
+
+fn main() -> std::io::Result<()> {
+    let mut table = TableState::new(
+        vec!["Name", "Role", "Stars"],
+        vec![
+            vec!["slt",       "TUI library",  "500"],
+            vec!["ratatui",   "TUI library",  "12000"],
+            vec!["bubbletea", "TUI framework", "30000"],
+            vec!["ink",       "React for CLI", "28000"],
+            vec!["textual",   "Python TUI",    "26000"],
+            vec!["cursive",   "Rust TUI",      "4200"],
+            vec!["termion",   "terminal lib",  "1900"],
+            vec!["notcurses", "rendering lib", "2300"],
+            vec!["blessed",   "JS TUI",        "10700"],
+            vec!["prompt-kit","form lib",      "890"],
+        ],
+    );
+    table.page_size = 5;
+    table.zebra = true;
+
+    let mut filter = TextInputState::with_placeholder("Filter across all columns...");
+
+    slt::run(|ui: &mut Context| {
+        if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
+            ui.quit();
+        }
+        // Column-sort shortcuts (1..=3).
+        for i in 1..=3u8 {
+            if ui.key((b'0' + i) as char) {
+                table.toggle_sort((i - 1) as usize);
+            }
+        }
+        if ui.key_code(KeyCode::Right) {
+            table.next_page();
+        }
+        if ui.key_code(KeyCode::Left) {
+            table.prev_page();
+        }
+
+        ui
+            .bordered(Border::Rounded)
+            .title("Projects")
+            .p(1)
+            .gap(1)
+            .col(|ui| {
+                ui.text("Press 1/2/3 to sort, Left/Right to page").dim();
+                ui.text_input(&mut filter);
+                // Pipe the text input straight into the table filter each frame.
+                table.set_filter(&filter.value);
+
+                ui.table(&mut table);
+
+                ui.row(|ui| {
+                    ui.text(format!(
+                        "Showing {}/{} rows",
+                        table.visible_indices().len(),
+                        table.row_count(),
+                    ))
+                    .dim();
+                    ui.spacer();
+                    if let Some(col) = table.sort_column {
+                        let arrow = if table.sort_ascending { "asc" } else { "desc" };
+                        if let Some(header) = table.headers().get(col) {
+                            ui.text(format!("Sort: {header} {arrow}"))
+                                .fg(Color::Cyan);
+                        }
+                    }
+                    ui.spacer();
+                    ui.text(format!(
+                        "page {}/{}",
+                        table.page + 1,
+                        table.total_pages()
+                    ))
+                    .dim();
+                });
+
+                if let Some(row) = table.selected_row() {
+                    ui.separator();
+                    ui.text(format!("Selected: {}", row.join(" | "))).bold();
+                }
+            });
+    })
+}
+```
+
+### Key patterns
+
+- `TableState::new` accepts headers and string rows. `Stars` contains numbers inside strings — SLT's sort detects numeric columns automatically by trying `str::parse::<f64>()`.
+- `set_filter` runs a cached, lowercase, token-AND search across all cells. Calling it with the same value is a no-op.
+- `toggle_sort(col)` flips asc/desc on the second press; `sort_by(col)` always sets ascending.
+- `page_size` of 0 disables pagination. When set, `visible_indices()` is still the full filtered set; SLT slices it internally for the current page.
+
+---
+
+## Modal Confirmation with Toast
+
+### What it shows
+
+- A destructive "Delete" action guarded by `ui.modal(...)`.
+- `ToastState` for transient notifications with severity levels.
+- `raw_key_code(KeyCode::Esc)` to close overlays regardless of modal state.
+- Split logic: the button in the main UI opens the modal; the modal itself handles Confirm/Cancel.
+
+### Full code
+
+<!-- slt-check: {"name":"cookbook_modal_toast","features":["crossterm"],"context":"module"} -->
+```rust
+use slt::{Border, ButtonVariant, Color, Context, KeyCode, ToastState};
+
+fn main() -> std::io::Result<()> {
+    let mut items: Vec<String> = (1..=6).map(|i| format!("Document {i}.txt")).collect();
+    let mut selected: usize = 0;
+    let mut show_modal = false;
+    let mut toasts = ToastState::new();
+
+    slt::run(|ui: &mut Context| {
+        let tick = ui.tick();
+
+        if !show_modal && ui.key('q') {
+            ui.quit();
+        }
+        if ui.key_code(KeyCode::Up) && selected > 0 {
+            selected -= 1;
+        }
+        if ui.key_code(KeyCode::Down) && selected + 1 < items.len() {
+            selected += 1;
+        }
+
+        ui
+            .bordered(Border::Rounded)
+            .title("Files")
+            .p(1)
+            .gap(1)
+            .col(|ui| {
+                ui.text("Select a file, then press Delete.").dim();
+                for (i, name) in items.iter().enumerate() {
+                    let prefix = if i == selected { "> " } else { "  " };
+                    let color = if i == selected { Color::Cyan } else { Color::White };
+                    ui.text(format!("{prefix}{name}")).fg(color);
+                }
+
+                ui.separator();
+                ui.row(|ui| {
+                    if ui.button("Refresh").clicked {
+                        toasts.info("List refreshed", tick);
+                    }
+                    ui.spacer();
+                    if ui.button("Delete").variant(ButtonVariant::Danger).clicked
+                        && !items.is_empty()
+                    {
+                        show_modal = true;
+                    }
+                });
+            });
+
+        if show_modal {
+            // Esc closes the modal no matter what is below it.
+            if ui.raw_key_code(KeyCode::Esc) {
+                show_modal = false;
+            }
+
+            ui.modal(|ui| {
+                ui
+                    .bordered(Border::Double)
+                    .title("Confirm delete")
+                    .p(2)
+                    .gap(1)
+                    .col(|ui| {
+                        let target = items
+                            .get(selected)
+                            .cloned()
+                            .unwrap_or_else(|| "<nothing>".into());
+                        ui.text("You are about to delete:").bold();
+                        ui.text(format!("  {target}")).fg(Color::Yellow);
+                        ui.text("This cannot be undone.").dim();
+
+                        ui.row(|ui| {
+                            if ui.button("Cancel").clicked {
+                                show_modal = false;
+                                toasts.info("Canceled", tick);
+                            }
+                            ui.spacer();
+                            if ui
+                                .button("Delete")
+                                .variant(ButtonVariant::Danger)
+                                .clicked
+                            {
+                                let name = items.remove(selected);
+                                if selected >= items.len() && selected > 0 {
+                                    selected -= 1;
+                                }
+                                toasts.success(format!("Deleted {name}"), tick);
+                                show_modal = false;
+                            }
+                        });
+                    });
+            });
+        }
+
+        // Toast rendering must happen every frame so `cleanup()` can expire old messages.
+        ui.toast(&mut toasts);
+    })
+}
+```
+
+### Key patterns
+
+- `ui.modal(|ui| { ... })` dims the background and traps focus inside the closure. The UI behind it still renders, but interaction routes to the modal.
+- `ui.raw_key_code(...)` bypasses the modal's input consumption — ideal for global keys like Esc. Plain `ui.key_code(...)` inside the modal is for modal-local keys.
+- `ToastState::info/success/warning/error` take `(message, tick)`. `ui.toast(&mut toasts)` both renders and cleans up expired entries — always call it unconditionally every frame.
+- Gate global shortcuts (like `q`) behind `!show_modal` so they don't fire while the modal is open.
+
+---
+
+## Real-time Dashboard with Charts
+
+### What it shows
+
+- Simulated per-tick metrics feeding a `sparkline` and `bar_chart`.
+- `ui.chart(|c| ...)` multi-series builder with a `line` and `area` overlay.
+- `stat_trend` and `stat(..).color(..)` for KPI tiles.
+- A ring buffer of recent values — the classic "rolling window" pattern for TUIs.
+
+> Dashboards often want hover-driven highlight or drag-to-pan. Both use [previous-frame](../guide/02-state.md#the-previous-frame-rule) layout data, so the first frame after a layout change can look odd — it is not a bug, it is immediate mode's trade-off.
+
+### Full code
+
+<!-- slt-check: {"name":"cookbook_dashboard","features":["crossterm"],"context":"module"} -->
+```rust
+use slt::{Border, Color, Context, KeyCode, SpinnerState, Trend};
+
+fn main() -> std::io::Result<()> {
+    let spinner = SpinnerState::dots();
+    let mut cpu_hist: Vec<f64> = vec![0.0; 60];
+    let mut req_hist: Vec<f64> = vec![0.0; 60];
+
+    slt::run(|ui: &mut Context| {
+        if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
+            ui.quit();
+        }
+
+        let tick = ui.tick() as f64;
+        let cpu = 45.0 + 30.0 * (tick * 0.08).sin() + 10.0 * (tick * 0.3).cos();
+        let reqs = (120.0 + 80.0 * (tick * 0.05).sin()).max(0.0);
+
+        // Ring-buffer update: drop oldest, append newest.
+        cpu_hist.rotate_left(1);
+        if let Some(last) = cpu_hist.last_mut() {
+            *last = cpu;
+        }
+        req_hist.rotate_left(1);
+        if let Some(last) = req_hist.last_mut() {
+            *last = reqs;
+        }
+
+        ui
+            .bordered(Border::Rounded)
+            .title("Live Dashboard")
+            .p(1)
+            .gap(1)
+            .grow(1)
+            .col(|ui| {
+                ui.row(|ui| {
+                    ui.spinner(&spinner);
+                    ui.text(" LIVE").bold().fg(Color::Green);
+                    ui.spacer();
+                    ui.text(format!("tick {tick:.0}")).dim();
+                });
+
+                ui.row(|ui| {
+                    ui.bordered(Border::Single).p(1).grow(1).col(|ui| {
+                        ui.stat_trend("Requests / min", &format!("{reqs:.0}"), Trend::Up);
+                    });
+                    ui.bordered(Border::Single).p(1).grow(1).col(|ui| {
+                        let color = if cpu > 80.0 { Color::Red } else { Color::Cyan };
+                        ui.stat("CPU", &format!("{cpu:.1}%")).color(color);
+                    });
+                    ui.bordered(Border::Single).p(1).grow(1).col(|ui| {
+                        ui.stat("P99", "42ms").color(Color::Yellow);
+                    });
+                });
+
+                ui
+                    .bordered(Border::Single)
+                    .title("CPU (last 60 ticks)")
+                    .p(1)
+                    .col(|ui| {
+                        ui.sparkline(&cpu_hist, 60);
+                    });
+
+                ui
+                    .bordered(Border::Single)
+                    .title("Requests / min")
+                    .p(1)
+                    .col(|ui| {
+                        // Chart datasets are `(x, y)` points; index the history.
+                        let req_points: Vec<(f64, f64)> = req_hist
+                            .iter()
+                            .enumerate()
+                            .map(|(i, &y)| (i as f64, y))
+                            .collect();
+                        ui.chart(
+                            |c| {
+                                c.area(&req_points).label("rpm").color(Color::Cyan);
+                                c.grid(true);
+                            },
+                            60,
+                            10,
+                        );
+                    });
+
+                let top_routes: Vec<(&str, f64)> = vec![
+                    ("/api/users", 420.0),
+                    ("/api/items", 312.0),
+                    ("/auth", 280.0),
+                    ("/health", 95.0),
+                    ("/metrics", 60.0),
+                ];
+                ui
+                    .bordered(Border::Single)
+                    .title("Top Routes")
+                    .p(1)
+                    .col(|ui| {
+                        ui.bar_chart(&top_routes, 30);
+                    });
+
+                ui.help(&[("Ctrl+Q", "quit"), ("Esc", "quit")]);
+            });
+    })
+}
+```
+
+### Key patterns
+
+- Store history in a fixed-size `Vec<f64>` and rotate it. This is cheaper than `VecDeque` for tiny buffers and keeps data contiguous for `sparkline(&history, width)`.
+- `ui.chart(|c| { ... }, width, height)` takes an explicit size. For grow-to-fit behavior, read `ui.width()` / `ui.height()` and compute manually.
+- `stat_trend` pairs a value with an up/down arrow via `Trend::Up` / `Trend::Down`. `ui.stat(label, value).color(c)` lets you encode severity.
+
+- Spinners animate off the frame tick automatically — just create one `SpinnerState::dots()` at startup and hand the reference in each frame.
+
+---
+
+## File Picker with Preview
+
+### What it shows
+
+- `FilePickerState` on the left, text preview on the right in a two-pane layout.
+- Extension filtering (`.extensions(&["rs", "toml", "md"])`).
+- Safe file reading with a size cap — avoids locking the UI on multi-MB files.
+- `notify` toasts for error reporting without growing the main UI.
+
+### Full code
+
+<!-- slt-check: {"name":"cookbook_file_picker","features":["crossterm"],"context":"module"} -->
+```rust
+use slt::{Border, Color, Context, FilePickerState, KeyCode, ScrollState, ToastState};
+use std::path::PathBuf;
+
+const PREVIEW_MAX_BYTES: u64 = 64 * 1024; // 64 KiB cap
+
+fn main() -> std::io::Result<()> {
+    let mut picker = FilePickerState::new(
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+    )
+    .extensions(&["rs", "toml", "md", "txt", "json"])
+    .show_hidden(false);
+
+    let mut preview: Option<(PathBuf, String)> = None;
+    let mut preview_scroll = ScrollState::new();
+    let mut toasts = ToastState::new();
+
+    slt::run(|ui: &mut Context| {
+        let tick = ui.tick();
+        if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
+            ui.quit();
+        }
+
+        ui
+            .bordered(Border::Rounded)
+            .title("File Picker")
+            .p(1)
+            .gap(1)
+            .grow(1)
+            .col(|ui| {
+                ui.text(format!("Dir: {}", picker.current_dir.display()))
+                    .dim()
+                    .wrap();
+                ui.text("Enter opens, Backspace goes up, filter: .rs .toml .md .txt .json")
+                    .dim();
+                ui.separator();
+
+                ui.row(|ui| {
+                    // Left pane: picker.
+                    ui
+                        .bordered(Border::Single)
+                        .title("Browse")
+                        .p(1)
+                        .grow(1)
+                        .col(|ui| {
+                            if ui.file_picker(&mut picker).changed {
+                                if let Some(path) = picker.selected_file().cloned() {
+                                    match read_preview(&path) {
+                                        Ok(content) => {
+                                            preview = Some((path.clone(), content));
+                                            preview_scroll.offset = 0;
+                                            let name = path
+                                                .file_name()
+                                                .and_then(|s| s.to_str())
+                                                .unwrap_or("?");
+                                            toasts.success(format!("Loaded {name}"), tick);
+                                        }
+                                        Err(err) => {
+                                            toasts.error(err, tick);
+                                        }
+                                    }
+                                }
+                            }
+                        });
+
+                    // Right pane: preview.
+                    ui
+                        .bordered(Border::Single)
+                        .title("Preview")
+                        .p(1)
+                        .grow(2)
+                        .col(|ui| match &preview {
+                            None => {
+                                ui.text("Select a file to preview.").dim();
+                            }
+                            Some((path, content)) => {
+                                ui.text(path.display().to_string()).fg(Color::Cyan).wrap();
+                                ui.separator();
+                                ui.scrollable(&mut preview_scroll).grow(1).col(|ui| {
+                                    for line in content.lines() {
+                                        ui.text(line);
+                                    }
+                                });
+                            }
+                        });
+                });
+            });
+
+        ui.toast(&mut toasts);
+    })
+}
+
+fn read_preview(path: &std::path::Path) -> Result<String, String> {
+    let metadata = std::fs::metadata(path)
+        .map_err(|e| format!("metadata: {e}"))?;
+    if metadata.len() > PREVIEW_MAX_BYTES {
+        return Err(format!(
+            "File too large ({} bytes, limit {} bytes)",
+            metadata.len(),
+            PREVIEW_MAX_BYTES
+        ));
+    }
+    std::fs::read_to_string(path).map_err(|e| format!("read: {e}"))
+}
+```
+
+### Key patterns
+
+- `FilePickerState` owns the directory listing. `.extensions(&[...])` filters non-directory entries; directories are always shown so you can navigate in.
+- `picker.selected_file()` returns `Option<&PathBuf>` only when the user picks a file with Enter — directories set `current_dir` instead and emit `changed = true` but no selection.
+- Always gate `std::fs::read_to_string` behind a size check. A runaway file read blocks the thread and the UI stops responding.
+- Pair a `ScrollState` with every long content region. Reset `offset = 0` when you swap the content — otherwise the previous file's scroll position leaks into the new file.
+
+---
+
+## Components with Shared State
+
+### What it shows
+
+- `ui.provide(value, |ui| ...)` to publish shared app context once at the root.
+- `ui.use_context::<T>()` (panics if missing) and `ui.try_use_context::<T>()` (returns `Option<&T>`) to read it back from any nested render fn.
+- Replaces threading `&theme`, `&tick`, `&user` parameters through every signature.
+
+The canonical real-world refactor is `examples/demo_website.rs`, which moved from per-call argument threading to one `provide` at the top.
+
+### When to reach for it
+
+- Many nested render helpers all want the same read-only value (theme, tick, current user).
+- You catch yourself adding the same parameter to every render fn signature.
+
+Reserve explicit parameters for **writes** (`&mut MyDocState`, `&mut ToastState`). `provide` / `use_context` is a *read*-side ergonomics tool, not a state container.
+
+### Full code
+
+<!-- slt-check: {"name":"cookbook_shared_context","features":["crossterm"],"context":"module"} -->
+```rust
+use slt::{Border, Color, Context, KeyCode, Theme};
+
+// `provide` boxes the value as `dyn Any`, requiring `T: 'static`. `Theme` is
+// `Copy`, so deref-copy from `ui.theme()`. `&'static str` works for string
+// literals; switch to `String` for runtime values.
+#[derive(Clone, Copy)]
+struct AppCtx {
+    theme: Theme,
+    tick: u64,
+    user: &'static str,
+}
+
+fn main() -> std::io::Result<()> {
+    slt::run(|ui: &mut Context| {
+        if ui.key('q') || ui.key_code(KeyCode::Esc) {
+            ui.quit();
+        }
+
+        let ctx = AppCtx {
+            theme: *ui.theme(),
+            tick: ui.tick(),
+            user: "subin",
+        };
+
+        ui.provide(ctx, |ui| {
+            ui
+                .bordered(Border::Rounded)
+                .title("Shared context demo")
+                .p(1)
+                .gap(1)
+                .col(|ui| {
+                    render_header(ui);
+                    render_card(ui);
+                });
+        });
+    })
+}
+
+fn render_header(ui: &mut Context) {
+    let ctx = *ui.use_context::<AppCtx>();
+    ui.text(format!("hi, {}", ctx.user)).bold().fg(Color::Cyan);
+    ui.text(format!("tick {}", ctx.tick)).dim();
+}
+
+fn render_card(ui: &mut Context) {
+    // Optional read — never panics if no provider is on the stack.
+    if let Some(ctx) = ui.try_use_context::<AppCtx>().copied() {
+        ui.text(format!("theme bg: {:?}", ctx.theme.bg));
+    } else {
+        ui.text("no app context").dim();
+    }
+}
+```
+
+### Key patterns
+
+- `provide` is scoped to the closure body. Once that body returns, the value pops off the context stack.
+- `use_context::<T>()` finds the nearest provided `T` by type. Two providers of the same type stack — the inner one wins inside its body.
+- Use `try_use_context` in helpers that should also work outside the provider (e.g. unit tests, isolated demos).
+- `use_context` returns a reference tied to `ui`. Copy or clone the required
+  value before calling a widget method that needs `&mut ui`.
+
+---
+
+## Common pitfalls
+
+### `RichLogState::new()` silently truncates at 10000 entries
+
+`RichLogState::new()` is bounded at 10000 entries (v0.19.2). Older entries are dropped to keep memory predictable. If you are running a long-lived dashboard or log viewer and entries seem to "disappear" from the top, that is the cap, not a bug.
+
+For unbounded accumulation use `RichLogState::new_unbounded()` and accept the memory cost, or add your own retention policy on top of the bounded variant.
+
+<!-- slt-check: {"name":"cookbook_rich_log_cap","features":[],"context":"module"} -->
+```rust
+fn logs() -> (slt::RichLogState, slt::RichLogState) {
+    // Bounded — drops oldest after 10k entries.
+    let bounded = slt::RichLogState::new();
+
+    // Unbounded — grows until the process dies. Use only when you control the input rate.
+    let unbounded = slt::RichLogState::new_unbounded();
+    (bounded, unbounded)
+}
+```
+
+### Delete the selected list item or table row
+
+The highlighted row is a position in the **filtered** (and, for tables,
+sorted) view, while `remove_item` / `remove_row` take a **data** index into the
+underlying items. Use the selection helpers, which map between the two:
+
+<!-- slt-check: {"name":"cookbook_remove_selected","features":[],"context":"ui","setup":"let mut list = ListState::new(vec![\"a\", \"b\"]); let mut table = TableState::new(vec![\"Name\"], vec![vec![\"x\"]]); let _ = ui.list(&mut list);"} -->
+```rust
+let _ = list.remove_selected(); // the item the user sees highlighted
+let _ = table.remove_selected(); // the row the user sees highlighted
+
+// Need the data index itself (e.g. to delete from your own model)?
+if let Some(data_idx) = list.selected_index() {
+    let _ = list.item(data_idx);
+}
+```
+
+The `selected` fields are deprecated since 0.26 because they hold the view
+index: `list.remove_item(list.selected)` deletes the wrong item while a filter
+is active.
+
+See [State API guide](state.md#two-index-spaces-view-vs-data) for the full view-vs-data rule.
+
+---
+
+## Where to go next
+
+- [Patterns guide](../guide/03-patterns.md) — when these recipes are not enough and you need structural advice (render helpers, screens, hooks vs app state).
+- [Theming guide](../guide/06-theming.md) — all recipes honor `ui.theme()`; swap `Theme::dark()` to `Theme::tokyo_night()` and see everything recolor.
+- [Testing guide](../guide/08-testing.md) — each recipe's logic can be exercised headlessly with `TestBackend::new(w, h).render(|ui| { ... })`.
+- [Animation guide](../guide/07-animation.md) — tween the dashboard tiles or stagger-fade the file picker list.
+- [Examples guide](examples.md) — full index of runnable examples, including the `cookbook_*` entries paired with this page.

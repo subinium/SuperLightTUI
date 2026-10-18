@@ -416,6 +416,9 @@ impl Backend for DomBackend {
         // Record what is now on screen so the next frame can diff against it.
         self.prev.resize(self.buffer.area);
         self.prev.content.clone_from(&self.buffer.content);
+        // Direct `content` write: keep the written-span invariant honest.
+        let prev_area = self.prev.area;
+        self.prev.mark_touched_rect(prev_area);
 
         Ok(())
     }

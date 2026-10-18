@@ -1,12 +1,14 @@
+//! [`State<T>`] hook handles and the [`Response`] returned by every widget.
+
 use super::*;
 
 /// Internal discriminator for [`State<T>`] handles.
 ///
 /// `Indexed` refers to a slot in `Context::hook_states` (positional, used by
-/// [`Context::use_state`] / [`Context::use_memo`]). `Named` refers to a key in
-/// `Context::named_states` (used by [`Context::use_state_named`]). `Keyed`
-/// refers to a runtime-string key in `Context::keyed_states` (used by
-/// [`Context::use_state_keyed`]).
+/// [`Context::use_state`] / [`Context::use_memo`]). `Named` and `Keyed` both
+/// refer to a key in `Context::keyed_states`: `Named` borrows the
+/// `&'static str` id of the deprecated `use_state_named` so it never
+/// allocates, `Keyed` owns the runtime string of [`Context::use_state_keyed`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum StateKey {
     Indexed(usize),
@@ -18,12 +20,12 @@ pub(crate) enum StateKey {
 ///
 /// # Note on `Copy`
 ///
-/// As of v0.20.0, `State<T>` is no longer `Copy`. The internal key may hold an
+/// `State<T>` is not `Copy`. The internal key may hold an
 /// owned `String` (for [`Context::use_state_keyed`]), which prevents trivial
 /// duplication. Existing call sites that use the handle locally (`let s =
 /// ui.use_state(...); s.get(ui);`) are unaffected — the handle is moved into
-/// closures or borrowed by reference. If you previously relied on implicit
-/// copy semantics, call `.clone()` explicitly.
+/// closures or borrowed by reference. Call `.clone()` where a second handle
+/// is needed.
 pub struct State<T> {
     key: StateKey,
     _marker: std::marker::PhantomData<T>,
@@ -118,7 +120,7 @@ impl<T: 'static> State<T> {
                 format_args!("use_state type mismatch at hook index {idx}"),
             ),
             StateKey::Named(id) => {
-                let boxed = ui.named_states.get(id).unwrap_or_else(|| {
+                let boxed = ui.keyed_states.get(*id).unwrap_or_else(|| {
                     panic!("use_state_named: no entry for id {id:?} — was use_state_named called?")
                 });
                 downcast_or_panic::<T>(
@@ -151,7 +153,7 @@ impl<T: 'static> State<T> {
                 format_args!("use_state type mismatch at hook index {idx}"),
             ),
             StateKey::Named(id) => {
-                let boxed = ui.named_states.get_mut(id).unwrap_or_else(|| {
+                let boxed = ui.keyed_states.get_mut(*id).unwrap_or_else(|| {
                     panic!("use_state_named: no entry for id {id:?} — was use_state_named called?")
                 });
                 downcast_or_panic_mut::<T>(
@@ -192,7 +194,7 @@ pub(crate) struct MemoSlot<T> {
 /// Like [`State<T>`], this is an *index handle*, not a live borrow — it stores
 /// only the hook slot index and does **not** keep [`Context`] borrowed. That is
 /// the whole point: the handle composes with later `ui.*` calls, where the old
-/// `&T`-returning form (now [`Context::use_memo_ref`]) held an immutable borrow
+/// `&T`-returning form (`use_memo_ref`, removed in 0.26) held an immutable borrow
 /// of `ui` that conflicted with any subsequent mutation.
 ///
 /// Read the value with [`get`](Self::get) (`&T`) or [`copied`](Self::copied)
@@ -307,6 +309,41 @@ impl<T: 'static> Memo<T> {
 /// Container responses describe the container's own interaction area, not
 /// automatically the focus state of every child widget.
 ///
+/// # Ignoring a response
+///
+/// `Response` is not `#[must_use]` as a type: layout and display
+/// calls (`ui.col(..)`, `ui.row(..)`, `ui.separator()`, `ui.badge(..)`, ...)
+/// are plain statements, with no `let _ =`. The warning is kept only where
+/// dropping the result is almost always a bug: the stateless clickable
+/// widget [`button`](Context::button) (its [`Button`](crate::Button) builder
+/// type is `#[must_use]`), whose `clicked` flag is its only output.
+///
+/// ```
+/// #![deny(unused_must_use)]
+/// # use slt::*;
+/// # TestBackend::new(80, 24).render(|ui| {
+/// ui.col(|ui| {
+///     ui.text("Name");
+/// });
+/// ui.row(|ui| {
+///     ui.text("a");
+/// });
+/// ui.separator();
+/// ui.badge("new");
+/// ui.button("Save").on_click(ui, |_| {});
+/// # });
+/// ```
+///
+/// A bare `ui.button(..)` statement still warns:
+///
+/// ```compile_fail
+/// #![deny(unused_must_use)]
+/// # use slt::*;
+/// # TestBackend::new(80, 24).render(|ui| {
+/// ui.button("Save");
+/// # });
+/// ```
+///
 /// # Examples
 ///
 /// ```
@@ -320,29 +357,97 @@ impl<T: 'static> Memo<T> {
 /// }
 /// # });
 /// ```
-#[derive(Debug, Clone, Default)]
-#[must_use = "Response contains interaction state — check .clicked, .hovered, or .changed"]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct Response {
     /// Whether the widget was left-clicked (or activated) this frame.
     ///
-    /// Mouse clicks require mouse capture (`RunConfig::default().mouse(true)`;
-    /// off by default). Keyboard-activatable widgets such as
-    /// [`button`](Context::button) also set `clicked` on Enter / Space while
-    /// focused, regardless of mouse capture.
+    /// A left press activates only the **topmost, innermost** interactive
+    /// slot under the pointer: a button in an overlay does not
+    /// also click the container drawn behind it, and a clickable row inside a
+    /// clickable card sets `clicked` on the row only. An ancestor opts back in
+    /// with [`ContainerBuilder::bubble_clicks`]; [`clicked_any`](Self::clicked_any)
+    /// keeps the raw "press landed inside my rect" meaning. No press is
+    /// dropped: when several arrive in one input batch they are dispatched one
+    /// per frame, like sequential DOM events, so each is hit-tested against
+    /// the layout the previous press produced.
+    ///
+    /// `clicked` fires on the mouse **press** by default. Widgets that act on
+    /// a press (selection, toggles) feel immediate this way, and it matches
+    /// SLT's pre-0.26 behavior. With
+    /// [`RunConfig::click_on_release(true)`](crate::RunConfig::click_on_release)
+    /// it fires instead on the frame the button is released inside the same
+    /// slot that was pressed, so dragging off the widget before releasing
+    /// cancels the click (the browser `click` event).
+    ///
+    /// Keyboard-activatable widgets such as [`button`](Context::button) also
+    /// set `clicked` on Enter / Space while focused, regardless of the mouse.
     pub clicked: bool,
+    /// Whether a left press landed anywhere inside the widget's rect this
+    /// frame, even when a nested or overlaying slot won the click.
+    ///
+    /// This is the pre-0.26 meaning of `clicked`. Use it for "click inside
+    /// this region" logic that must not depend on which descendant was hit.
+    /// Available since v0.26.0.
+    pub clicked_any: bool,
     /// Whether the widget was right-clicked this frame.
     ///
-    /// Detected when a `MouseButton::Right` `Down` event lands inside the
-    /// widget's `rect`. Suppressed for non-overlay widgets while a modal is
-    /// active (consistent with the existing modal-suppression behavior of
-    /// `clicked` / `hovered`). Requires mouse capture
-    /// (`RunConfig::default().mouse(true)`). Available since v0.20.0.
+    /// Detected when a `MouseButton::Right` `Down` event resolves to this
+    /// widget under the same topmost/innermost rule as
+    /// [`clicked`](Self::clicked). Suppressed for non-overlay widgets while a
+    /// modal is active. Available since v0.20.0.
     pub right_clicked: bool,
-    /// Whether the mouse is hovering over the widget.
+    /// Whether the pointer is over the widget's rect.
     ///
-    /// Requires mouse capture (`RunConfig::default().mouse(true)`); always
-    /// `false` otherwise.
+    /// Containment only: an outer card and the button inside it are both
+    /// `hovered` while the pointer is over the button, which is what hover
+    /// styling usually wants. Use [`hovered_top`](Self::hovered_top) for the
+    /// single slot that would receive a click there. Needs pointer motion
+    /// reporting ([`MouseMode::Hover`](crate::MouseMode::Hover)) to track
+    /// moves without a button held.
     pub hovered: bool,
+    /// Whether the widget is the topmost, innermost slot under the pointer:
+    /// the one a press at the current position would activate.
+    ///
+    /// Available since v0.26.0.
+    pub hovered_top: bool,
+    /// Whether a left press landed on this widget (as the topmost, innermost
+    /// target) this frame. Unlike `clicked`, this never waits for the release
+    /// and never comes from the keyboard. The press also *captures* the
+    /// pointer for this widget until the release. Capture follows the
+    /// widget's stable identity when it has one (a keyed or named focusable,
+    /// a `text_input` / `textarea`, or a [`group`](crate::Context::group)
+    /// container), so UI that appears before it mid-drag does not move the
+    /// capture; an anonymous container is captured by its slot position. For a custom drag, mark the
+    /// container [`draggable`](crate::ContainerBuilder::draggable) so the
+    /// gesture does not also start the built-in text selection. Available
+    /// since v0.26.0.
+    pub pressed: bool,
+    /// Whether the button that pressed this widget was released this frame,
+    /// wherever the pointer is. Fires once per gesture; not set when the
+    /// gesture is cancelled by terminal focus loss or a resize. Available
+    /// since v0.26.0.
+    pub released: bool,
+    /// Whether the pointer started moving with the button held after
+    /// pressing this widget, on this frame. Available since v0.26.0.
+    pub drag_started: bool,
+    /// Whether this widget holds the pointer capture and the pointer has moved
+    /// since the press (a drag in progress at the end of this frame). Cleared
+    /// on release, terminal focus loss, resize, and when motion arrives
+    /// without a held button (only reported in
+    /// [`MouseMode::Hover`](crate::MouseMode::Hover)). Available since v0.26.0.
+    pub dragging: bool,
+    /// Pointer motion in cells `(dx, dy)` this frame while this widget holds
+    /// the capture. Sum the deltas across frames for the total drag distance.
+    /// Drag motion needs [`MouseMode::Drag`](crate::MouseMode::Drag) (the
+    /// local default) or [`MouseMode::Hover`](crate::MouseMode::Hover).
+    /// Available since v0.26.0.
+    pub drag_delta: (i32, i32),
+    /// Whether the middle button was pressed on this widget this frame
+    /// (topmost, innermost target). Available since v0.26.0.
+    pub middle_clicked: bool,
+    /// Modifier keys held during the press that targeted this widget this
+    /// frame; [`KeyModifiers::NONE`] otherwise. Available since v0.26.0.
+    pub modifiers: KeyModifiers,
     /// Whether the widget's value changed this frame.
     pub changed: bool,
     /// Whether the widget currently has keyboard focus.
@@ -366,9 +471,9 @@ pub struct Response {
     /// terminal cell within the double-click window (~400ms). When `true`,
     /// `clicked` is also `true` for the same frame (the second click is still a
     /// click). This is the standard open/activate gesture for file pickers,
-    /// lists, tables, and trees. Suppressed for non-overlay widgets while a
-    /// modal is active, consistent with `clicked`. Requires mouse capture
-    /// (`RunConfig::default().mouse(true)`). Available since v0.21.1.
+    /// lists, tables, and trees. Follows the same topmost/innermost winner rule
+    /// as `clicked` and is suppressed for non-overlay widgets while a modal is
+    /// active. Available since v0.21.1.
     pub double_clicked: bool,
     /// Whether the widget submitted its value this frame.
     ///
@@ -383,11 +488,14 @@ pub struct Response {
     /// not move while the cursor was over the widget's `rect`. Hover-gated, so
     /// each widget consumes only the wheel motion that occurred above it — a
     /// chart, canvas, or custom viewport can scroll/zoom locally without a
-    /// frame-global scroll handler. Requires mouse capture
-    /// (`RunConfig::default().mouse(true)`). Available since v0.21.1.
+    /// frame-global scroll handler. Available since v0.21.1.
     pub scroll_delta: i32,
     /// The rectangle the widget occupies after layout.
     pub rect: Rect,
+    /// Whether the widget rendered inside [`Context::disabled`]`(true, ..)`.
+    /// A disabled widget reports no clicks, hover, focus or changes; only
+    /// `rect` is filled in. Available since v0.26.0.
+    pub disabled: bool,
 }
 
 impl Response {
@@ -397,7 +505,8 @@ impl Response {
     }
 
     /// Attach a tooltip to this widget. Renders only when the widget is
-    /// currently hovered.
+    /// currently hovered and the pointer has rested for
+    /// [`RunConfig::tooltip_delay`](crate::RunConfig::tooltip_delay).
     ///
     /// Equivalent to calling [`Context::tooltip`] immediately after the
     /// widget, but composes cleanly with the chained `Response` style:
@@ -416,16 +525,19 @@ impl Response {
     /// Unlike [`Context::tooltip`], the binding is not order-sensitive:
     /// the tooltip is attached to *this* response specifically, so
     /// chaining further widgets afterward does not strip it.
-    #[must_use = "on_hover returns the Response for further chaining"]
+    #[expect(
+        clippy::return_self_not_must_use,
+        reason = "runs the callback now; the returned Response only enables chaining"
+    )]
     pub fn on_hover(self, ctx: &mut Context, text: impl Into<String>) -> Self {
-        if !self.hovered || self.rect.width == 0 || self.rect.height == 0 {
+        if !self.hovered || self.rect.width == 0 || self.rect.height == 0 || !ctx.tooltip_ready() {
             return self;
         }
         let tooltip_text = text.into();
         if tooltip_text.is_empty() {
             return self;
         }
-        let lines = super::widgets_display::wrap_tooltip_text(&tooltip_text, 38);
+        let lines = super::widgets::wrap_tooltip_text(&tooltip_text, 38);
         ctx.pending_tooltips.push(PendingTooltip {
             anchor_rect: self.rect,
             lines,
@@ -452,7 +564,10 @@ impl Response {
     ///     });
     /// });
     /// ```
-    #[must_use = "on_hover_ui returns the Response for further chaining"]
+    #[expect(
+        clippy::return_self_not_must_use,
+        reason = "runs the callback now; the returned Response only enables chaining"
+    )]
     pub fn on_hover_ui(self, ctx: &mut Context, f: impl FnOnce(&mut Context)) -> Self {
         if self.hovered && self.rect.width > 0 && self.rect.height > 0 {
             f(ctx);
@@ -470,6 +585,10 @@ impl Response {
     /// ```ignore
     /// ui.button("Save").on_click(ui, |_| save());
     /// ```
+    #[expect(
+        clippy::return_self_not_must_use,
+        reason = "runs the callback now; the returned Response only enables chaining"
+    )]
     pub fn on_click(self, ctx: &mut Context, f: impl FnOnce(&mut Context)) -> Self {
         if self.clicked {
             f(ctx);
@@ -480,6 +599,10 @@ impl Response {
     /// Run `f` if the widget's value changed this frame, then return the
     /// Response for chaining. See [`on_click`](Self::on_click) for the closure
     /// argument convention. Available since v0.21.1.
+    #[expect(
+        clippy::return_self_not_must_use,
+        reason = "runs the callback now; the returned Response only enables chaining"
+    )]
     pub fn on_changed(self, ctx: &mut Context, f: impl FnOnce(&mut Context)) -> Self {
         if self.changed {
             f(ctx);
@@ -490,6 +613,10 @@ impl Response {
     /// Run `f` on the frame the widget *gained* keyboard focus, then return the
     /// Response for chaining. Fires once per focus acquisition (mirrors
     /// [`gained_focus`](Self::gained_focus)). Available since v0.21.1.
+    #[expect(
+        clippy::return_self_not_must_use,
+        reason = "runs the callback now; the returned Response only enables chaining"
+    )]
     pub fn on_focus(self, ctx: &mut Context, f: impl FnOnce(&mut Context)) -> Self {
         if self.gained_focus {
             f(ctx);
@@ -500,6 +627,10 @@ impl Response {
     /// Run `f` if the widget submitted this frame (e.g. `Enter` in a focused
     /// single-line text input), then return the Response for chaining. Mirrors
     /// [`submitted`](Self::submitted). Available since v0.21.1.
+    #[expect(
+        clippy::return_self_not_must_use,
+        reason = "runs the callback now; the returned Response only enables chaining"
+    )]
     pub fn on_submit(self, ctx: &mut Context, f: impl FnOnce(&mut Context)) -> Self {
         if self.submitted {
             f(ctx);
@@ -510,6 +641,10 @@ impl Response {
     /// Run `f` if the widget was double-clicked this frame, then return the
     /// Response for chaining. Mirrors [`double_clicked`](Self::double_clicked).
     /// Available since v0.21.1.
+    #[expect(
+        clippy::return_self_not_must_use,
+        reason = "runs the callback now; the returned Response only enables chaining"
+    )]
     pub fn on_double_click(self, ctx: &mut Context, f: impl FnOnce(&mut Context)) -> Self {
         if self.double_clicked {
             f(ctx);

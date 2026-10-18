@@ -1,6 +1,6 @@
 //! Canvas Tour — five canvas/animation demos in one Tabs-driven tour.
 //!
-//! Mirrors `examples/v020_tour.rs`: each tab embeds the rendering logic
+//! Mirrors `examples/widgets_tour.rs`: each tab embeds the rendering logic
 //! of a single canvas/animation demo. Per-frame state (fire pixels,
 //! game boards, animation primitives, scroll offsets) lives in the
 //! `TourState` struct so switching tabs and back resumes where you left
@@ -878,7 +878,6 @@ fn main() -> std::io::Result<()> {
     let mut state = TourState::default();
     slt::run_with(
         RunConfig::default()
-            .mouse(true)
             .tick_rate(Duration::from_millis(33))
             .max_fps(60),
         move |ui: &mut Context| {
@@ -892,14 +891,13 @@ fn main() -> std::io::Result<()> {
             }
 
             let pad = ui.spacing().xs();
-            let _ = ui
-                .bordered(Border::Rounded)
+            ui.bordered(Border::Rounded)
                 .title("Canvas Tour: drawing & animation")
                 .p(pad)
                 .grow(1)
                 .col(|ui| {
-                    let _ = ui.tabs(&mut state.tabs);
-                    let _ = ui.separator();
+                    ui.tabs(&mut state.tabs);
+                    ui.separator();
 
                     // Wrap the tab body in a vertical scrollable so tabs
                     // with content that overflows the viewport stay
@@ -908,7 +906,7 @@ fn main() -> std::io::Result<()> {
                     // `scrollable` makes the outer wrapper skip wheel
                     // events that land in the inner gallery, so the two
                     // do not fight each other.
-                    let _ = ui.scrollable(&mut state.tab_scroll).grow(1).col(|ui| {
+                    ui.scrollable(&mut state.tab_scroll).grow(1).col(|ui| {
                         match state.tabs.selected {
                             0 => render_intro(ui),
                             1 => render_fire(ui, &mut state.fire),
@@ -934,7 +932,7 @@ fn main() -> std::io::Result<()> {
 
 // ─── Intro tab ──────────────────────────────────────────────────────
 fn render_intro(ui: &mut Context) {
-    let _ = ui.col(|ui| {
+    ui.col(|ui| {
         let pad = ui.spacing().xs();
         ui.text("Canvas / animation tour").bold();
         ui.text("");
@@ -945,8 +943,7 @@ fn render_intro(ui: &mut Context) {
         ui.text("lives in TourState so switching tabs and back resumes cleanly.")
             .dim();
         ui.text("");
-        let _ = ui
-            .bordered(Border::Single)
+        ui.bordered(Border::Single)
             .title("Demos at a glance")
             .p(pad)
             .col(|ui| {
@@ -973,7 +970,7 @@ fn render_intro(ui: &mut Context) {
 }
 
 fn row_pair(ui: &mut Context, label: &str, desc: &str) {
-    let _ = ui.container().gap(1).row(|ui| {
+    ui.container().gap(1).row(|ui| {
         ui.text(format!("{label:<10}")).bold().fg(Color::Cyan);
         ui.text(desc).dim();
     });
@@ -1010,12 +1007,12 @@ fn render_fire(ui: &mut Context, state: &mut FireState) {
 
     let palette = &state.palette;
 
-    let _ = ui.col(|ui| {
+    ui.col(|ui| {
         for row in 0..canvas_h {
             let top_y = row * 2;
             let bot_y = top_y + 1;
 
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 let mut run_start = 0;
                 let mut cur_top = fire.color_at(0, top_y, palette);
                 let mut cur_bot = fire.color_at(0, bot_y, palette);
@@ -1199,7 +1196,7 @@ fn render_game(ui: &mut Context, state: &mut GameState) {
 
     render_game_header(ui, state.active, theme, theme_name);
 
-    let _ = ui.container().grow(1).col(|ui| {
+    ui.container().grow(1).col(|ui| {
         ui.spacer();
         match state.active {
             ActiveGame::Tetris => render_tetris_screen(ui, &state.tetris, theme),
@@ -1270,7 +1267,7 @@ fn format_score(n: u64) -> String {
 fn render_tetris_board(ui: &mut Context, game: &TetrisGame, theme: Theme) {
     let ghost_y = game.ghost_y();
     for y in 0..BOARD_H {
-        let _ = ui.row(|ui| {
+        ui.row(|ui| {
             for x in 0..BOARD_W {
                 if let Some(kind) = game.board[y][x] {
                     ui.styled("\u{2588}\u{2588}", Style::new().fg(piece_color(kind)));
@@ -1292,7 +1289,7 @@ fn render_tetris_board(ui: &mut Context, game: &TetrisGame, theme: Theme) {
 fn render_tetris_next(ui: &mut Context, kind: usize) {
     let color = piece_color(kind);
     for y in 0..4 {
-        let _ = ui.row(|ui| {
+        ui.row(|ui| {
             for x in 0..4 {
                 if next_preview_at(kind, x, y) {
                     ui.styled("\u{2588}\u{2588}", Style::new().fg(color));
@@ -1306,7 +1303,7 @@ fn render_tetris_next(ui: &mut Context, kind: usize) {
 
 fn render_snake_board(ui: &mut Context, game: &SnakeGame, theme: Theme) {
     for y in 0..SNAKE_H {
-        let _ = ui.row(|ui| {
+        ui.row(|ui| {
             for x in 0..SNAKE_W {
                 if (x, y) == game.food {
                     ui.styled("\u{25CF} ", Style::new().fg(theme.accent));
@@ -1342,7 +1339,7 @@ fn mine_number_color(n: u8) -> Color {
 
 fn render_mine_board(ui: &mut Context, game: &MinesweeperGame, theme: Theme) {
     for y in 0..MINE_H {
-        let _ = ui.row(|ui| {
+        ui.row(|ui| {
             for x in 0..MINE_W {
                 let cell = game.board[y][x];
                 let mut style = Style::new();
@@ -1384,8 +1381,7 @@ fn render_mine_board(ui: &mut Context, game: &MinesweeperGame, theme: Theme) {
 }
 
 fn render_game_header(ui: &mut Context, active: ActiveGame, theme: Theme, theme_name: &str) {
-    let _ = ui
-        .container()
+    ui.container()
         .bg(theme.surface)
         .border(Border::Rounded)
         .border_style(Style::new().fg(theme.border))
@@ -1424,25 +1420,22 @@ fn render_tetris_screen(ui: &mut Context, game: &TetrisGame, theme: Theme) {
     let game_w = 45_u32;
     let left = ui.width().saturating_sub(game_w) / 2;
 
-    let _ = ui
-        .bordered(Border::Rounded)
+    ui.bordered(Border::Rounded)
         .title_styled(" T E T R I S ", Style::new().bold().fg(theme.primary))
         .border_style(Style::new().fg(theme.border))
         .bg(theme.surface)
         .w(game_w)
         .ml(left)
         .col(|ui| {
-            let _ = ui.container().gap(1).row(|ui| {
-                let _ = ui
-                    .bordered(Border::Single)
+            ui.container().gap(1).row(|ui| {
+                ui.bordered(Border::Single)
                     .border_style(Style::new().fg(theme.border))
                     .col(|ui| {
                         render_tetris_board(ui, game, theme);
                     });
 
-                let _ = ui.container().w(20).col(|ui| {
-                    let _ = ui
-                        .container()
+                ui.container().w(20).col(|ui| {
+                    ui.container()
                         .bg(theme.surface)
                         .border(Border::Rounded)
                         .title("NEXT")
@@ -1453,8 +1446,7 @@ fn render_tetris_screen(ui: &mut Context, game: &TetrisGame, theme: Theme) {
                             render_tetris_next(ui, game.next_kind);
                         });
 
-                    let _ = ui
-                        .container()
+                    ui.container()
                         .bg(theme.surface)
                         .border(Border::Rounded)
                         .title("SCORE")
@@ -1464,12 +1456,12 @@ fn render_tetris_screen(ui: &mut Context, game: &TetrisGame, theme: Theme) {
                             ui.text(format_score(game.score))
                                 .bold()
                                 .fg(theme.surface_text);
-                            let _ = ui.row(|ui| {
+                            ui.row(|ui| {
                                 ui.text("LEVEL").fg(theme.text_dim);
                                 ui.spacer();
                                 ui.text(format!("{}", game.level)).bold().fg(theme.primary);
                             });
-                            let _ = ui.row(|ui| {
+                            ui.row(|ui| {
                                 ui.text("LINES").fg(theme.text_dim);
                                 ui.spacer();
                                 ui.text(format!("{}", game.lines)).bold().fg(theme.accent);
@@ -1488,7 +1480,7 @@ fn render_tetris_screen(ui: &mut Context, game: &TetrisGame, theme: Theme) {
                         ui.text(" [P] Resume").fg(theme.text_dim);
                     }
 
-                    let _ = ui.separator();
+                    ui.separator();
                     ui.text(" Arrows Move/Rotate").fg(theme.text_dim);
                     ui.text(" SPC Drop  P Pause").fg(theme.text_dim);
                     ui.text(" R Reset   Q Quit").fg(theme.text_dim);
@@ -1501,8 +1493,7 @@ fn render_snake_screen(ui: &mut Context, game: &SnakeGame, theme: Theme) {
     let game_w = 58_u32;
     let left = ui.width().saturating_sub(game_w) / 2;
 
-    let _ = ui
-        .container()
+    ui.container()
         .bg(theme.surface)
         .border(Border::Rounded)
         .title_styled(" S N A K E ", Style::new().bold().fg(theme.primary))
@@ -1510,16 +1501,14 @@ fn render_snake_screen(ui: &mut Context, game: &SnakeGame, theme: Theme) {
         .w(game_w)
         .ml(left)
         .col(|ui| {
-            let _ = ui.container().gap(1).row(|ui| {
-                let _ = ui
-                    .bordered(Border::Single)
+            ui.container().gap(1).row(|ui| {
+                ui.bordered(Border::Single)
                     .border_style(Style::new().fg(theme.border))
                     .col(|ui| {
                         render_snake_board(ui, game, theme);
                     });
 
-                let _ = ui
-                    .container()
+                ui.container()
                     .bg(theme.surface)
                     .border(Border::Rounded)
                     .border_style(Style::new().fg(theme.border))
@@ -1531,13 +1520,13 @@ fn render_snake_screen(ui: &mut Context, game: &SnakeGame, theme: Theme) {
                         ui.text("SPEED").bold().fg(theme.surface_text);
                         ui.text(format!("{}", 10_u64.saturating_sub(game.move_interval())))
                             .fg(theme.accent);
-                        let _ = ui.separator();
+                        ui.separator();
                         if game.game_over {
                             ui.text("GAME OVER").bold().fg(theme.error);
                         } else if game.paused {
                             ui.text("PAUSED").bold().fg(theme.warning);
                         }
-                        let _ = ui.separator();
+                        ui.separator();
                         ui.text("Arrows Move").fg(theme.text_dim);
                         ui.text("P Pause").fg(theme.text_dim);
                         ui.text("R Restart").fg(theme.text_dim);
@@ -1550,8 +1539,7 @@ fn render_minesweeper_screen(ui: &mut Context, game: &MinesweeperGame, theme: Th
     let game_w = 56_u32;
     let left = ui.width().saturating_sub(game_w) / 2;
 
-    let _ = ui
-        .container()
+    ui.container()
         .bg(theme.surface)
         .border(Border::Rounded)
         .title_styled(
@@ -1562,16 +1550,14 @@ fn render_minesweeper_screen(ui: &mut Context, game: &MinesweeperGame, theme: Th
         .w(game_w)
         .ml(left)
         .col(|ui| {
-            let _ = ui.container().gap(1).row(|ui| {
-                let _ = ui
-                    .bordered(Border::Single)
+            ui.container().gap(1).row(|ui| {
+                ui.bordered(Border::Single)
                     .border_style(Style::new().fg(theme.border))
                     .col(|ui| {
                         render_mine_board(ui, game, theme);
                     });
 
-                let _ = ui
-                    .container()
+                ui.container()
                     .bg(theme.surface)
                     .border(Border::Rounded)
                     .border_style(Style::new().fg(theme.border))
@@ -1584,13 +1570,13 @@ fn render_minesweeper_screen(ui: &mut Context, game: &MinesweeperGame, theme: Th
                             .fg(theme.primary);
                         ui.text("FLAGS").bold().fg(theme.surface_text);
                         ui.text(format!("{}", game.flags_count())).fg(theme.accent);
-                        let _ = ui.separator();
+                        ui.separator();
                         if game.game_over {
                             ui.text("GAME OVER").bold().fg(theme.error);
                         } else if game.won {
                             ui.text("YOU WIN").bold().fg(theme.success);
                         }
-                        let _ = ui.separator();
+                        ui.separator();
                         ui.text("Arrows Move").fg(theme.text_dim);
                         ui.text("Enter/Space Reveal").fg(theme.text_dim);
                         ui.text("F Flag").fg(theme.text_dim);
@@ -1605,8 +1591,7 @@ fn render_raw_draw(ui: &mut Context, tick_offset: &mut u64) {
     *tick_offset = ui.tick();
     let t_offset = *tick_offset;
 
-    let _ = ui
-        .bordered(Border::Rounded)
+    ui.bordered(Border::Rounded)
         .title("draw_raw demo")
         .p(1)
         .gap(1)
@@ -1617,7 +1602,7 @@ fn render_raw_draw(ui: &mut Context, tick_offset: &mut u64) {
             ui.text("Each tile owns its rect; closures run at flush time.")
                 .dim();
 
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 ui.bordered(Border::Single)
                     .title("Gradient")
                     .w(34)
@@ -1729,25 +1714,24 @@ fn render_kitty(
         scroll.offset = scroll.offset.saturating_sub(2);
     }
 
-    let _ = ui
-        .bordered(Border::Rounded)
+    ui.bordered(Border::Rounded)
         .title("Kitty Image Gallery")
         .grow(1)
         .col(|ui| {
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 ui.text("j/k or Up/Down scroll | q/Esc quit").dim();
                 ui.spacer();
                 ui.text(format!("offset: {}", scroll.offset)).dim();
             });
 
-            let _ = ui.scrollable(scroll).grow(1).col(|ui| {
+            ui.scrollable(scroll).grow(1).col(|ui| {
                 for (i, (label, rgba, w, h)) in images.iter().enumerate() {
                     ui.text(format!("{}. {}", i + 1, label))
                         .bold()
                         .fg(Color::Yellow);
-                    let _ = ui.kitty_image(rgba, *w, *h, 30, 8);
+                    ui.kitty_image(rgba, *w, *h, 30, 8);
                     if i < images.len() - 1 {
-                        let _ = ui.separator();
+                        ui.separator();
                     }
                 }
                 ui.text("");
@@ -1880,21 +1864,19 @@ fn render_anim(ui: &mut Context, state: &mut AnimState) {
     state.spring.tick();
     let progress = state.progress_tween.value(ui.tick());
 
-    let _ = ui
-        .bordered(Border::Rounded)
+    ui.bordered(Border::Rounded)
         .title("Animation Primitives")
         .p(1)
         .gap(1)
         .grow(1)
         .col(|ui| {
-            let _ = ui
-                .bordered(Border::Single)
+            ui.bordered(Border::Single)
                 .title("Tween")
                 .p(1)
                 .gap(1)
                 .col(|ui| {
                     ui.text("Press Space to retarget");
-                    let _ = ui.progress(progress);
+                    ui.progress(progress);
                     ui.text(format!(
                         "value {:.2} -> target {:.2} | done {}",
                         progress,
@@ -1903,8 +1885,7 @@ fn render_anim(ui: &mut Context, state: &mut AnimState) {
                     ));
                 });
 
-            let _ = ui
-                .bordered(Border::Single)
+            ui.bordered(Border::Single)
                 .title("Spring")
                 .p(1)
                 .gap(1)
@@ -1918,14 +1899,13 @@ fn render_anim(ui: &mut Context, state: &mut AnimState) {
                     ));
                 });
 
-            let _ = ui
-                .bordered(Border::Single)
+            ui.bordered(Border::Single)
                 .title("Keyframes")
                 .p(1)
                 .gap(1)
                 .col(|ui| {
                     let kf_val = state.kf.value(ui.tick());
-                    let _ = ui.progress(kf_val / 100.0);
+                    ui.progress(kf_val / 100.0);
                     ui.text(format!(
                         "value {:.1} | done {} | mode PingPong",
                         kf_val,
@@ -1934,14 +1914,13 @@ fn render_anim(ui: &mut Context, state: &mut AnimState) {
                     ui.text("4 stops: 0->100->20->80").dim();
                 });
 
-            let _ = ui
-                .bordered(Border::Single)
+            ui.bordered(Border::Single)
                 .title("Sequence")
                 .p(1)
                 .gap(1)
                 .col(|ui| {
                     let seq_val = state.seq.value(ui.tick());
-                    let _ = ui.progress(seq_val / 100.0);
+                    ui.progress(seq_val / 100.0);
                     ui.text(format!(
                         "value {:.1} | done {} | mode Repeat",
                         seq_val,
@@ -1950,8 +1929,7 @@ fn render_anim(ui: &mut Context, state: &mut AnimState) {
                     ui.text("3 chained: 0->80->20->60").dim();
                 });
 
-            let _ = ui
-                .bordered(Border::Single)
+            ui.bordered(Border::Single)
                 .title("Stagger")
                 .p(1)
                 .gap(1)
@@ -1959,9 +1937,9 @@ fn render_anim(ui: &mut Context, state: &mut AnimState) {
                     let labels = ["Item A", "Item B", "Item C", "Item D", "Item E"];
                     for (i, label) in labels.iter().enumerate() {
                         let val = state.stagger.value(ui.tick(), i);
-                        let _ = ui.row(|ui| {
+                        ui.row(|ui| {
                             ui.text(format!("{label}:"));
-                            let _ = ui.progress(val);
+                            ui.progress(val);
                         });
                     }
                     ui.text("5 items, 6-tick delay each").dim();
@@ -1970,11 +1948,11 @@ fn render_anim(ui: &mut Context, state: &mut AnimState) {
             let accent = ui.theme().accent;
             ui.text("Callback").bold().fg(accent);
             let val = state.cb_tween.value(ui.tick());
-            let _ = ui.progress(val / 100.0);
+            ui.progress(val / 100.0);
             if state.cb_tween.is_done() && !state.cb_fired {
                 state.cb_fired = true;
             }
-            let _ = ui.container().gap(1).row(|ui| {
+            ui.container().gap(1).row(|ui| {
                 if state.cb_fired {
                     ui.text("on_complete fired!").fg(Color::Green);
                 }

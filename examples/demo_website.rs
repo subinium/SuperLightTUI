@@ -155,18 +155,17 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
     ui.provide(app, |ui| {
         let theme = app.theme;
 
-        let _ = ui.container().grow(1).col(|ui| {
+        ui.container().grow(1).col(|ui| {
             // ── navbar ──
-            let _ = ui
-                .container()
+            ui.container()
                 .bg(theme.surface)
                 .padding(Padding::xy(2, 0))
                 .col(|ui| {
-                    let _ = ui.row(|ui| {
+                    ui.row(|ui| {
                         ui.text("SLT").bold().fg(theme.primary);
                         ui.text(" ").fg(theme.text_dim);
                         ui.spacer();
-                        let _ = ui.tabs(&mut state.nav);
+                        ui.tabs(&mut state.nav);
                         ui.styled(
                             format!(" {} ", THEME_NAMES[state.theme_idx]),
                             Style::new().fg(theme.text).bg(theme.surface_hover),
@@ -175,7 +174,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                 });
 
             let selected = state.nav.selected;
-            let _ = ui.scrollable(&mut state.scroll).grow(1).col(|ui| {
+            ui.scrollable(&mut state.scroll).grow(1).col(|ui| {
                 match selected {
                     0 => render_home(
                         ui,
@@ -201,19 +200,18 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                 }
 
                 // ── footer ──
-                let _ = ui
-                    .container()
+                ui.container()
                     .bg(theme.surface)
                     .padding(Padding::xy(2, 1))
                     .col(|ui| {
-                        let _ = ui.row(|ui| {
+                        ui.row(|ui| {
                             ui.text("SLT").bold().fg(theme.primary);
                             ui.text("Framework").fg(theme.surface_text);
                             ui.spacer();
                             ui.text("MIT License").fg(theme.surface_text);
                         });
                         ui.text("");
-                        let _ = ui.row(|ui| {
+                        ui.row(|ui| {
                             ui.link("GitHub", "https://github.com/subinium/SuperLightTUI");
                             ui.link("Docs", "https://docs.rs/superlighttui");
                             ui.link("Discord", "https://discord.gg/slt");
@@ -225,7 +223,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 
             ui.toast(&mut state.toasts);
 
-            let _ = ui.help(&[
+            ui.help(&[
                 ("Ctrl+Q", "quit"),
                 ("Ctrl+T", "theme"),
                 ("1-5", "tabs"),
@@ -238,15 +236,12 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 
 fn main() -> std::io::Result<()> {
     let mut state = DemoState::new();
-    slt::run_with(
-        slt::RunConfig::default().mouse(true),
-        move |ui: &mut Context| {
-            if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
-                ui.quit();
-            }
-            render(ui, &mut state);
-        },
-    )
+    slt::run_with(slt::RunConfig::default(), move |ui: &mut Context| {
+        if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
+            ui.quit();
+        }
+        render(ui, &mut state);
+    })
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -293,7 +288,7 @@ fn md_p_dim(ui: &mut Context, text: &str) {
 fn md_blockquote(ui: &mut Context, text: &str) {
     let theme = app(ui).theme;
     for line in text.lines() {
-        let _ = ui.row(|ui| {
+        ui.row(|ui| {
             ui.text(" ▎ ").fg(theme.primary);
             ui.text(line).italic().fg(theme.text_dim).wrap();
         });
@@ -304,7 +299,7 @@ fn md_blockquote(ui: &mut Context, text: &str) {
 fn md_bullet(ui: &mut Context, items: &[&str]) {
     let theme = app(ui).theme;
     for item in items {
-        let _ = ui.row(|ui| {
+        ui.row(|ui| {
             ui.text("  • ").fg(theme.primary);
             ui.text(*item).wrap();
         });
@@ -315,7 +310,7 @@ fn md_bullet(ui: &mut Context, items: &[&str]) {
 fn md_numbered(ui: &mut Context, items: &[&str]) {
     let theme = app(ui).theme;
     for (i, item) in items.iter().enumerate() {
-        let _ = ui.row(|ui| {
+        ui.row(|ui| {
             ui.styled(
                 format!("  {}. ", i + 1),
                 Style::new().fg(theme.primary).bold(),
@@ -328,7 +323,7 @@ fn md_numbered(ui: &mut Context, items: &[&str]) {
 
 fn md_code_block(ui: &mut Context, lang: &str, code: &str) {
     let theme = app(ui).theme;
-    let _ = ui.container().bg(theme.surface).p(1).col(|ui| {
+    ui.container().bg(theme.surface).p(1).col(|ui| {
         ui.text(lang).fg(theme.surface_text);
         for line in code.lines() {
             ui.text(line).fg(theme.text);
@@ -364,7 +359,7 @@ fn md_tag(ui: &mut Context, tag: &str, color: Color) {
 
 fn md_meta(ui: &mut Context, date: &str, reading_time: &str) {
     let theme = app(ui).theme;
-    let _ = ui.row(|ui| {
+    ui.row(|ui| {
         ui.text(date).fg(theme.text_dim);
         ui.text(" · ").fg(theme.text_dim);
         ui.text(reading_time).fg(theme.text_dim);
@@ -384,7 +379,7 @@ fn render_home(
 ) {
     let AppState { theme, tick } = app(ui);
 
-    let _ = ui.container().px(2).py(1).col(|ui| {
+    ui.container().px(2).py(1).col(|ui| {
         let art = [
             r"  _____ _   _____",
             r" / ___// |  \_  _\",
@@ -400,13 +395,14 @@ fn render_home(
         ui.text("Immediate-mode TUI framework for Rust")
             .fg(theme.text_dim);
         ui.text("");
-        let _ = ui.row(|ui| {
+        ui.row(|ui| {
             md_inline_code(ui, "cargo add superlighttui");
         });
         ui.text("");
-        let _ = ui.row(|ui| {
+        ui.row(|ui| {
             if ui
-                .button_with("Get Started", ButtonVariant::Primary)
+                .button("Get Started")
+                .variant(ButtonVariant::Primary)
                 .clicked
             {
                 *nav_target = Some(1);
@@ -419,15 +415,14 @@ fn render_home(
     md_hr(ui);
 
     // stats
-    let _ = ui.row(|ui| {
+    ui.row(|ui| {
         for (val, label) in [
             ("~11k", "Lines"),
             ("20+", "Widgets"),
             ("2", "Deps"),
             ("0", "unsafe"),
         ] {
-            let _ = ui
-                .container()
+            ui.container()
                 .bg(theme.surface)
                 .grow(1)
                 .center()
@@ -442,7 +437,7 @@ fn render_home(
     md_hr(ui);
 
     // quick start guide
-    let _ = ui.container().padding(Padding::xy(2, 1)).col(|ui| {
+    ui.container().padding(Padding::xy(2, 1)).col(|ui| {
         md_h2(ui, "Quick Start");
 
         md_p(
@@ -471,7 +466,7 @@ fn render_home(
     md_hr(ui);
 
     // why SLT
-    let _ = ui.container().padding(Padding::xy(2, 1)).col(|ui| {
+    ui.container().padding(Padding::xy(2, 1)).col(|ui| {
         md_h2(ui, "Why SLT?");
 
         md_p(
@@ -482,7 +477,7 @@ fn render_home(
                    them to the terminal.",
         );
 
-        let _ = ui.row(|ui| {
+        ui.row(|ui| {
             feature_card(
                 ui,
                 "Immediate Mode",
@@ -494,7 +489,7 @@ fn render_home(
                 "row() and col() with gap, grow, align. CSS Flexbox semantics without the CSS.",
             );
         });
-        let _ = ui.row(|ui| {
+        ui.row(|ui| {
             feature_card(
                 ui,
                 "Auto Everything",
@@ -511,7 +506,7 @@ fn render_home(
     md_hr(ui);
 
     // newsletter
-    let _ = ui.container().px(2).py(1).col(|ui| {
+    ui.container().px(2).py(1).col(|ui| {
         md_h2(ui, "Stay Updated");
         if *subscribed {
             ui.text("Subscribed!").bold().fg(theme.success);
@@ -521,16 +516,20 @@ fn render_home(
                 ui,
                 "Get notified about new releases, tutorials, and community highlights.",
             );
-            let _ = ui.row(|ui| {
-                let _ = ui.text_input(email);
-                email.validate(|v| {
+            ui.row(|ui| {
+                ui.text_input(email);
+                email.validate_now(|v| {
                     if v.is_empty() || (v.contains('@') && v.contains('.')) {
                         Ok(())
                     } else {
                         Err("Enter a valid email".into())
                     }
                 });
-                if ui.button_with("Subscribe", ButtonVariant::Primary).clicked {
+                if ui
+                    .button("Subscribe")
+                    .variant(ButtonVariant::Primary)
+                    .clicked
+                {
                     if !email.value.is_empty() {
                         *subscribed = true;
                         toasts.success("Subscribed!", tick);
@@ -548,7 +547,7 @@ fn render_home(
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 fn render_docs(ui: &mut Context) {
-    let _ = ui.container().padding(Padding::xy(2, 1)).col(|ui| {
+    ui.container().padding(Padding::xy(2, 1)).col(|ui| {
         md_h1(ui, "Documentation");
 
         // ── Getting Started ──
@@ -926,13 +925,13 @@ const BLOG_POSTS: &[BlogPost] = &[
 fn render_blog(ui: &mut Context, blog_view: &mut Option<usize>) {
     let theme = app(ui).theme;
 
-    let _ = ui.container().padding(Padding::xy(2, 1)).col(|ui| {
+    ui.container().padding(Padding::xy(2, 1)).col(|ui| {
         if let Some(idx) = *blog_view {
             // ── Single post view ──
             if let Some(post) = BLOG_POSTS.get(idx) {
-                let _ = ui.row(|ui| {
+                ui.row(|ui| {
                     if ui
-                        .button_with("<< Back to Blog", ButtonVariant::Outline)
+                        .button("<< Back to Blog").variant(ButtonVariant::Outline)
                         .clicked
                     {
                         *blog_view = None;
@@ -952,13 +951,13 @@ fn render_blog(ui: &mut Context, blog_view: &mut Option<usize>) {
 
             for (i, post) in BLOG_POSTS.iter().enumerate() {
                 let resp = ui.container().bg(theme.surface).p(1).col(|ui| {
-                    let _ = ui.row(|ui| {
+                    ui.row(|ui| {
                         ui.text(post.date).fg(theme.surface_text);
                         ui.text(" · ").fg(theme.surface_text);
                         ui.text(post.reading_time).fg(theme.surface_text);
                     });
                     ui.text(post.title).bold().fg(theme.primary);
-                    let _ = ui.row(|ui| {
+                    ui.row(|ui| {
                         for (tag, tone) in post.tags {
                             let color = tag_tone_color(&theme, *tone);
                             md_tag(ui, tag, color);
@@ -1225,7 +1224,7 @@ fn render_post_dashboard_tutorial(ui: &mut Context) {
          \x20   let mut scroll = ScrollState::new();\n\
          \n\
          \x20   slt::run_with(\n\
-         \x20       RunConfig::default().mouse(true),\n\
+         \x20       RunConfig::default(),\n\
          \x20       |ui: &mut Context| {\n\
          \x20           if ui.key('q') { ui.quit(); }\n\
          \x20           // ... UI goes here\n\
@@ -1386,15 +1385,15 @@ fn render_post_flexbox(ui: &mut Context) {
 
     md_h2(ui, "The Mapping");
 
-    let _ = ui.bordered(Border::Rounded).p(1).col(|ui| {
-        let _ = ui.row(|ui| {
+    ui.bordered(Border::Rounded).p(1).col(|ui| {
+        ui.row(|ui| {
             ui.styled(
                 format!("{:<32}", "CSS"),
                 Style::new().bold().fg(theme.primary),
             );
             ui.text("SLT").bold().fg(theme.success);
         });
-        let _ = ui.separator();
+        ui.separator();
         let mappings = [
             ("display: flex", "implicit (all containers)"),
             ("flex-direction: column", "ui.col(|ui| { ... })"),
@@ -1414,7 +1413,7 @@ fn render_post_flexbox(ui: &mut Context) {
             ("border-radius: 4px", ".border(Border::Rounded)"),
         ];
         for (css, slt_api) in &mappings {
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 ui.styled(format!("{:<32}", css), Style::new().fg(theme.text));
                 ui.text(*slt_api).fg(theme.success);
             });
@@ -1505,14 +1504,14 @@ fn render_pricing(
 ) {
     let AppState { theme, tick } = app(ui);
 
-    let _ = ui.container().padding(Padding::xy(2, 1)).col(|ui| {
+    ui.container().padding(Padding::xy(2, 1)).col(|ui| {
         md_h1(ui, "Pricing");
         md_p_dim(
             ui,
             "SLT is free and open source forever. Sponsorship helps us ship faster.",
         );
 
-        let _ = ui.row(|ui| {
+        ui.row(|ui| {
             ui.text("Transparent plans for solo builders to enterprise teams.")
                 .fg(theme.text);
             ui.spacer();
@@ -1520,7 +1519,7 @@ fn render_pricing(
         });
         ui.text("");
 
-        let _ = ui.row(|ui| {
+        ui.row(|ui| {
             price_card(
                 ui,
                 "Open Source",
@@ -1539,7 +1538,7 @@ fn render_pricing(
                 selected_plan,
             );
 
-            let _ = ui.container().grow(1).col(|ui| {
+            ui.container().grow(1).col(|ui| {
                 ui.text("★ Recommended for most teams")
                     .bold()
                     .fg(theme.warning);
@@ -1603,7 +1602,7 @@ fn render_pricing(
         );
 
         ui.text("");
-        let _ = ui.container()
+        ui.container()
             .bg(theme.surface)
             .p(1)
             .col(|ui| {
@@ -1613,16 +1612,16 @@ fn render_pricing(
                 ).wrap()
                 .fg(theme.surface_text);
                 ui.text("");
-                let _ = ui.row(|ui| {
+                ui.row(|ui| {
                     if ui
-                        .button_with("Choose Sponsor", ButtonVariant::Primary)
+                        .button("Choose Sponsor").variant(ButtonVariant::Primary)
                         .clicked
                     {
                         *show_modal = true;
                         *selected_plan = "Sponsor".to_string();
                     }
                     if ui
-                        .button_with("Talk to Enterprise", ButtonVariant::Outline)
+                        .button("Talk to Enterprise").variant(ButtonVariant::Outline)
                         .clicked
                     {
                         *show_modal = true;
@@ -1632,11 +1631,11 @@ fn render_pricing(
             });
 
         if *show_modal {
-            let _ = ui.modal(|ui| {
+            ui.modal(|ui| {
                 if ui.key_code(KeyCode::Esc) {
                     *show_modal = false;
                 }
-                let _ = ui.bordered(Border::Rounded)
+                ui.bordered(Border::Rounded)
                     .bg(theme.surface)
                     .p(2)
                     .max_w(56)
@@ -1645,15 +1644,15 @@ fn render_pricing(
                         ui.text("Choose how you want to support SLT.")
                             .fg(theme.surface_text);
                         ui.text("");
-                        let _ = ui.separator();
+                        ui.separator();
                         ui.text("");
                         ui.text("Selected plan").fg(theme.surface_text);
                         ui.text(selected_plan.as_str()).bold().fg(theme.accent);
                         ui.text("Thank you for supporting SLT!").fg(theme.surface_text);
                         ui.text("");
-                        let _ = ui.row(|ui| {
+                        ui.row(|ui| {
                             if ui
-                                .button_with("  Subscribe  ", ButtonVariant::Primary)
+                                .button("  Subscribe  ").variant(ButtonVariant::Primary)
                                 .clicked
                             {
                                 toasts.success(
@@ -1664,7 +1663,7 @@ fn render_pricing(
                             }
                             ui.text("  ");
                             if ui
-                                .button_with("  Cancel  ", ButtonVariant::Outline)
+                                .button("  Cancel  ").variant(ButtonVariant::Outline)
                                 .clicked
                             {
                                 *show_modal = false;
@@ -1714,7 +1713,7 @@ fn render_contact(
 ) {
     let AppState { theme, tick } = app(ui);
 
-    let _ = ui.container().padding(Padding::xy(2, 1)).col(|ui| {
+    ui.container().padding(Padding::xy(2, 1)).col(|ui| {
         md_h1(ui, "Contact & Community");
 
         md_p(ui, "SLT is built in the open. Here's how to get involved:");
@@ -1739,12 +1738,17 @@ fn render_contact(
         md_link(ui, "Crates.io", "https://crates.io/crates/superlighttui");
         md_link(ui, "Discord Server", "https://discord.gg/slt");
         ui.text("");
-        let _ = ui.row(|ui| {
-            if ui.button_with("View Docs", ButtonVariant::Primary).clicked {
+        ui.row(|ui| {
+            if ui
+                .button("View Docs")
+                .variant(ButtonVariant::Primary)
+                .clicked
+            {
                 *nav_target = Some(1);
             }
             if ui
-                .button_with("View Pricing", ButtonVariant::Outline)
+                .button("View Pricing")
+                .variant(ButtonVariant::Outline)
                 .clicked
             {
                 *nav_target = Some(3);
@@ -1800,8 +1804,8 @@ fn render_contact(
         );
 
         md_h2(ui, "Maintainers");
-        let _ = ui.container().bg(theme.surface).p(1).col(|ui| {
-            let _ = ui.row(|ui| {
+        ui.container().bg(theme.surface).p(1).col(|ui| {
+            ui.row(|ui| {
                 ui.text("@subinium").bold().fg(theme.primary);
                 ui.text(" — Creator & lead maintainer")
                     .fg(theme.surface_text);
@@ -1830,7 +1834,7 @@ fn render_contact(
 
 fn feature_card(ui: &mut Context, title: &str, desc: &str) {
     let theme = app(ui).theme;
-    let _ = ui.container().bg(theme.surface).p(1).grow(1).col(|ui| {
+    ui.container().bg(theme.surface).p(1).grow(1).col(|ui| {
         ui.text(format!("◆ {title}")).bold().fg(theme.primary);
         ui.text(desc).fg(theme.surface_text).wrap();
     });
@@ -1865,8 +1869,7 @@ fn price_card(
     // `.with_if` collapses the `if highlight { bordered } else { container }`
     // fork into a single fluent chain. The closure only runs when `highlight`
     // is true, adding a rounded border to an otherwise-identical card.
-    let _ = ui
-        .container()
+    ui.container()
         .with_if(highlight, |c| c.border(Border::Rounded))
         .bg(theme.surface)
         .p(1)
@@ -1874,20 +1877,20 @@ fn price_card(
         .col(|ui| {
             ui.text(tier).bold().fg(color);
             ui.text("");
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 ui.text(price).bold().fg(color);
                 ui.text(format!(" {period}")).fg(theme.surface_text);
             });
-            let _ = ui.separator();
+            ui.separator();
             ui.text("");
             for feat in features {
-                let _ = ui.row(|ui| {
+                ui.row(|ui| {
                     ui.text("✓ ").fg(theme.success);
                     ui.text(*feat).fg(theme.text);
                 });
             }
             ui.text("");
-            if ui.button_with(cta_label, cta_variant).clicked {
+            if ui.button(cta_label).variant(cta_variant).clicked {
                 *show_modal = true;
                 *selected_plan = tier.to_string();
             }
@@ -1896,9 +1899,9 @@ fn price_card(
 
 fn faq_item(ui: &mut Context, question: &str, answer: &str) {
     let theme = app(ui).theme;
-    let _ = ui.container().padding(Padding::xy(1, 0)).col(|ui| {
+    ui.container().padding(Padding::xy(1, 0)).col(|ui| {
         ui.text(question).bold().fg(theme.primary);
-        let _ = ui.container().padding(Padding::xy(2, 0)).col(|ui| {
+        ui.container().padding(Padding::xy(2, 0)).col(|ui| {
             ui.text(answer).fg(theme.text_dim).wrap();
         });
     });

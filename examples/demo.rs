@@ -122,8 +122,7 @@ impl Default for DemoState {
         );
         table.page_size = 3;
 
-        let mut password = TextInputState::with_placeholder("Password");
-        password.masked = true;
+        let password = TextInputState::with_placeholder("Password").masked(true);
 
         let mut v11_autocomplete = TextInputState::with_placeholder("Try: hel / dev / rust");
         v11_autocomplete.set_suggestions(vec![
@@ -290,6 +289,7 @@ impl Default for DemoState {
                 .field(
                     FormField::new("Password")
                         .placeholder("********")
+                        .masked(true)
                         .validate(|v| {
                             if v.len() >= 6 {
                                 Ok(())
@@ -339,7 +339,9 @@ impl Default for DemoState {
 fn main() -> std::io::Result<()> {
     let mut state = DemoState::default();
     slt::run_with(
-        RunConfig::default().mouse(true).kitty_keyboard(true),
+        RunConfig::default()
+            .mouse_mode(slt::MouseMode::Hover)
+            .kitty_keyboard(true),
         move |ui| render(ui, &mut state),
     )
 }
@@ -521,13 +523,12 @@ fn body(ui: &mut Context, state: &mut DemoState) {
             v152_search,
         } = &mut *state;
 
-        let _ = ui
-            .container()
+        ui.container()
             .border(Border::Rounded)
             .p(1)
             .grow(1)
             .col(|ui| {
-                let _ = ui.row(|ui| {
+                ui.row(|ui| {
                     ui.text("SuperLightTUI").bold().fg(theme.primary);
                     ui.text(" widget showcase").fg(theme.text);
                     ui.spacer();
@@ -535,13 +536,12 @@ fn body(ui: &mut Context, state: &mut DemoState) {
                 });
                 ui.text("All widgets follow active theme tokens.")
                     .fg(theme.text_dim);
-                let _ = ui.separator();
+                ui.separator();
 
                 render_page_tabs(ui, page_tabs);
-                let _ = ui.separator();
+                ui.separator();
 
-                let _ = ui
-                    .scrollable(scroll)
+                ui.scrollable(scroll)
                     .grow(1)
                     .col(|ui| match page_tabs.selected {
                         0 => render_core(
@@ -608,8 +608,8 @@ fn body(ui: &mut Context, state: &mut DemoState) {
                         _ => {}
                     });
 
-                let _ = ui.separator();
-                let _ = ui.help(&[
+                ui.separator();
+                ui.help(&[
                     ("^Q/Esc", "quit"),
                     ("^T", "theme"),
                     ("^M", "modal"),
@@ -624,10 +624,9 @@ fn body(ui: &mut Context, state: &mut DemoState) {
             });
 
         if *show_modal {
-            let _ = ui.modal(|ui| {
+            ui.modal(|ui| {
                 let theme = *ui.theme();
-                let _ = ui
-                    .container()
+                ui.container()
                     .bg(theme.surface)
                     .border(Border::Rounded)
                     .p(2)
@@ -671,11 +670,11 @@ fn render_page_tabs(ui: &mut Context, page_tabs: &mut TabsState) {
 
     for (row_idx, labels) in page_tabs.labels.chunks(split_at).enumerate() {
         let row_start = row_idx * split_at;
-        let _ = ui.container().gap(1).row(|ui| {
+        ui.container().gap(1).row(|ui| {
             for (offset, label) in labels.iter().enumerate() {
                 let tab_idx = row_start + offset;
                 let clicked = if page_tabs.selected == tab_idx {
-                    ui.button_colored(label, &selected_colors).clicked
+                    ui.button(label).colors(&selected_colors).clicked
                 } else {
                     ui.button(label).clicked
                 };
@@ -706,8 +705,8 @@ fn render_core(
         ui.text("Tabs").bold().fg(theme.primary);
         ui.text("Use Left/Right when focused.")
             .fg(theme.surface_text);
-        let _ = ui.tabs(section_tabs);
-        let _ = ui.row(|ui| {
+        ui.tabs(section_tabs);
+        ui.row(|ui| {
             ui.text("Selected:").fg(theme.surface_text);
             match section_tabs.selected {
                 0 => ui.text("Primary").fg(theme.primary),
@@ -717,24 +716,24 @@ fn render_core(
         });
     });
 
-    let _ = ui.row(|ui| {
+    ui.row(|ui| {
         card(ui, |ui| {
             ui.text("Input").bold().fg(theme.primary);
             ui.text("Single-line editor").fg(theme.surface_text);
-            let _ = ui.text_input(input);
+            ui.text_input(input);
             ui.text("Textarea").fg(theme.surface_text);
-            let _ = ui.textarea(textarea, 4);
+            ui.textarea(textarea, 4);
         });
 
         card(ui, |ui| {
             ui.text("Controls").bold().fg(theme.secondary);
             ui.text("Theme-aware toggles").fg(theme.surface_text);
-            let _ = ui.checkbox("Dark mode", dark_mode);
-            let _ = ui.checkbox("Notifications", notifications);
-            let _ = ui.toggle("Auto-save", autosave);
-            let _ = ui.toggle("Vim mode", vim_mode);
+            ui.checkbox("Dark mode", dark_mode);
+            ui.checkbox("Notifications", notifications);
+            ui.toggle("Auto-save", autosave);
+            ui.toggle("Vim mode", vim_mode);
             ui.text("Semantic colors").fg(theme.surface_text);
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 ui.text("success").fg(theme.success);
                 ui.text("warning").fg(theme.warning);
                 ui.text("error").fg(theme.error);
@@ -744,7 +743,7 @@ fn render_core(
         card(ui, |ui| {
             ui.text("Buttons").bold().fg(theme.accent);
             ui.text("Primary actions").fg(theme.surface_text);
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 if ui.button("Save").clicked {
                     *saves += 1;
                 }
@@ -752,14 +751,14 @@ fn render_core(
                     *saves = 0;
                 }
             });
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 ui.text("Clicks:").fg(theme.surface_text);
                 ui.text(format!("{saves}")).fg(theme.primary);
             });
         });
     });
 
-    let _ = ui.row(|ui| {
+    ui.row(|ui| {
         card(ui, |ui| {
             ui.text("Typography").bold().fg(theme.primary);
             ui.text("Text styles").fg(theme.surface_text);
@@ -800,11 +799,11 @@ fn render_dataviz(ui: &mut Context) {
     let spark_data = [2.0, 4.0, 3.0, 6.0, 5.0, 7.0, 6.0, 8.0, 7.0, 9.0];
     let bars = [("CPU", 72.0), ("MEM", 58.0), ("IO", 36.0), ("NET", 44.0)];
 
-    let _ = ui.row(|ui| {
+    ui.row(|ui| {
         card(ui, |ui| {
             ui.text("Chart").bold().fg(theme.primary);
             ui.text("Line + markers").fg(theme.surface_text);
-            let _ = ui.chart(
+            ui.chart(
                 |c| {
                     c.xlabel("Tick");
                     c.ylabel("Value");
@@ -820,16 +819,16 @@ fn render_dataviz(ui: &mut Context) {
         card(ui, |ui| {
             ui.text("Sparkline + Bars").bold().fg(theme.secondary);
             ui.text("Compact signals").fg(theme.surface_text);
-            let _ = ui.sparkline(&spark_data, 28);
+            ui.sparkline(&spark_data, 28);
             ui.text("Bar chart").fg(theme.surface_text);
-            let _ = ui.bar_chart(&bars, 14);
+            ui.bar_chart(&bars, 14);
         });
     });
 
     card(ui, |ui| {
         ui.text("Canvas").bold().fg(theme.accent);
         ui.text("Braille vector drawing").fg(theme.surface_text);
-        let _ = ui.canvas(44, 8, |cv| {
+        ui.canvas(44, 8, |cv| {
             cv.line(0, 0, cv.width() - 1, cv.height() - 1);
             cv.line(cv.width() - 1, 0, 0, cv.height() - 1);
             cv.circle(cv.width() / 2, cv.height() / 2, cv.height() / 3);
@@ -847,14 +846,13 @@ fn render_layout(
     let theme = *ui.theme();
     section(ui, "LAYOUT & DATA");
 
-    let _ = ui.row(|ui| {
+    ui.row(|ui| {
         card(ui, |ui| {
             ui.text("Grid").bold().fg(theme.primary);
             ui.text("3-column equal cells").fg(theme.surface_text);
-            let _ = ui.grid(3, |ui| {
+            ui.grid(3, |ui| {
                 for i in 1..=9 {
-                    let _ = ui
-                        .container()
+                    ui.container()
                         .bg(theme.surface_hover)
                         .border(Border::Rounded)
                         .p(1)
@@ -868,26 +866,26 @@ fn render_layout(
         card(ui, |ui| {
             ui.text("List + Table").bold().fg(theme.secondary);
             ui.text("Selection widgets").fg(theme.surface_text);
-            let _ = ui.list(list);
-            let _ = ui.row(|ui| {
+            ui.list(list);
+            ui.row(|ui| {
                 ui.text("Current:").fg(theme.surface_text);
                 ui.text(list.selected_item().unwrap_or("-"))
                     .fg(theme.primary);
             });
-            let _ = ui.separator();
+            ui.separator();
             ui.text("Sort: click header · Filter + Pagination").dim();
-            let _ = ui.text_input(table_filter);
+            ui.text_input(table_filter);
             table.set_filter(&table_filter.value);
-            let _ = ui.table(table);
+            ui.table(table);
             if let Some(row) = table.selected_row() {
-                let _ = ui.row(|ui| {
+                ui.row(|ui| {
                     ui.text("Selected:").fg(theme.surface_text);
                     ui.text(row.join(", ")).fg(theme.primary);
                 });
             } else {
                 ui.text("No matching rows").dim();
             }
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 ui.text(format!(
                     "{} / {} rows",
                     table.visible_indices().len(),
@@ -904,12 +902,11 @@ fn render_layout(
         });
     });
 
-    let _ = ui.row(|ui| {
+    ui.row(|ui| {
         card(ui, |ui| {
             ui.text("Align").bold().fg(theme.primary);
             ui.text("Start / Center / End").fg(theme.surface_text);
-            let _ = ui
-                .container()
+            ui.container()
                 .bg(theme.surface_hover)
                 .border(Border::Rounded)
                 .p(1)
@@ -917,8 +914,7 @@ fn render_layout(
                 .col(|ui| {
                     ui.text("Start").fg(theme.primary);
                 });
-            let _ = ui
-                .container()
+            ui.container()
                 .bg(theme.surface_hover)
                 .border(Border::Rounded)
                 .p(1)
@@ -926,8 +922,7 @@ fn render_layout(
                 .col(|ui| {
                     ui.text("Center").fg(theme.secondary);
                 });
-            let _ = ui
-                .container()
+            ui.container()
                 .bg(theme.surface_hover)
                 .border(Border::Rounded)
                 .p(1)
@@ -940,8 +935,7 @@ fn render_layout(
         card(ui, |ui| {
             ui.text("Justify").bold().fg(theme.accent);
             ui.text("Space modes").fg(theme.surface_text);
-            let _ = ui
-                .container()
+            ui.container()
                 .bg(theme.surface_hover)
                 .border(Border::Rounded)
                 .p(1)
@@ -951,8 +945,7 @@ fn render_layout(
                     ui.text("B").fg(theme.secondary);
                     ui.text("C").fg(theme.accent);
                 });
-            let _ = ui
-                .container()
+            ui.container()
                 .bg(theme.surface_hover)
                 .border(Border::Rounded)
                 .p(1)
@@ -966,12 +959,11 @@ fn render_layout(
     });
 
     if *show_overlay {
-        let _ = ui.overlay(|ui| {
+        ui.overlay(|ui| {
             let theme = *ui.theme();
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 ui.spacer();
-                let _ = ui
-                    .container()
+                ui.container()
                     .bg(theme.surface)
                     .border(Border::Rounded)
                     .p(1)
@@ -988,7 +980,7 @@ fn render_forms(ui: &mut Context, form: &mut FormState, password: &mut TextInput
     let theme = *ui.theme();
     section(ui, "FORMS");
 
-    let _ = ui.row(|ui| {
+    ui.row(|ui| {
         card(ui, |ui| {
             ui.text("Sign In Form").bold().fg(theme.primary);
             ui.text("Modal/form showcase retained")
@@ -1004,8 +996,8 @@ fn render_forms(ui: &mut Context, form: &mut FormState, password: &mut TextInput
         card(ui, |ui| {
             ui.text("Password Input").bold().fg(theme.secondary);
             ui.text("Masked text input widget").fg(theme.surface_text);
-            let _ = ui.text_input(password);
-            let _ = ui.row(|ui| {
+            ui.text_input(password);
+            ui.row(|ui| {
                 ui.text("Length:").fg(theme.surface_text);
                 ui.text(format!("{}", password.value.len()))
                     .fg(theme.primary);
@@ -1027,10 +1019,10 @@ fn render_ime(
     card(ui, |ui| {
         ui.text("Compose Korean/Japanese/Chinese text")
             .fg(theme.surface_text);
-        let _ = ui.row(|ui| {
-            let _ = ui.container().grow(1).col(|ui| {
+        ui.row(|ui| {
+            ui.container().grow(1).col(|ui| {
                 ui.text("Name").bold().fg(theme.primary);
-                let _ = ui.text_input(ime_name);
+                ui.text_input(ime_name);
                 if !ime_name.value.is_empty() {
                     ui.line(|ui| {
                         ui.text("chars: ").fg(theme.surface_text);
@@ -1040,9 +1032,9 @@ fn render_ime(
                 }
             });
 
-            let _ = ui.container().grow(1).col(|ui| {
+            ui.container().grow(1).col(|ui| {
                 ui.text("Search").bold().fg(theme.secondary);
-                let _ = ui.text_input(ime_search);
+                ui.text_input(ime_search);
                 let query = ime_search.value.to_lowercase();
                 let tokens: Vec<&str> = query.split_whitespace().collect();
                 let matched = ime_items
@@ -1057,10 +1049,10 @@ fn render_ime(
             });
         });
 
-        let _ = ui.separator();
+        ui.separator();
         ui.text("Message").bold().fg(theme.primary);
         let rows = ui.height().saturating_sub(24).max(5);
-        let _ = ui.textarea(ime_message, rows);
+        ui.textarea(ime_message, rows);
         let total_chars: usize = ime_message
             .lines
             .iter()
@@ -1090,10 +1082,10 @@ fn render_v011(
     let theme = *ui.theme();
     section(ui, "v0.11.0 FEATURES");
 
-    let _ = ui.row(|ui| {
+    ui.row(|ui| {
         card(ui, |ui| {
             ui.text("Response Pattern").bold().fg(theme.primary);
-            let response = ui.button("Inspect Response");
+            let response = ui.button("Inspect Response").show();
             if response.clicked {
                 *button_clicks = (*button_clicks).saturating_add(1);
             }
@@ -1120,7 +1112,7 @@ fn render_v011(
         });
     });
 
-    let _ = ui.row(|ui| {
+    ui.row(|ui| {
         card(ui, |ui| {
             ui.text("Confirm + Notify").bold().fg(theme.accent);
             let confirmed = ui.confirm("Delete selected file?", confirm_delete);
@@ -1161,19 +1153,19 @@ fn render_v011(
         });
     });
 
-    let _ = ui.row(|ui| {
+    ui.row(|ui| {
         card(ui, |ui| {
             ui.text("Autocomplete + Validators")
                 .bold()
                 .fg(theme.secondary);
             ui.text("Autocomplete").fg(theme.surface_text);
-            let _ = ui.text_input(autocomplete);
+            ui.text_input(autocomplete);
             let matches = autocomplete.matched_suggestions();
             ui.text(format!("matches: {}", matches.join(", "))).dim();
 
-            let _ = ui.separator();
+            ui.separator();
             ui.text("Validators").fg(theme.surface_text);
-            let _ = ui.text_input(validated);
+            ui.text_input(validated);
             validated.run_validators();
             if validated.errors().is_empty() {
                 ui.text("All validators passed").fg(theme.success);
@@ -1184,7 +1176,7 @@ fn render_v011(
             }
         });
 
-        let _ = ui.col(|ui| {
+        ui.col(|ui| {
             card(ui, |ui| {
                 ui.text("File Picker").bold().fg(theme.accent);
                 if ui.file_picker(file_picker).changed
@@ -1204,7 +1196,7 @@ fn render_v011(
             card(ui, |ui| {
                 ui.text("Keyboard Shortcuts").bold().fg(theme.accent);
                 ui.text("KeyMap helper preview").fg(theme.surface_text);
-                let _ = ui.help_from_keymap(keymap);
+                ui.help_from_keymap(keymap);
             });
         });
     });
@@ -1221,12 +1213,12 @@ fn render_advanced(
     let theme = *ui.theme();
     section(ui, "ADVANCED");
 
-    let _ = ui.row(|ui| {
+    ui.row(|ui| {
         card(ui, |ui| {
             ui.text("Select").bold().fg(theme.primary);
             ui.text("Dropdown style preset").fg(theme.surface_text);
             let _changed = ui.select(select).changed;
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 ui.text("Current:").fg(theme.surface_text);
                 ui.text(&select.items()[select.selected]).fg(theme.primary);
             });
@@ -1236,7 +1228,7 @@ fn render_advanced(
             ui.text("Radio").bold().fg(theme.secondary);
             ui.text("Theme preference").fg(theme.surface_text);
             let _changed = ui.radio(radio).changed;
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 ui.text("Mode:").fg(theme.surface_text);
                 ui.text(&radio.items[radio.selected]).fg(theme.secondary);
             });
@@ -1245,8 +1237,8 @@ fn render_advanced(
         card(ui, |ui| {
             ui.text("Multi Select").bold().fg(theme.accent);
             ui.text("Feature toggles").fg(theme.surface_text);
-            let _ = ui.multi_select(multi);
-            let _ = ui.row(|ui| {
+            ui.multi_select(multi);
+            ui.row(|ui| {
                 ui.text("Enabled:").fg(theme.surface_text);
                 ui.text(format!("{}", multi.selected.len()))
                     .fg(theme.accent);
@@ -1254,26 +1246,26 @@ fn render_advanced(
         });
     });
 
-    let _ = ui.row(|ui| {
+    ui.row(|ui| {
         card(ui, |ui| {
             ui.text("Tree").bold().fg(theme.primary);
             ui.text("Project structure").fg(theme.surface_text);
-            let _ = ui.tree(tree);
+            ui.tree(tree);
         });
 
         card(ui, |ui| {
             ui.text("Virtual List").bold().fg(theme.secondary);
             ui.text("100 items, 8 visible").fg(theme.surface_text);
-            let _ = ui.virtual_list(vlist, 8, |ui, idx| {
+            ui.virtual_list(vlist, 8, |ui, idx| {
                 ui.text(format!("Item {idx}")).fg(theme.surface_text);
             });
         });
     });
 
-    let _ = ui.row(|ui| {
+    ui.row(|ui| {
         card(ui, |ui| {
             ui.text("Markdown").bold().fg(theme.primary);
-            let _ = ui.markdown(
+            ui.markdown(
                 "# v0.7.0\n\n**9 new features**: dashed borders, Kitty keyboard, color downsampling, scrollbar, breakpoints, clipboard, DevTools, half-block image, AI widgets.\n\n- Check the **v0.7.0** tab →\n- Press **F12** for DevTools\n\n---\n\n`Theme-aware` and production-ready.",
             );
         });
@@ -1296,7 +1288,7 @@ fn render_advanced(
                 ui.text(" not found").fg(theme.surface_text);
             });
 
-            let _ = ui.container()
+            ui.container()
                 .bg(theme.surface_hover)
                 .border(Border::Rounded)
                 .p(1)
@@ -1313,12 +1305,12 @@ fn render_advanced(
         });
     });
 
-    let _ = ui.row(|ui| {
+    ui.row(|ui| {
         card(ui, |ui| {
             ui.text("Borders + Percent Sizing").bold().fg(theme.accent);
             ui.text("Per-side borders and 30/70 layout").fg(theme.surface_text);
 
-            let _ = ui.container()
+            ui.container()
                 .bg(theme.surface_hover)
                 .border(Border::Single)
                 .border_sides(BorderSides::horizontal())
@@ -1327,7 +1319,7 @@ fn render_advanced(
                     ui.text("Horizontal borders").fg(theme.surface_text);
                 });
 
-            let _ = ui.container()
+            ui.container()
                 .bg(theme.surface_hover)
                 .border(Border::Single)
                 .border_sides(BorderSides::vertical())
@@ -1336,8 +1328,8 @@ fn render_advanced(
                     ui.text("Vertical borders").fg(theme.surface_text);
                 });
 
-            let _ = ui.row(|ui| {
-                let _ = ui.container()
+            ui.row(|ui| {
+                ui.container()
                     .bg(theme.surface_hover)
                     .border(Border::Rounded)
                     .w_pct(30)
@@ -1345,7 +1337,7 @@ fn render_advanced(
                     .col(|ui| {
                         ui.text("30%").fg(theme.primary);
                     });
-                let _ = ui.container()
+                ui.container()
                     .bg(theme.surface_hover)
                     .border(Border::Rounded)
                     .w_pct(70)
@@ -1359,7 +1351,7 @@ fn render_advanced(
         card(ui, |ui| {
             ui.text("Markdown Inline Styles").bold().fg(theme.primary);
             ui.text("**bold**, *italic*, `code` now styled").fg(theme.surface_text);
-            let _ = ui.markdown(
+            ui.markdown(
                 "Inline: **bold text** and *italic text* and `code blocks` all render with proper styling.\n\n- List with **bold** items\n- And `inline code` too",
             );
         });
@@ -1370,14 +1362,14 @@ fn render_feedback(ui: &mut Context, spinner: &SpinnerState, progress: f64) {
     let theme = *ui.theme();
     section(ui, "FEEDBACK");
 
-    let _ = ui.row(|ui| {
+    ui.row(|ui| {
         card(ui, |ui| {
             ui.text("Progress").bold().fg(theme.primary);
-            let _ = ui.row(|ui| {
-                let _ = ui.spinner(spinner);
+            ui.row(|ui| {
+                ui.spinner(spinner);
                 ui.text(" Loading...").fg(theme.surface_text);
             });
-            let _ = ui.progress(progress);
+            ui.progress(progress);
             ui.text(format!("{:.0}%", progress * 100.0))
                 .fg(theme.surface_text);
         });
@@ -1406,15 +1398,15 @@ fn render_v070(
     let tick = ui.tick();
     section(ui, "v0.7.0 FEATURES");
 
-    let _ = ui.row(|ui| {
+    ui.row(|ui| {
         card(ui, |ui| {
             ui.text("Dashed Borders").bold().fg(theme.primary);
             ui.text("2 new border variants").fg(theme.surface_text);
 
-            let _ = ui.container().border(Border::Dashed).p(1).col(|ui| {
+            ui.container().border(Border::Dashed).p(1).col(|ui| {
                 ui.text("Border::Dashed").fg(theme.text);
             });
-            let _ = ui.container().border(Border::DashedThick).p(1).col(|ui| {
+            ui.container().border(Border::DashedThick).p(1).col(|ui| {
                 ui.text("Border::DashedThick").fg(theme.text);
             });
         });
@@ -1430,14 +1422,14 @@ fn render_v070(
                 ("DashedThick", Border::DashedThick),
             ];
             for (name, border) in borders {
-                let _ = ui.container().border(border).col(|ui| {
+                ui.container().border(border).col(|ui| {
                     ui.text(name).fg(theme.surface_text);
                 });
             }
         });
     });
 
-    let _ = ui.row(|ui| {
+    ui.row(|ui| {
         card(ui, |ui| {
             ui.text("Scrollbar").bold().fg(theme.primary);
             let focused = ui.register_focusable();
@@ -1452,8 +1444,8 @@ fn render_v070(
             } else {
                 ui.text("Tab to focus, then ↑↓").fg(theme.text_dim);
             }
-            let _ = ui.row(|ui| {
-                let _ = ui.scrollable(scroll).grow(1).h(8).col(|ui| {
+            ui.row(|ui| {
+                ui.scrollable(scroll).grow(1).h(8).col(|ui| {
                     for i in 0..30 {
                         let fg = if focused && i == scroll.offset {
                             theme.primary
@@ -1465,7 +1457,7 @@ fn render_v070(
                         ui.text(format!("  Line {i}")).fg(fg);
                     }
                 });
-                let _ = ui.scrollbar(scroll);
+                ui.scrollbar(scroll);
             });
         });
 
@@ -1481,7 +1473,7 @@ fn render_v070(
                 Breakpoint::Xl => ("Xl (160+)", theme.primary),
                 _ => ("Unknown", theme.text_dim),
             };
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 ui.text("Current: ").fg(theme.surface_text);
                 ui.text(label).bold().fg(color);
             });
@@ -1491,7 +1483,7 @@ fn render_v070(
         });
     });
 
-    let _ = ui.row(|ui| {
+    ui.row(|ui| {
         card(ui, |ui| {
             ui.text("StreamingText").bold().fg(theme.primary);
             ui.text("AI response with cursor").fg(theme.surface_text);
@@ -1510,7 +1502,7 @@ fn render_v070(
                     stream.finish();
                 }
             }
-            let _ = ui.streaming_text(stream);
+            ui.streaming_text(stream);
 
             if !stream.streaming && !stream.content.is_empty() && ui.button("↻ Replay").clicked {
                 stream.content.clear();
@@ -1520,14 +1512,14 @@ fn render_v070(
         card(ui, |ui| {
             ui.text("ToolApproval").bold().fg(theme.secondary);
             ui.text("Human-in-the-loop gate").fg(theme.surface_text);
-            let _ = ui.tool_approval(tool);
+            ui.tool_approval(tool);
             if tool.action != ApprovalAction::Pending && ui.button("Reset").clicked {
                 tool.reset();
             }
         });
     });
 
-    let _ = ui.row(|ui| {
+    ui.row(|ui| {
         card(ui, |ui| {
             ui.text("ContextBar").bold().fg(theme.primary);
             ui.text("Token usage indicator").fg(theme.surface_text);
@@ -1536,7 +1528,7 @@ fn render_v070(
                 ContextItem::new("lib.rs", 3400),
                 ContextItem::new("README.md", 800),
             ];
-            let _ = ui.context_bar(&items);
+            ui.context_bar(&items);
         });
 
         card(ui, |ui| {
@@ -1558,14 +1550,14 @@ fn render_v070(
                 }
             }
             let img = HalfBlockImage::from_rgb(&rgb, w, h);
-            let _ = ui.image(&img);
+            ui.image(&img);
         });
     });
 
     card(ui, |ui| {
         ui.text("More v0.7.0").bold().fg(theme.accent);
-        let _ = ui.row(|ui| {
-            let _ = ui.container().grow(1).col(|ui| {
+        ui.row(|ui| {
+            ui.container().grow(1).col(|ui| {
                 ui.text("Color Downsampling").bold().fg(theme.primary);
                 ui.text("RGB → 256 → 16 color").fg(theme.surface_text);
                 let colors = [
@@ -1585,17 +1577,17 @@ fn render_v070(
                     });
                 }
             });
-            let _ = ui.container().grow(1).col(|ui| {
+            ui.container().grow(1).col(|ui| {
                 ui.text("Kitty Keyboard").bold().fg(theme.secondary);
                 ui.text("Key release events enabled").fg(theme.surface_text);
                 ui.text("kitty_keyboard: true").fg(theme.secondary);
-                let _ = ui.separator();
+                ui.separator();
                 ui.text("OSC 52 Clipboard").bold().fg(theme.accent);
                 ui.text("copy_to_clipboard()").fg(theme.surface_text);
                 if ui.button("Copy 'SLT v0.7.0'").clicked {
                     ui.copy_to_clipboard("SLT v0.7.0");
                 }
-                let _ = ui.separator();
+                ui.separator();
                 ui.text("DevTools: Press F12").bold().fg(theme.warning);
             });
         });
@@ -1620,13 +1612,12 @@ fn render_v080(
         const ACCENT: slt::ContainerStyle =
             slt::ContainerStyle::new().bg(Color::Rgb(255, 107, 107));
 
-        let _ = ui.container().gap(1).row(|ui| {
-            let _ = ui.container().apply(&CARD).grow(1).col(|ui| {
+        ui.container().gap(1).row(|ui| {
+            ui.container().apply(&CARD).grow(1).col(|ui| {
                 ui.text("Base card").bold();
                 ui.text("ContainerStyle::new().border(..).p(1)").dim();
             });
-            let _ = ui
-                .container()
+            ui.container()
                 .apply(&CARD)
                 .apply(&ACCENT)
                 .grow(1)
@@ -1638,9 +1629,8 @@ fn render_v080(
     }
 
     section(ui, "ERROR BOUNDARY");
-    let _ = ui.container().gap(1).row(|ui| {
-        let _ = ui
-            .container()
+    ui.container().gap(1).row(|ui| {
+        ui.container()
             .grow(1)
             .border(Border::Rounded)
             .p(1)
@@ -1649,8 +1639,7 @@ fn render_v080(
                     ui.text("Safe content").fg(theme.success);
                 });
             });
-        let _ = ui
-            .container()
+        ui.container()
             .grow(1)
             .border(Border::Rounded)
             .p(1)
@@ -1669,9 +1658,8 @@ fn render_v080(
 
     section(ui, "DARK MODE");
     card(ui, |ui| {
-        let _ = ui.container().gap(2).row(|ui| {
-            let _ = ui
-                .container()
+        ui.container().gap(2).row(|ui| {
+            ui.container()
                 .bg(Color::Rgb(240, 240, 240))
                 .dark_bg(Color::Rgb(30, 30, 46))
                 .p(1)
@@ -1693,9 +1681,8 @@ fn render_v080(
     section(ui, "RESPONSIVE LAYOUT");
     card(ui, |ui| {
         ui.text(format!("Breakpoint: {:?}", ui.breakpoint())).dim();
-        let _ = ui.container().gap(1).row(|ui| {
-            let _ = ui
-                .container()
+        ui.container().gap(1).row(|ui| {
+            ui.container()
                 .w(20)
                 .md_w(30)
                 .lg_w(40)
@@ -1704,8 +1691,7 @@ fn render_v080(
                 .col(|ui| {
                     ui.text("Responsive width");
                 });
-            let _ = ui
-                .container()
+            ui.container()
                 .grow(1)
                 .border(Border::Single)
                 .p(1)
@@ -1719,11 +1705,11 @@ fn render_v080(
     card(ui, |ui| {
         ui.text("Type to filter (multi-token AND: 'ty script' matches TypeScript)")
             .dim();
-        let _ = ui.text_input(list_filter_input);
+        ui.text_input(list_filter_input);
         if list_filter_input.value != list_with_filter.filter() {
             list_with_filter.set_filter(&list_filter_input.value);
         }
-        let _ = ui.list(list_with_filter);
+        ui.list(list_with_filter);
         ui.text(format!(
             "{}/{} items shown",
             list_with_filter.visible_indices().len(),
@@ -1764,7 +1750,7 @@ fn render_v080(
         let idx = *idx_state.get(ui);
         let (_name, ref custom) = presets[idx % presets.len()];
 
-        let _ = ui.container().gap(1).row(|ui| {
+        ui.container().gap(1).row(|ui| {
             for (i, (label, _)) in presets.iter().enumerate() {
                 if i == idx {
                     ui.text(format!("● {label}")).bold().fg(custom.primary);
@@ -1774,7 +1760,7 @@ fn render_v080(
             }
             ui.text("  →  applies to entire app").dim();
         });
-        let _ = ui.container().gap(1).row(|ui| {
+        ui.container().gap(1).row(|ui| {
             ui.text("■ Primary").fg(custom.primary);
             ui.text("■ Secondary").fg(custom.secondary);
             ui.text("■ Accent").fg(custom.accent);
@@ -1787,7 +1773,7 @@ fn render_v080(
 
     section(ui, "SCATTER PLOT");
     card(ui, |ui| {
-        let _ = ui.scatter(
+        ui.scatter(
             &[(1.0, 2.0), (2.0, 5.0), (3.0, 3.0), (4.0, 7.0), (5.0, 4.0)],
             40,
             10,
@@ -1798,9 +1784,9 @@ fn render_v080(
     card(ui, |ui| {
         let val = v8_tween.value(tick);
         let progress = val / 100.0;
-        let _ = ui.progress(progress);
+        ui.progress(progress);
 
-        let _ = ui.container().gap(1).row(|ui| {
+        ui.container().gap(1).row(|ui| {
             ui.text(format!("Value: {:.0}", val));
             if *v8_anim_done {
                 ui.text("✓ on_complete fired!").fg(theme.success).bold();
@@ -1817,10 +1803,9 @@ fn render_v080(
     });
 
     section(ui, "GROUP HOVER");
-    let _ = ui.container().gap(1).row(|ui| {
+    ui.container().gap(1).row(|ui| {
         for name in &["Card A", "Card B", "Card C"] {
-            let _ = ui
-                .group(name)
+            ui.group(name)
                 .border(Border::Rounded)
                 .p(1)
                 .grow(1)
@@ -1838,7 +1823,7 @@ fn render_v080(
         let count_val = *counter.get(ui);
         let doubled = ui.use_memo(&count_val, |c| c * 2).copied(ui);
         let tripled = ui.use_memo(&count_val, |c| c * 3).copied(ui);
-        let _ = ui.container().gap(1).row(|ui| {
+        ui.container().gap(1).row(|ui| {
             ui.text(format!("Count: {count_val}"));
             ui.text(format!("×2 = {doubled}")).fg(theme.primary);
             ui.text(format!("×3 = {tripled}")).fg(theme.success);
@@ -1885,7 +1870,7 @@ fn render_v013(
 
         if *show_modal {
             let r = ui.modal(|ui| {
-                let _ = ui.bordered(Border::Rounded).p(2).col(|ui| {
+                ui.bordered(Border::Rounded).p(2).col(|ui| {
                     ui.text("Modal with Focus Trap").bold().fg(theme.primary);
                     ui.text("Tab only cycles within this modal")
                         .fg(theme.surface_text);
@@ -1905,7 +1890,7 @@ fn render_v013(
         }
     });
 
-    let _ = ui.row(|ui| {
+    ui.row(|ui| {
         card(ui, |ui| {
             ui.text("2) VS16 Emoji Rendering")
                 .bold()
@@ -1930,7 +1915,7 @@ fn render_v013(
             if ui.button("Open command palette").clicked {
                 palette.open = true;
             }
-            let _ = ui.command_palette(palette);
+            ui.command_palette(palette);
             if let Some(idx) = palette.last_selected {
                 *palette_last = palette
                     .commands()
@@ -1943,18 +1928,18 @@ fn render_v013(
         });
     });
 
-    let _ = ui.row(|ui| {
+    ui.row(|ui| {
         card(ui, |ui| {
             ui.text("4) State Debug / Clone").bold().fg(theme.primary);
             ui.text("TextInputState mutation + Debug output")
                 .fg(theme.surface_text);
-            let _ = ui.text_input(debug_input);
-            let _ = ui.row(|ui| {
+            ui.text_input(debug_input);
+            ui.row(|ui| {
                 if ui.button("Append !").clicked {
                     debug_input.value.push('!');
                 }
                 if ui.button("Clear").clicked {
-                    debug_input.value.clear();
+                    debug_input.clear();
                 }
             });
             ui.text(format!("Debug: {debug_input:?}")).dim().wrap();
@@ -1966,19 +1951,19 @@ fn render_v013(
                 .fg(theme.secondary);
             ui.text("Both states started from one clone; selections can diverge")
                 .fg(theme.surface_text);
-            let _ = ui.row(|ui| {
-                let _ = ui.container().grow(1).col(|ui| {
+            ui.row(|ui| {
+                ui.container().grow(1).col(|ui| {
                     ui.text("List A").bold().fg(theme.primary);
-                    let _ = ui.list(list_a);
+                    ui.list(list_a);
                     ui.text(format!(
                         "selected: {}",
                         list_a.selected_item().unwrap_or("-")
                     ))
                     .dim();
                 });
-                let _ = ui.container().grow(1).col(|ui| {
+                ui.container().grow(1).col(|ui| {
                     ui.text("List B (cloned)").bold().fg(theme.secondary);
-                    let _ = ui.list(list_b);
+                    ui.list(list_b);
                     ui.text(format!(
                         "selected: {}",
                         list_b.selected_item().unwrap_or("-")
@@ -2012,15 +1997,15 @@ fn render_v0132(
         ui.text("1) Table Zebra Striping").bold().fg(theme.primary);
         ui.text("Alternating row backgrounds for readability")
             .fg(theme.surface_text);
-        let _ = ui.table(zebra_table);
+        ui.table(zebra_table);
     });
 
-    let _ = ui.row(|ui| {
+    ui.row(|ui| {
         card(ui, |ui| {
             ui.text("2) Calendar Widget").bold().fg(theme.secondary);
             ui.text("Arrows or h/l move by day, [/] change month, Enter selects (Tab to focus)")
                 .fg(theme.surface_text);
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 if ui.button("◀ Prev Month").clicked {
                     calendar.prev_month();
                 }
@@ -2028,7 +2013,7 @@ fn render_v0132(
                     calendar.next_month();
                 }
             });
-            let _ = ui.calendar(calendar);
+            ui.calendar(calendar);
             if let Some((y, m, d)) = calendar.selected_date() {
                 ui.text(format!("Selected: {y}-{m:02}-{d:02}"))
                     .fg(theme.primary);
@@ -2046,7 +2031,7 @@ fn render_v0132(
             if ui.button("Open Fuzzy Palette").clicked {
                 fuzzy_palette.open = true;
             }
-            let _ = ui.command_palette(fuzzy_palette);
+            ui.command_palette(fuzzy_palette);
             if let Some(idx) = fuzzy_palette.last_selected {
                 *fuzzy_last = fuzzy_palette
                     .commands()
@@ -2063,7 +2048,7 @@ fn render_v0132(
         ui.text("4) Tooltip").bold().fg(theme.primary);
         ui.text("Hover over buttons to see tooltip popups")
             .fg(theme.surface_text);
-        let _ = ui.row(|ui| {
+        ui.row(|ui| {
             let _ = ui.button("Save");
             ui.tooltip("Save the current document to disk");
             let _ = ui.button("Delete");
@@ -2089,7 +2074,7 @@ fn render_v0132(
 
         if current == "main" {
             ui.text("This is the main screen").fg(theme.surface_text);
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 if ui.button("-> Settings").clicked {
                     nav_action = Some("settings");
                 }
@@ -2108,7 +2093,7 @@ fn render_v0132(
 
         if current == "profile" {
             ui.text("Profile screen").fg(theme.surface_text);
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 if ui.button("<- Back").clicked {
                     nav_action = Some("<back>");
                 }
@@ -2133,7 +2118,7 @@ fn render_v0132(
         }
     });
 
-    let _ = ui.row(|ui| {
+    ui.row(|ui| {
         card(ui, |ui| {
             ui.text("6) Sixel Image Protocol").bold().fg(theme.accent);
             ui.text("Non-Kitty terminal image support")
@@ -2142,8 +2127,8 @@ fn render_v0132(
                 .fg(theme.surface_text)
                 .wrap();
             ui.text("ui.sixel_image(&rgba, w, h, cols, rows)").dim();
-            let _ = ui
-                .code_block("// Render only on verified Sixel terminals\nlet _ = ui.sixel_image(&rgba, w, h, cols, rows);")
+            ui
+                .code_block("// Render only on verified Sixel terminals\nui.sixel_image(&rgba, w, h, cols, rows);")
                 .numbered()
                 .show();
         });
@@ -2152,8 +2137,8 @@ fn render_v0132(
             ui.text("7) Static Output Mode").bold().fg(theme.primary);
             ui.text("Fixed logs above + dynamic TUI below")
                 .fg(theme.surface_text);
-            let _ = ui.container().min_w(56).col(|ui| {
-                let _ = ui
+            ui.container().min_w(56).col(|ui| {
+                ui
                     .code_block(
                         "let mut out = StaticOutput::new();\nslt::run_static(&mut out, 5, |ui| {\n  out.println(\"Building...\");\n  ui.progress(0.6);\n});",
                     )
@@ -2195,9 +2180,8 @@ fn render_v014(
         rich_log.max_entries = Some(100);
     }
 
-    let _ = ui.container().gap(1).col(|ui| {
-        let _ = ui
-            .bordered(slt::Border::Rounded)
+    ui.container().gap(1).col(|ui| {
+        ui.bordered(slt::Border::Rounded)
             .title("Gradient Text")
             .p(1)
             .col(|ui| {
@@ -2209,16 +2193,14 @@ fn render_v014(
                     .gradient(slt::Color::Cyan, slt::Color::Blue);
             });
 
-        let _ = ui
-            .bordered(slt::Border::Rounded)
+        ui.bordered(slt::Border::Rounded)
             .title("BigText")
             .p(1)
             .col(|ui| {
-                let _ = ui.big_text("SLT 0.14");
+                ui.big_text("SLT 0.14");
             });
 
-        let _ = ui
-            .bordered(slt::Border::Rounded)
+        ui.bordered(slt::Border::Rounded)
             .title("Timer")
             .p(1)
             .row(|ui| {
@@ -2229,31 +2211,28 @@ fn render_v014(
 
         #[cfg(feature = "qrcode")]
         {
-            let _ = ui
-                .bordered(slt::Border::Rounded)
+            ui.bordered(slt::Border::Rounded)
                 .title("QR Code")
                 .p(1)
                 .col(|ui| {
-                    let _ = ui.qr_code("https://github.com/subinium/SuperLightTUI");
+                    ui.qr_code("https://github.com/subinium/SuperLightTUI");
                 });
         }
 
-        let _ = ui
-            .bordered(slt::Border::Rounded)
+        ui.bordered(slt::Border::Rounded)
             .title("RichLog")
             .p(1)
             .h(10)
             .col(|ui| {
-                let _ = ui.rich_log(rich_log);
+                ui.rich_log(rich_log);
             });
 
-        let _ = ui
-            .bordered(slt::Border::Rounded)
+        ui.bordered(slt::Border::Rounded)
             .title("DirectoryTree")
             .p(1)
             .h(12)
             .col(|ui| {
-                let _ = ui.directory_tree(dir_tree);
+                ui.directory_tree(dir_tree);
             });
     });
 }
@@ -2265,133 +2244,133 @@ fn render_v0141(ui: &mut Context) {
         .dim();
     ui.text("");
 
-    let _ = ui.container().gap(1).col(|ui| {
-        let _ = ui.container().gap(1).row(|ui| {
-            let _ = ui
+    ui.container().gap(1).col(|ui| {
+        ui.container().gap(1).row(|ui| {
+            ui
                 .bordered(slt::Border::Rounded)
                 .title("Rust")
                 .p(1)
                 .grow(1)
                 .col(|ui| {
-                    let _ = ui.code_block("use std::collections::HashMap;\n\nfn main() {\n    let mut map = HashMap::new();\n    map.insert(\"key\", 42);\n    println!(\"{:?}\", map);\n}").lang("rust").show();
+                    ui.code_block("use std::collections::HashMap;\n\nfn main() {\n    let mut map = HashMap::new();\n    map.insert(\"key\", 42);\n    println!(\"{:?}\", map);\n}").lang("rust").show();
                 });
 
-            let _ = ui
+            ui
                 .bordered(slt::Border::Rounded)
                 .title("Python")
                 .p(1)
                 .grow(1)
                 .col(|ui| {
-                    let _ = ui.code_block("import json\n\ndef process(data: list[str]) -> dict:\n    \"\"\"Parse and transform data.\"\"\"\n    result = {k: len(k) for k in data}\n    return result").lang("python").show();
+                    ui.code_block("import json\n\ndef process(data: list[str]) -> dict:\n    \"\"\"Parse and transform data.\"\"\"\n    result = {k: len(k) for k in data}\n    return result").lang("python").show();
                 });
         });
 
-        let _ = ui.container().gap(1).row(|ui| {
-            let _ = ui
+        ui.container().gap(1).row(|ui| {
+            ui
                 .bordered(slt::Border::Rounded)
                 .title("TypeScript")
                 .p(1)
                 .grow(1)
                 .col(|ui| {
-                    let _ = ui.code_block("interface User {\n  name: string;\n  age: number;\n}\n\nconst greet = (user: User): string => {\n  return `Hello, ${user.name}!`;\n};").lang("ts").show();
+                    ui.code_block("interface User {\n  name: string;\n  age: number;\n}\n\nconst greet = (user: User): string => {\n  return `Hello, ${user.name}!`;\n};").lang("ts").show();
                 });
 
-            let _ = ui
+            ui
                 .bordered(slt::Border::Rounded)
                 .title("Go")
                 .p(1)
                 .grow(1)
                 .col(|ui| {
-                    let _ = ui.code_block("package main\n\nimport \"fmt\"\n\nfunc main() {\n\tch := make(chan int, 10)\n\tgo func() { ch <- 42 }()\n\tfmt.Println(<-ch)\n}").lang("go").show();
+                    ui.code_block("package main\n\nimport \"fmt\"\n\nfunc main() {\n\tch := make(chan int, 10)\n\tgo func() { ch <- 42 }()\n\tfmt.Println(<-ch)\n}").lang("go").show();
                 });
         });
 
-        let _ = ui.container().gap(1).row(|ui| {
-            let _ = ui
+        ui.container().gap(1).row(|ui| {
+            ui
                 .bordered(slt::Border::Rounded)
                 .title("C++")
                 .p(1)
                 .grow(1)
                 .col(|ui| {
-                    let _ = ui.code_block("#include <vector>\n#include <algorithm>\n\nint main() {\n    std::vector<int> v = {3, 1, 4};\n    std::sort(v.begin(), v.end());\n    return 0;\n}").lang("cpp").show();
+                    ui.code_block("#include <vector>\n#include <algorithm>\n\nint main() {\n    std::vector<int> v = {3, 1, 4};\n    std::sort(v.begin(), v.end());\n    return 0;\n}").lang("cpp").show();
                 });
 
-            let _ = ui
+            ui
                 .bordered(slt::Border::Rounded)
                 .title("Java")
                 .p(1)
                 .grow(1)
                 .col(|ui| {
-                    let _ = ui.code_block("import java.util.List;\n\npublic class Main {\n    public static void main(String[] args) {\n        var items = List.of(\"a\", \"b\");\n        items.forEach(System.out::println);\n    }\n}").lang("java").show();
+                    ui.code_block("import java.util.List;\n\npublic class Main {\n    public static void main(String[] args) {\n        var items = List.of(\"a\", \"b\");\n        items.forEach(System.out::println);\n    }\n}").lang("java").show();
                 });
         });
 
-        let _ = ui.container().gap(1).row(|ui| {
-            let _ = ui
+        ui.container().gap(1).row(|ui| {
+            ui
                 .bordered(slt::Border::Rounded)
                 .title("Bash")
                 .p(1)
                 .grow(1)
                 .col(|ui| {
-                    let _ = ui.code_block("#!/bin/bash\nset -euo pipefail\n\nfor file in *.rs; do\n  echo \"Processing $file\"\n  wc -l \"$file\"\ndone").lang("bash").show();
+                    ui.code_block("#!/bin/bash\nset -euo pipefail\n\nfor file in *.rs; do\n  echo \"Processing $file\"\n  wc -l \"$file\"\ndone").lang("bash").show();
                 });
 
-            let _ = ui
+            ui
                 .bordered(slt::Border::Rounded)
                 .title("Ruby")
                 .p(1)
                 .grow(1)
                 .col(|ui| {
-                    let _ = ui.code_block("class Person\n  attr_reader :name, :age\n\n  def initialize(name, age)\n    @name = name\n    @age = age\n  end\n\n  def greet = \"Hi, I'm #{name}\"\nend").lang("ruby").show();
+                    ui.code_block("class Person\n  attr_reader :name, :age\n\n  def initialize(name, age)\n    @name = name\n    @age = age\n  end\n\n  def greet = \"Hi, I'm #{name}\"\nend").lang("ruby").show();
                 });
         });
 
-        let _ = ui.container().gap(1).row(|ui| {
-            let _ = ui
+        ui.container().gap(1).row(|ui| {
+            ui
                 .bordered(slt::Border::Rounded)
                 .title("JSON")
                 .p(1)
                 .grow(1)
                 .col(|ui| {
-                    let _ = ui.code_block("{\n  \"name\": \"slt\",\n  \"version\": \"0.14.1\",\n  \"features\": [\"syntax\", \"async\"],\n  \"count\": 15\n}").lang("json").show();
+                    ui.code_block("{\n  \"name\": \"slt\",\n  \"version\": \"0.14.1\",\n  \"features\": [\"syntax\", \"async\"],\n  \"count\": 15\n}").lang("json").show();
                 });
 
-            let _ = ui
+            ui
                 .bordered(slt::Border::Rounded)
                 .title("TOML")
                 .p(1)
                 .grow(1)
                 .col(|ui| {
-                    let _ = ui.code_block("[package]\nname = \"superlighttui\"\nversion = \"0.14.1\"\n\n[features]\nsyntax = [\"syntax-rust\"]").lang("toml").show();
+                    ui.code_block("[package]\nname = \"superlighttui\"\nversion = \"0.14.1\"\n\n[features]\nsyntax = [\"syntax-rust\"]").lang("toml").show();
                 });
 
-            let _ = ui
+            ui
                 .bordered(slt::Border::Rounded)
                 .title("YAML")
                 .p(1)
                 .grow(1)
                 .col(|ui| {
-                    let _ = ui.code_block("name: CI\non:\n  push:\n    branches: [main]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4").lang("yaml").show();
+                    ui.code_block("name: CI\non:\n  push:\n    branches: [main]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4").lang("yaml").show();
                 });
         });
 
-        let _ = ui.container().gap(1).row(|ui| {
-            let _ = ui
+        ui.container().gap(1).row(|ui| {
+            ui
                 .bordered(slt::Border::Rounded)
                 .title("HTML")
                 .p(1)
                 .grow(1)
                 .col(|ui| {
-                    let _ = ui.code_block("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <title>SLT Demo</title>\n</head>\n<body>\n  <h1 class=\"title\">Hello</h1>\n</body>\n</html>").lang("html").show();
+                    ui.code_block("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <title>SLT Demo</title>\n</head>\n<body>\n  <h1 class=\"title\">Hello</h1>\n</body>\n</html>").lang("html").show();
                 });
 
-            let _ = ui
+            ui
                 .bordered(slt::Border::Rounded)
                 .title("CSS")
                 .p(1)
                 .grow(1)
                 .col(|ui| {
-                    let _ = ui.code_block(".container {\n  display: flex;\n  gap: 1rem;\n  background: #1e1e2e;\n  border-radius: 8px;\n  padding: 16px;\n}").lang("css").show();
+                    ui.code_block(".container {\n  display: flex;\n  gap: 1rem;\n  background: #1e1e2e;\n  border-radius: 8px;\n  padding: 16px;\n}").lang("css").show();
                 });
         });
     });
@@ -2405,8 +2384,7 @@ fn render_v0141(ui: &mut Context) {
 
 fn card(ui: &mut Context, f: impl FnOnce(&mut Context)) {
     let theme = *ui.theme();
-    let _ = ui
-        .container()
+    ui.container()
         .bg(theme.surface)
         .border(Border::Rounded)
         .p(1)
@@ -2426,9 +2404,8 @@ fn render_v01210(ui: &mut Context) {
     ui.text("");
 
     // ── 1. flex_center ────────────────────────────────────────────
-    let _ = ui.divider_text("flex_center()");
-    let _ = ui
-        .container()
+    ui.divider_text("flex_center()");
+    ui.container()
         .border(Border::Rounded)
         .h(5)
         .flex_center()
@@ -2439,10 +2416,9 @@ fn render_v01210(ui: &mut Context) {
     ui.text("");
 
     // ── 2. border_x / border_y ────────────────────────────────────
-    let _ = ui.divider_text("border_x() / border_y()");
-    let _ = ui.row(|ui| {
-        let _ = ui
-            .container()
+    ui.divider_text("border_x() / border_y()");
+    ui.row(|ui| {
+        ui.container()
             .border(Border::Rounded)
             .border_x()
             .p(1)
@@ -2451,8 +2427,7 @@ fn render_v01210(ui: &mut Context) {
                 ui.text(".border_x()").bold().fg(theme.primary);
                 ui.text("left + right only");
             });
-        let _ = ui
-            .container()
+        ui.container()
             .border(Border::Rounded)
             .border_y()
             .p(1)
@@ -2461,8 +2436,7 @@ fn render_v01210(ui: &mut Context) {
                 ui.text(".border_y()").bold().fg(theme.secondary);
                 ui.text("top + bottom only");
             });
-        let _ = ui
-            .container()
+        ui.container()
             .border(Border::Rounded)
             .p(1)
             .grow(1)
@@ -2475,8 +2449,8 @@ fn render_v01210(ui: &mut Context) {
     ui.text("");
 
     // ── 3. text_center / text_right ───────────────────────────────
-    let _ = ui.divider_text("text_center() / text_right()");
-    let _ = ui.container().border(Border::Single).p(1).col(|ui| {
+    ui.divider_text("text_center() / text_right()");
+    ui.container().border(Border::Single).p(1).col(|ui| {
         ui.text("Left (default)").fg(theme.primary);
         ui.text("Centered text").text_center().fg(theme.secondary);
         ui.text("Right-aligned text").text_right().fg(theme.accent);
@@ -2485,10 +2459,9 @@ fn render_v01210(ui: &mut Context) {
     ui.text("");
 
     // ── 4. text_color ─────────────────────────────────────────────
-    let _ = ui.divider_text("text_color() — style inheritance");
-    let _ = ui.row(|ui| {
-        let _ = ui
-            .container()
+    ui.divider_text("text_color() — style inheritance");
+    ui.row(|ui| {
+        ui.container()
             .border(Border::Rounded)
             .text_color(Color::Rgb(255, 180, 50))
             .p(1)
@@ -2498,8 +2471,7 @@ fn render_v01210(ui: &mut Context) {
                 ui.text("Still orange");
                 ui.text("Overridden!").fg(Color::Rgb(100, 255, 100));
             });
-        let _ = ui
-            .container()
+        ui.container()
             .border(Border::Rounded)
             .text_color(Color::Rgb(130, 180, 255))
             .p(1)
@@ -2507,7 +2479,7 @@ fn render_v01210(ui: &mut Context) {
             .col(|ui| {
                 ui.text("Blue by default");
                 ui.text("Nested containers inherit:");
-                let _ = ui.container().p(1).col(|ui| {
+                ui.container().p(1).col(|ui| {
                     ui.text("Still blue in child");
                 });
             });
@@ -2516,10 +2488,9 @@ fn render_v01210(ui: &mut Context) {
     ui.text("");
 
     // ── 5. row_gap / col_gap ──────────────────────────────────────
-    let _ = ui.divider_text("row_gap() / col_gap()");
-    let _ = ui.row(|ui| {
-        let _ = ui
-            .container()
+    ui.divider_text("row_gap() / col_gap()");
+    ui.row(|ui| {
+        ui.container()
             .border(Border::Rounded)
             .row_gap(1)
             .p(1)
@@ -2530,8 +2501,7 @@ fn render_v01210(ui: &mut Context) {
                 ui.text("Row B");
                 ui.text("Row C");
             });
-        let _ = ui
-            .container()
+        ui.container()
             .border(Border::Rounded)
             .col_gap(4)
             .p(1)
@@ -2542,8 +2512,7 @@ fn render_v01210(ui: &mut Context) {
                 ui.text("B");
                 ui.text("C");
             });
-        let _ = ui
-            .container()
+        ui.container()
             .border(Border::Rounded)
             .gap(0)
             .p(1)
@@ -2559,31 +2528,27 @@ fn render_v01210(ui: &mut Context) {
     ui.text("");
 
     // ── 6. align_self ─────────────────────────────────────────────
-    let _ = ui.divider_text("align_self() — per-child cross-axis override");
-    let _ = ui
-        .container()
+    ui.divider_text("align_self() — per-child cross-axis override");
+    ui.container()
         .border(Border::Rounded)
         .h(7)
         .gap(0)
         .col(|ui| {
-            let _ = ui
-                .container()
+            ui.container()
                 .align_self(Align::Start)
                 .border(Border::Single)
                 .px(1)
                 .row(|ui| {
                     ui.text("align_self(Start)").fg(theme.primary);
                 });
-            let _ = ui
-                .container()
+            ui.container()
                 .align_self(Align::Center)
                 .border(Border::Single)
                 .px(1)
                 .row(|ui| {
                     ui.text("align_self(Center)").fg(theme.secondary);
                 });
-            let _ = ui
-                .container()
+            ui.container()
                 .align_self(Align::End)
                 .border(Border::Single)
                 .px(1)
@@ -2595,8 +2560,8 @@ fn render_v01210(ui: &mut Context) {
     ui.text("");
 
     // ── 7. truncate ───────────────────────────────────────────────
-    let _ = ui.divider_text("truncate() — text overflow with ellipsis");
-    let _ = ui.container()
+    ui.divider_text("truncate() — text overflow with ellipsis");
+    ui.container()
         .border(Border::Rounded)
         .p(1)
         .col(|ui| {
@@ -2632,64 +2597,66 @@ fn render_v094(
         *alert_visible = false;
     }
 
-    let _ = ui.divider_text("Navigation");
-    let _ = ui.breadcrumb(&["Home", "Settings", "Profile"]);
+    ui.divider_text("Navigation");
+    ui.breadcrumb(&["Home", "Settings", "Profile"]);
 
-    let _ = ui.divider_text("Dashboard");
-    let _ = ui.row(|ui| {
+    ui.divider_text("Dashboard");
+    ui.row(|ui| {
         card(ui, |ui| {
-            let _ = ui.stat_trend("Revenue", "$12,400", Trend::Up);
+            ui.stat_trend("Revenue", "$12,400", Trend::Up);
         });
         card(ui, |ui| {
-            let _ = ui.stat_trend("Errors", "3", Trend::Down);
+            ui.stat_trend("Errors", "3", Trend::Down);
         });
         card(ui, |ui| {
-            let _ = ui.stat_colored("CPU", "72%", ui.theme().warning);
+            let warning = ui.theme().warning;
+            ui.stat("CPU", "72%").color(warning);
         });
         card(ui, |ui| {
-            let _ = ui.stat("Uptime", "14d 3h");
+            ui.stat("Uptime", "14d 3h");
         });
     });
 
-    let _ = ui.divider_text("Inline Elements");
+    ui.divider_text("Inline Elements");
     ui.line(|ui| {
-        let _ = ui.badge("v0.9.4");
+        ui.badge("v0.9.4");
         ui.text(" ");
-        let _ = ui.badge_colored("Stable", ui.theme().success);
+        let success = ui.theme().success;
+        ui.badge("Stable").color(success);
         ui.text(" ");
-        let _ = ui.badge_colored("Rust", ui.theme().accent);
+        let accent = ui.theme().accent;
+        ui.badge("Rust").color(accent);
         ui.text("   ");
-        let _ = ui.key_hint("Ctrl+S");
+        ui.key_hint("Ctrl+S");
         ui.text(" save  ");
-        let _ = ui.key_hint("Ctrl+Q");
+        ui.key_hint("Ctrl+Q");
         ui.text(" quit");
     });
 
-    let _ = ui.divider_text("Accordions");
-    let _ = ui.accordion("General Settings", accordion_general, |ui| {
-        let _ = ui.definition_list(&[
+    ui.divider_text("Accordions");
+    ui.accordion("General Settings", accordion_general, |ui| {
+        ui.definition_list(&[
             ("Theme", "Dark"),
             ("Language", "en-US"),
             ("Font Size", "14px"),
         ]);
     });
-    let _ = ui.accordion("Advanced Settings", accordion_advanced, |ui| {
-        let _ = ui.definition_list(&[
+    ui.accordion("Advanced Settings", accordion_advanced, |ui| {
+        ui.definition_list(&[
             ("Log Level", "debug"),
             ("Max Conn", "100"),
             ("Timeout", "30s"),
         ]);
     });
 
-    let _ = ui.divider_text("Code Block");
-    let _ = ui
-        .code_block("fn main() {\n    slt::run(|ui| {\n        ui.text(\"hello\");\n    });\n}")
+    ui.divider_text("Code Block");
+    ui.code_block("fn main() {\n    slt::run(|ui| {\n        ui.text(\"hello\");\n    });\n}")
         .numbered()
         .show();
 
-    let _ = ui.divider_text("Empty State");
-    let _ = ui.container().h(3).col(|ui| {
-        let _ = ui.empty_state("No items yet", "Items will appear here when added");
+    ui.divider_text("Empty State");
+    ui.container().h(3).col(|ui| {
+        ui.empty_state("No items yet", "Items will appear here when added");
     });
 }
 
@@ -2705,19 +2672,18 @@ fn render_v0152(
     );
 
     // ── Markdown pipe table ─────────────────────────────────────────
-    let _ = ui.divider_text("Markdown Pipe Tables");
+    ui.divider_text("Markdown Pipe Tables");
     ui.text("ui.markdown() now renders GFM-style pipe tables with box-drawing borders.")
         .dim();
     ui.text("");
 
-    let _ = ui.container().gap(1).row(|ui| {
-        let _ = ui
-            .bordered(Border::Rounded)
+    ui.container().gap(1).row(|ui| {
+        ui.bordered(Border::Rounded)
             .title("Table in Markdown")
             .p(1)
             .grow(1)
             .col(|ui| {
-                let _ = ui.markdown(
+                ui.markdown(
                     "## Feature Matrix\n\n\
                      | Feature | Status | Since |\n\
                      |---------|--------|-------|\n\
@@ -2729,13 +2695,12 @@ fn render_v0152(
                 );
             });
 
-        let _ = ui
-            .bordered(Border::Rounded)
+        ui.bordered(Border::Rounded)
             .title("Mixed Content")
             .p(1)
             .grow(1)
             .col(|ui| {
-                let _ = ui.markdown(
+                ui.markdown(
                     "# API Summary\n\n\
                      Core methods added in this release:\n\n\
                      | Method | Returns | Description |\n\
@@ -2752,19 +2717,19 @@ fn render_v0152(
     ui.text("");
 
     // ── Markdown links & images ────────────────────────────────────
-    let _ = ui.divider_text("Markdown Links & Images");
+    ui.divider_text("Markdown Links & Images");
     ui.text("ui.markdown() now parses [text](url) as OSC 8 links and ![alt](url) as image placeholders.")
         .dim();
     ui.text("");
 
-    let _ = ui.container().gap(1).row(|ui| {
-        let _ = ui
+    ui.container().gap(1).row(|ui| {
+        ui
             .bordered(Border::Rounded)
             .title("Links")
             .p(1)
             .grow(1)
             .col(|ui| {
-                let _ = ui.markdown(
+                ui.markdown(
                     "Visit [SLT on GitHub](https://github.com/subinium/SuperLightTUI) for the source.\n\n\
                      - [Docs](https://docs.rs/superlighttui) — API reference\n\
                      - [Examples](https://github.com/subinium/SuperLightTUI/tree/main/examples) — demo code\n\n\
@@ -2772,13 +2737,13 @@ fn render_v0152(
                 );
             });
 
-        let _ = ui
+        ui
             .bordered(Border::Rounded)
             .title("Images")
             .p(1)
             .grow(1)
             .col(|ui| {
-                let _ = ui.markdown(
+                ui.markdown(
                     "Inline image: ![logo](./assets/logo.png)\n\n\
                      Images render as `[Image: alt]` placeholders.\n\
                      Use `kitty_image()` for actual pixel rendering.\n\n\
@@ -2790,16 +2755,15 @@ fn render_v0152(
     ui.text("");
 
     // ── Focus control API ───────────────────────────────────────────
-    let _ = ui.divider_text("Programmatic Focus Control");
+    ui.divider_text("Programmatic Focus Control");
     ui.text("ui.set_focus_index(n) / ui.focus_index() / ui.focus_count()")
         .dim();
     ui.text("");
 
     let focus_idx = ui.focus_index();
     let focus_cnt = ui.focus_count();
-    let _ = ui.container().gap(1).row(|ui| {
-        let _ = ui
-            .bordered(Border::Rounded)
+    ui.container().gap(1).row(|ui| {
+        ui.bordered(Border::Rounded)
             .title("Focus State")
             .p(1)
             .grow(1)
@@ -2811,61 +2775,57 @@ fn render_v0152(
                 ui.text("or use set_focus_index(n) in code.").dim();
             });
 
-        let _ = ui
-            .bordered(Border::Rounded)
+        ui.bordered(Border::Rounded)
             .title("Focusable Widgets")
             .p(1)
             .grow(1)
             .col(|ui| {
                 ui.text("Two text inputs — Tab cycles between them:").dim();
-                let _ = ui.text_input(focus_a);
-                let _ = ui.text_input(focus_b);
+                ui.text_input(focus_a);
+                ui.text_input(focus_b);
             });
     });
 
     ui.text("");
 
     // ── text_input grow ─────────────────────────────────────────────
-    let _ = ui.divider_text("text_input in a growing row");
+    ui.divider_text("text_input in a growing row");
     ui.text("Wrap text_input in a growing container when it should fill available row width.")
         .dim();
     ui.text("");
 
-    let _ = ui
-        .bordered(Border::Rounded)
+    ui.bordered(Border::Rounded)
         .title("Row with text_input + button")
         .p(1)
         .row(|ui| {
-            let _ = ui.text_input(search);
+            ui.text_input(search);
             let _ = ui.button("Go");
         });
 
     ui.text("");
 
     // ── Markdown complex cases ──────────────────────────────────────
-    let _ = ui.divider_text("Markdown — Complex Cases (v0.15.3+)");
+    ui.divider_text("Markdown — Complex Cases (v0.15.3+)");
 
-    let _ = ui.container().gap(1).row(|ui| {
-        let _ = ui
-            .bordered(Border::Rounded)
+    ui.container().gap(1).row(|ui| {
+        ui.bordered(Border::Rounded)
             .title("Wrapping + Links")
             .p(1)
             .grow(1)
             .col(|ui| {
-                let _ = ui.markdown(
+                ui.markdown(
                     "This paragraph contains an inline [link to docs](https://docs.rs) \
                      and **bold text** that should all wrap correctly at the container boundary \
                      without overflowing. Links preserve their styling even when wrapped.",
                 );
             });
 
-        let _ = ui
-            .bordered(Border::Rounded)
+        ui.bordered(Border::Rounded)
             .title("Blockquote")
             .p(1)
             .grow(1)
             .col(|ui| {
-                let _ = ui.markdown(
+                ui.markdown(
                     "> The best way to predict the future is to invent it.\n\
                      > — Alan Kay\n\n\
                      Blockquotes use `│` left bar with dim italic styling.",
@@ -2873,14 +2833,13 @@ fn render_v0152(
             });
     });
 
-    let _ = ui.container().gap(1).row(|ui| {
-        let _ = ui
-            .bordered(Border::Rounded)
+    ui.container().gap(1).row(|ui| {
+        ui.bordered(Border::Rounded)
             .title("Table with formatting")
             .p(1)
             .grow(1)
             .col(|ui| {
-                let _ = ui.markdown(
+                ui.markdown(
                     "| Widget | Status | Notes |\n\
                      |--------|--------|-------|\n\
                      | **text_input** | *stable* | `grow(1)` default |\n\
@@ -2889,13 +2848,12 @@ fn render_v0152(
                 );
             });
 
-        let _ = ui
-            .bordered(Border::Rounded)
+        ui.bordered(Border::Rounded)
             .title("Mixed content")
             .p(1)
             .grow(1)
             .col(|ui| {
-                let _ = ui.markdown(
+                ui.markdown(
                     "# Heading\n\n\
                      Regular paragraph with **bold**, *italic*, and `code`.\n\n\
                      - List with [link](https://example.com)\n\

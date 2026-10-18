@@ -351,14 +351,13 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
         }
     };
 
-    let _ = ui
-        .bordered(Border::Rounded)
+    ui.bordered(Border::Rounded)
         .title("Spreadsheet")
         .p(1)
         .grow(1)
         .col(|ui| {
             // formula bar
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 ui.text(format!(
                     "{}{}",
                     col_letter(state.sheet.cursor_col),
@@ -368,15 +367,15 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                 .fg(Color::Cyan);
                 ui.text(" | ").dim();
                 if state.editing {
-                    let _ = ui.text_input(&mut state.edit_input);
+                    ui.text_input(&mut state.edit_input);
                 } else {
                     ui.text(&state.formula_bar);
                 }
             });
-            let _ = ui.separator();
+            ui.separator();
 
             // column headers
-            let _ = ui.scrollable(&mut state.scroll).grow(1).col(|ui| {
+            ui.scrollable(&mut state.scroll).grow(1).col(|ui| {
                 let mut header_line = String::from("     ");
                 for (c, h) in state.sheet.headers.iter().enumerate() {
                     let w = state.sheet.col_widths[c] + 2;
@@ -415,7 +414,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                     }
 
                     let is_current_row = r == state.sheet.cursor_row;
-                    let _ = ui.row(|ui| {
+                    ui.row(|ui| {
                         let num_style = if is_current_row {
                             Style::new().fg(Color::Cyan).bold()
                         } else {
@@ -453,9 +452,9 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                 }
             });
 
-            let _ = ui.separator();
+            ui.separator();
             // status bar
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 ui.text(format!(
                     "Cell {}{} | {} rows x {} cols",
                     col_letter(state.sheet.cursor_col),
@@ -471,7 +470,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                     ui.text("NAV").bold().fg(Color::Green);
                 }
             });
-            let _ = ui.help(&[
+            ui.help(&[
                 ("Ctrl+Q", "quit"),
                 ("Ctrl+T", "theme"),
                 ("Arrows", "navigate"),
@@ -483,17 +482,14 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 
 fn main() -> std::io::Result<()> {
     let mut state = DemoState::new();
-    slt::run_with(
-        slt::RunConfig::default().mouse(true),
-        move |ui: &mut Context| {
-            if ui.key_mod('q', slt::KeyModifiers::CONTROL)
-                || (ui.key_code(slt::KeyCode::Esc) && !state.editing)
-            {
-                ui.quit();
-            }
-            render(ui, &mut state);
-        },
-    )
+    slt::run_with(slt::RunConfig::default(), move |ui: &mut Context| {
+        if ui.key_mod('q', slt::KeyModifiers::CONTROL)
+            || (ui.key_code(slt::KeyCode::Esc) && !state.editing)
+        {
+            ui.quit();
+        }
+        render(ui, &mut state);
+    })
 }
 
 fn is_numeric(s: &str) -> bool {

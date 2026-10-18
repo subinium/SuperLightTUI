@@ -57,8 +57,7 @@ impl Default for DemoState {
 pub fn render(ui: &mut Context, state: &mut DemoState) {
     let tick = ui.tick();
 
-    let _ = ui
-        .bordered(Border::Rounded)
+    ui.bordered(Border::Rounded)
         .title("Cookbook: Modal + Toast")
         .p(2)
         .gap(1)
@@ -67,12 +66,15 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
             ui.text("Destructive actions need a confirmation modal.")
                 .dim();
 
-            let _ = ui.container().gap(2).row(|ui| {
+            ui.container().gap(2).row(|ui| {
                 ui.text(format!("Items remaining: {}", state.items_left))
                     .bold()
                     .fg(Color::Cyan);
                 ui.spacer();
-                if ui.button_with("Delete item", ButtonVariant::Danger).clicked
+                if ui
+                    .button("Delete item")
+                    .variant(ButtonVariant::Danger)
+                    .clicked
                     && state.items_left > 0
                 {
                     state.show_modal = true;
@@ -84,21 +86,20 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
         });
 
     if state.show_modal {
-        let _ = ui.modal(|ui| {
-            let _ = ui
-                .bordered(Border::Rounded)
+        ui.modal(|ui| {
+            ui.bordered(Border::Rounded)
                 .title("Confirm")
                 .p(2)
                 .gap(1)
                 .col(|ui| {
                     ui.text("Delete this item? This cannot be undone.").bold();
-                    let _ = ui.container().gap(2).row(|ui| {
-                        if ui.button_with("Yes", ButtonVariant::Danger).clicked {
+                    ui.container().gap(2).row(|ui| {
+                        if ui.button("Yes").variant(ButtonVariant::Danger).clicked {
                             state.items_left = state.items_left.saturating_sub(1);
                             state.toasts.success("Deleted", tick);
                             state.show_modal = false;
                         }
-                        if ui.button_with("No", ButtonVariant::Outline).clicked {
+                        if ui.button("No").variant(ButtonVariant::Outline).clicked {
                             state.toasts.info("Cancelled", tick);
                             state.show_modal = false;
                         }

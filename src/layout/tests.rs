@@ -1,11 +1,11 @@
-#![allow(clippy::print_stderr)]
-#![allow(clippy::unwrap_used)]
+//! Layout kernel tests: wrapping, flex sizing, scroll collection and
+//! debug-overlay counts.
 
 use super::tree::{ContainerConfig, default_container_config};
 use super::*;
 
 #[test]
-fn v024_allocations_remain_full_when_scrolled_outside_viewport() {
+fn allocations_remain_full_when_scrolled_outside_viewport() {
     let mut root = LayoutNode::container(Direction::Column, default_container_config());
     root.size = (8, 3);
     root.is_scrollable = true;
@@ -29,7 +29,7 @@ fn v024_allocations_remain_full_when_scrolled_outside_viewport() {
 }
 
 #[test]
-fn v024_recursive_height_cache_follows_width_and_fixed_constraints() {
+fn recursive_height_cache_follows_width_and_fixed_constraints() {
     let mut column = LayoutNode::container(Direction::Column, default_container_config());
     let mut row = LayoutNode::container(Direction::Row, default_container_config());
     let text = LayoutNode::text(
@@ -547,7 +547,7 @@ fn focus_marker_tags_container() {
 
     let mut commands = vec![
         Command::FocusMarker(0),
-        Command::BeginContainer(Box::new(BeginContainerArgs {
+        Command::BeginContainer(BeginContainerArgs {
             direction: Direction::Column,
             gap: 0,
             align: Align::Start,
@@ -563,7 +563,7 @@ fn focus_marker_tags_container() {
             title: None,
             grow: 0,
             group_name: None,
-        })),
+        }),
         Command::Text {
             content: "inside".into(),
             cursor_offset: None,
@@ -682,7 +682,7 @@ fn group_names_share_arc_across_focus_descendants() {
     let mut commands: Vec<Command> = Vec::new();
     let mut focus_id = 0usize;
     for i in 0..N_GROUPS {
-        commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+        commands.push(Command::BeginContainer(BeginContainerArgs {
             direction: Direction::Column,
             gap: 0,
             align: Align::Start,
@@ -698,7 +698,7 @@ fn group_names_share_arc_across_focus_descendants() {
             title: None,
             grow: 0,
             group_name: Some(Arc::from(format!("group-{i}").as_str())),
-        })));
+        }));
         for _ in 0..FOCUSES_PER_GROUP {
             commands.push(Command::FocusMarker(focus_id));
             commands.push(Command::Text {
@@ -766,7 +766,7 @@ fn flexbox_row_many_children_overflow_scratch() {
     // check: positions are strictly increasing and non-overlapping.
     const N: usize = 32;
     let mut commands: Vec<Command> = Vec::new();
-    commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+    commands.push(Command::BeginContainer(BeginContainerArgs {
         direction: Direction::Row,
         gap: 0,
         align: Align::Start,
@@ -782,7 +782,7 @@ fn flexbox_row_many_children_overflow_scratch() {
         title: None,
         grow: 0,
         group_name: None,
-    })));
+    }));
     for i in 0..N {
         commands.push(Command::Text {
             content: format!("c{i}"),
@@ -819,7 +819,7 @@ fn flexbox_column_many_children_overflow_scratch() {
     // path in the U32Stack scratch (> INLINE_CAP=16).
     const N: usize = 20;
     let mut commands: Vec<Command> = Vec::new();
-    commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+    commands.push(Command::BeginContainer(BeginContainerArgs {
         direction: Direction::Column,
         gap: 0,
         align: Align::Start,
@@ -835,7 +835,7 @@ fn flexbox_column_many_children_overflow_scratch() {
         title: None,
         grow: 0,
         group_name: None,
-    })));
+    }));
     for i in 0..N {
         commands.push(Command::Text {
             content: format!("row{i}"),
@@ -876,7 +876,7 @@ fn flexbox_grow_with_max_width_no_gap() {
     use crate::style::{Align, Constraints, Justify, Margin, Padding};
 
     let mut commands = vec![
-        Command::BeginContainer(Box::new(BeginContainerArgs {
+        Command::BeginContainer(BeginContainerArgs {
             direction: Direction::Row,
             gap: 0,
             align: Align::Start,
@@ -892,7 +892,7 @@ fn flexbox_grow_with_max_width_no_gap() {
             title: None,
             grow: 0,
             group_name: None,
-        })),
+        }),
         Command::Text {
             content: "A".into(),
             cursor_offset: None,
@@ -954,7 +954,7 @@ fn flexbox_column_grow_with_max_height_no_gap() {
     use crate::style::{Align, Constraints, Justify, Margin, Padding};
 
     let mut commands = vec![
-        Command::BeginContainer(Box::new(BeginContainerArgs {
+        Command::BeginContainer(BeginContainerArgs {
             direction: Direction::Column,
             gap: 0,
             align: Align::Start,
@@ -970,7 +970,7 @@ fn flexbox_column_grow_with_max_height_no_gap() {
             title: None,
             grow: 1,
             group_name: None,
-        })),
+        }),
         Command::Text {
             content: "A".into(),
             cursor_offset: None,
@@ -1019,7 +1019,7 @@ fn flexbox_column_grow_with_max_height_no_gap() {
     );
 }
 
-// --- Regression tests for v0.19.1 hotfix ---------------------------------
+// --- Scroll-collection invariants (#151) ----------------------------------
 
 #[test]
 fn collect_all_keeps_scroll_invariant_with_nested_scrollables() {
@@ -1115,9 +1115,9 @@ fn raw_draw_constructor_matches_inline_literal_shape() {
     assert!(!node.is_scrollable);
     assert_eq!(node.scroll_offset, 0);
     assert_eq!(node.content_height, 0);
-    // The wrap caches and segments are inside `text_data`, which is
-    // `None` for `RawDraw` nodes.
-    assert!(node.link_url.is_none());
+    // The wrap caches, segments and link URL are inside `text_data`, which
+    // is `None` for `RawDraw` nodes (asserted above).
+    assert_eq!(node.arena_slot, super::tree::LayoutArena::NO_SLOT);
     assert!(node.group_name.is_none());
     assert!(node.overlays.is_empty());
 }
@@ -1343,7 +1343,7 @@ fn count_leaf_widgets_matches_outline_count_with_overlays() {
         "status bar widget count must include overlay nodes; got {bottom:?}"
     );
     // Per-layer breakdown is appended in parens whenever more than one
-    // layer family is non-empty (matches the doc update in DEBUGGING.md).
+    // layer family is non-empty (matches docs/reference/debugging.md).
     assert!(
         bottom.contains("2 base") && bottom.contains("1 overlay"),
         "status bar must include per-layer breakdown when multiple layers \
@@ -1510,7 +1510,7 @@ fn push_textcol_20(commands: &mut Vec<Command>, shrink: bool) {
     if shrink {
         commands.push(Command::ShrinkMarker);
     }
-    commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+    commands.push(Command::BeginContainer(BeginContainerArgs {
         direction: Direction::Column,
         gap: 0,
         align: Align::Start,
@@ -1526,7 +1526,7 @@ fn push_textcol_20(commands: &mut Vec<Command>, shrink: bool) {
         title: None,
         grow: 0,
         group_name: None,
-    })));
+    }));
     commands.push(Command::Text {
         content: "x".repeat(20),
         cursor_offset: None,
@@ -1543,7 +1543,7 @@ fn push_textcol_20(commands: &mut Vec<Command>, shrink: bool) {
 }
 
 fn open_row(commands: &mut Vec<Command>) {
-    commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+    commands.push(Command::BeginContainer(BeginContainerArgs {
         direction: Direction::Row,
         gap: 0,
         align: Align::Start,
@@ -1559,7 +1559,7 @@ fn open_row(commands: &mut Vec<Command>) {
         title: None,
         grow: 0,
         group_name: None,
-    })));
+    }));
 }
 
 #[test]
@@ -1640,7 +1640,7 @@ fn push_textcol(commands: &mut Vec<Command>, width: usize, shrink: bool, basis: 
     if let Some(b) = basis {
         commands.push(Command::BasisMarker(b));
     }
-    commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+    commands.push(Command::BeginContainer(BeginContainerArgs {
         direction: Direction::Column,
         gap: 0,
         align: Align::Start,
@@ -1656,7 +1656,7 @@ fn push_textcol(commands: &mut Vec<Command>, width: usize, shrink: bool, basis: 
         title: None,
         grow: 0,
         group_name: None,
-    })));
+    }));
     commands.push(Command::Text {
         content: "x".repeat(width),
         cursor_offset: None,
@@ -1678,7 +1678,7 @@ fn open_row_cfg(commands: &mut Vec<Command>, gap: i32, wrap: Option<i32>) {
     if let Some(cross_gap) = wrap {
         commands.push(Command::WrapMarker(cross_gap));
     }
-    commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+    commands.push(Command::BeginContainer(BeginContainerArgs {
         direction: Direction::Row,
         gap,
         align: Align::Start,
@@ -1694,7 +1694,7 @@ fn open_row_cfg(commands: &mut Vec<Command>, gap: i32, wrap: Option<i32>) {
         title: None,
         grow: 0,
         group_name: None,
-    })));
+    }));
 }
 
 #[test]
@@ -1826,7 +1826,7 @@ fn flex_basis_feeds_grow() {
     // Use grow on the wrapper containers — push them manually with basis+grow.
     for _ in 0..2 {
         commands.push(Command::BasisMarker(10));
-        commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+        commands.push(Command::BeginContainer(BeginContainerArgs {
             direction: Direction::Column,
             gap: 0,
             align: Align::Start,
@@ -1842,7 +1842,7 @@ fn flex_basis_feeds_grow() {
             title: None,
             grow: 1,
             group_name: None,
-        })));
+        }));
         commands.push(Command::Text {
             content: "x".to_string(),
             cursor_offset: None,
@@ -1924,7 +1924,7 @@ fn flex_basis_none_falls_back_to_min_width() {
 /// A regional indicator (U+1F1E6..=U+1F1FF) on its own — i.e. a flag emoji that
 /// was split in half. Its presence in a wrapped line is the failure signature.
 fn contains_lone_regional_indicator(s: &str) -> bool {
-    use unicode_segmentation::UnicodeSegmentation;
+    use crate::width::UnicodeSegmentation;
     s.graphemes(true).any(|g| {
         let mut chars = g.chars();
         match (chars.next(), chars.next()) {
@@ -1980,7 +1980,7 @@ fn wrap_lines_family_emoji_at_boundary() {
 fn wrap_lines_devanagari_cluster() {
     // "क्षि" is base + virama + consonant + vowel sign: one (or few) clusters.
     // It must not be broken between a base and its combining marks.
-    use unicode_segmentation::UnicodeSegmentation;
+    use crate::width::UnicodeSegmentation;
     let input = "क्षि";
     let lines = wrap_lines(input, 1);
     let input_clusters: Vec<&str> = input.graphemes(true).collect();
@@ -1998,7 +1998,7 @@ fn wrap_lines_devanagari_cluster() {
 #[test]
 fn wrap_lines_thai_cluster() {
     // "กำ" is a Thai consonant + sara am (one cluster). Must stay intact.
-    use unicode_segmentation::UnicodeSegmentation;
+    use crate::width::UnicodeSegmentation;
     let input = "กำ";
     let lines = wrap_lines(input, 1);
     let input_clusters: Vec<&str> = input.graphemes(true).collect();
@@ -2091,7 +2091,7 @@ fn gap_overlap_tree(
 ) -> LayoutNode {
     use crate::style::{Align, Constraints, Justify, Margin, Padding};
 
-    let mut commands = vec![Command::BeginContainer(Box::new(BeginContainerArgs {
+    let mut commands = vec![Command::BeginContainer(BeginContainerArgs {
         direction,
         gap,
         align: Align::Start,
@@ -2107,7 +2107,7 @@ fn gap_overlap_tree(
         title: None,
         grow: 0,
         group_name: None,
-    }))];
+    })];
     for _ in 0..n {
         commands.push(Command::Text {
             content: "x".into(),
@@ -2235,8 +2235,8 @@ fn gap_overlap_col_direction() {
 
 mod wrap_lines_grapheme_property {
     use super::wrap_lines;
+    use crate::width::UnicodeSegmentation;
     use proptest::prelude::*;
-    use unicode_segmentation::UnicodeSegmentation;
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(256))]
@@ -2611,7 +2611,7 @@ mod hscroll_proptest {
 }
 
 // ---------------------------------------------------------------------------
-// Per-frame intrinsic-size memo (v0.22.0): the memoization of `min_width` /
+// Per-frame intrinsic-size memo: the memoization of `min_width` /
 // `min_height` / `min_height_for_width` must stay byte-identical to the
 // uncached computation. The subtle case is a `Pct`/`Ratio` constraint: such a
 // node is measured by its grandparent while still unresolved, then resolved
@@ -2826,8 +2826,10 @@ fn partially_clipped_container_applies_padding_before_viewport_clip() {
 #[test]
 fn frame_data_swaps_feedback_capacity_back_for_reuse() {
     let mut data = FrameData::default();
-    let mut feedback = crate::LayoutFeedbackState::default();
-    feedback.prev_hit_map = Vec::with_capacity(64);
+    let mut feedback = crate::LayoutFeedbackState {
+        prev_hit_map: Vec::with_capacity(64),
+        ..Default::default()
+    };
     feedback
         .prev_hit_map
         .push(crate::rect::Rect::new(0, 0, 1, 1));
@@ -2867,4 +2869,326 @@ fn intrinsic_and_flex_arithmetic_saturates_extreme_constraints() {
             .iter()
             .all(|child| child.pos.0 == u32::MAX && child.size.0 == u32::MAX)
     );
+}
+
+// ---------------------------------------------------------------------------
+// Issue #488: layout tree storage reused across frames
+// ---------------------------------------------------------------------------
+
+fn push_text(commands: &mut Vec<Command>, content: &str, cursor: Option<usize>, wrap: bool) {
+    commands.push(Command::Text {
+        content: content.to_string(),
+        cursor_offset: cursor,
+        cursor_masked: cursor.is_some(),
+        style: Style::new(),
+        grow: 0,
+        align: Align::Start,
+        wrap,
+        truncate: false,
+        margin: Margin::default(),
+        constraints: Constraints::default(),
+    });
+}
+
+/// Compare every layout-visible property of two trees.
+fn assert_same_layout(a: &LayoutNode, b: &LayoutNode) {
+    assert_eq!(a.kind, b.kind);
+    assert_eq!((a.pos, a.size), (b.pos, b.size));
+    assert_eq!(
+        (a.content_height, a.content_width),
+        (b.content_height, b.content_width)
+    );
+    let text = |n: &LayoutNode| {
+        n.text_data().map(|t| {
+            (
+                t.content.clone(),
+                t.width,
+                t.cursor_offset,
+                t.cursor_masked,
+                t.link_url.clone(),
+                t.cached_wrapped.clone(),
+            )
+        })
+    };
+    assert_eq!(text(a), text(b));
+    assert_eq!(a.children.len(), b.children.len());
+    for (ca, cb) in a.children.iter().zip(&b.children) {
+        assert_same_layout(ca, cb);
+    }
+    assert_eq!(a.overlays.len(), b.overlays.len());
+    for (oa, ob) in a.overlays.iter().zip(&b.overlays) {
+        assert_eq!(oa.modal, ob.modal);
+        assert_same_layout(&oa.node, &ob.node);
+    }
+}
+
+#[test]
+fn issue_488_arena_returns_storage_to_the_same_containers() {
+    let mut arena = LayoutArena::default();
+    let mut commands = Vec::new();
+    for _ in 0..20 {
+        push_textcol_20(&mut commands, false);
+    }
+    let tree = build_tree_in(&mut commands, &mut arena);
+    let root_buf = (tree.children.as_ptr(), tree.children.capacity());
+    let col_buf = tree.children[7].children.as_ptr();
+    let text_box: *const super::tree::TextNodeData =
+        tree.children[0].children[0].text_data().unwrap();
+    arena.recycle(tree);
+
+    for _ in 0..20 {
+        push_textcol_20(&mut commands, false);
+    }
+    let tree = build_tree_in(&mut commands, &mut arena);
+    assert_eq!(
+        (tree.children.as_ptr(), tree.children.capacity()),
+        root_buf,
+        "root must get its own children vector back"
+    );
+    assert_eq!(tree.children[7].children.as_ptr(), col_buf);
+    assert!(
+        tree.children
+            .iter()
+            .any(|col| std::ptr::eq(col.children[0].text_data().unwrap(), text_box)),
+        "text payload boxes must be recycled"
+    );
+}
+
+#[test]
+fn issue_488_recycled_tree_lays_out_like_a_fresh_one() {
+    // Frame 1 fills the payloads with cursor, link, wrap-cache and overlay
+    // state; frame 2 has a different shape. A recycled payload or vector
+    // must not leak any of it.
+    fn frame_one(commands: &mut Vec<Command>) {
+        push_text(commands, "cursor here", Some(3), false);
+        commands.push(Command::Link {
+            text: "docs".into(),
+            url: "https://example.com".into(),
+            style: Style::new(),
+            wrap: false,
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+        });
+        push_text(commands, "alpha beta gamma delta", None, true);
+        commands.push(Command::BeginOverlay { modal: true });
+        push_text(commands, "modal body", None, false);
+        commands.push(Command::EndOverlay);
+        for _ in 0..3 {
+            push_textcol_20(commands, true);
+        }
+    }
+    fn frame_two(commands: &mut Vec<Command>) {
+        push_textcol_20(commands, false);
+        push_text(commands, "plain", None, false);
+        push_text(commands, "wrapped words here", None, true);
+        push_text(commands, "tail", None, false);
+    }
+
+    let area = Rect::new(0, 0, 12, 20);
+    let mut arena = LayoutArena::default();
+    let mut commands = Vec::new();
+    for round in 0..3 {
+        for (name, frame) in [
+            ("one", frame_one as fn(&mut Vec<Command>)),
+            ("two", frame_two),
+        ] {
+            frame(&mut commands);
+            let mut fresh_commands = commands.clone();
+            let mut recycled = build_tree_in(&mut commands, &mut arena);
+            let mut fresh = build_tree(&mut fresh_commands);
+            compute(&mut recycled, area);
+            compute(&mut fresh, area);
+            assert_same_layout(&recycled, &fresh);
+            let (mut a, mut b) = (Buffer::empty(area), Buffer::empty(area));
+            render(&recycled, &mut a);
+            render(&fresh, &mut b);
+            let cells = |buf: &Buffer| {
+                (0..area.height)
+                    .flat_map(|y| (0..area.width).map(move |x| (x, y)))
+                    .map(|(x, y)| {
+                        let cell = buf.get(x, y);
+                        (cell.symbol.to_string(), cell.style, cell.hyperlink.clone())
+                    })
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(cells(&a), cells(&b), "round {round} frame {name}");
+            assert_eq!(a.cursor_pos, b.cursor_pos, "round {round} frame {name}");
+            arena.recycle(recycled);
+        }
+    }
+}
+
+#[test]
+fn issue_488_arena_trims_after_sustained_smaller_frames() {
+    let mut arena = LayoutArena::default();
+    let mut commands = Vec::new();
+    let mut frame = |arena: &mut LayoutArena, columns: usize| {
+        for _ in 0..columns {
+            push_textcol_20(&mut commands, false);
+        }
+        let tree = build_tree_in(&mut commands, arena);
+        arena.recycle(tree);
+    };
+    frame(&mut arena, 500);
+    let big = arena.retained();
+    assert!(big.0 >= 501 && big.1 >= 500 && big.2 >= 1000, "{big:?}");
+
+    // Briefly smaller frames keep the storage: a workload that alternates
+    // sizes must not free and regrow every frame.
+    for _ in 0..LayoutArena::TRIM_AFTER_FRAMES - 1 {
+        frame(&mut arena, 2);
+    }
+    assert_eq!(arena.retained(), big);
+    frame(&mut arena, 500);
+    for _ in 0..LayoutArena::TRIM_AFTER_FRAMES - 1 {
+        frame(&mut arena, 2);
+    }
+    assert_eq!(arena.retained(), big, "a large frame resets the trim clock");
+
+    // A sustained smaller workload releases the excess.
+    for _ in 0..2 {
+        frame(&mut arena, 2);
+    }
+    let small = arena.retained();
+    assert!(
+        small.0 <= 8 && small.1 <= 8 && small.2 <= 64,
+        "retained storage must shrink: {big:?} -> {small:?}"
+    );
+    // And the trimmed arena still builds correct trees.
+    frame(&mut arena, 2);
+}
+
+#[test]
+fn issue_488_arena_build_keeps_depth_guard() {
+    // Unoptimized `build_children` frames are large, so 513 levels overflow
+    // the default 2 MB test-thread stack before the guard fires (true before
+    // #488 as well). Run on a roomy stack and check the diagnostic.
+    let result = std::thread::Builder::new()
+        .stack_size(64 << 20)
+        .spawn(build_past_depth_guard)
+        .unwrap()
+        .join();
+    let payload = result.expect_err("build must panic past MAX_LAYOUT_DEPTH");
+    let message = payload
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| payload.downcast_ref::<&str>().copied())
+        .unwrap_or_default();
+    assert!(
+        message.starts_with("layout tree depth exceeds 512"),
+        "{message}"
+    );
+}
+
+fn build_past_depth_guard() {
+    let mut commands = Vec::new();
+    for _ in 0..=MAX_LAYOUT_DEPTH + 1 {
+        commands.push(Command::BeginContainer(BeginContainerArgs {
+            direction: Direction::Column,
+            gap: 0,
+            align: Align::Start,
+            align_self: None,
+            justify: Justify::Start,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: Style::new(),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+            group_name: None,
+        }));
+    }
+    let _ = build_tree_in(&mut commands, &mut LayoutArena::default());
+}
+
+// ---------------------------------------------------------------------------
+// Issue #494: each text node's width is measured once per frame
+// ---------------------------------------------------------------------------
+
+#[test]
+fn issue_494_border_title_truncation_follows_ambiguous_width() {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            crate::width::set_ambiguous_wide(false);
+        }
+    }
+    let _reset = Reset;
+    let render_title = |title: &str| {
+        let mut config = default_container_config();
+        config.border = Some(crate::style::Border::Single);
+        config.title = Some((title.to_string(), Style::new()));
+        let mut root = LayoutNode::container(Direction::Row, config);
+        let area = Rect::new(0, 0, 8, 3);
+        compute(&mut root, area);
+        let mut buf = Buffer::empty(area);
+        render(&root, &mut buf);
+        (0..8)
+            .map(|x| buf.get(x, 0).symbol.to_string())
+            .collect::<Vec<_>>()
+    };
+    // The title window is columns 2..=6 (five columns).
+    let narrow = render_title("→→→→→→");
+    assert_eq!(narrow[2..7], ["→", "→", "→", "→", "→"], "{narrow:?}");
+    crate::width::set_ambiguous_wide(true);
+    // Two columns per arrow: two arrows fit the five-column window, a third
+    // would write past it (box-drawing glyphs are ambiguous too, so the
+    // border itself is drawn two columns wide here).
+    let wide = render_title("→→→→→→");
+    assert_eq!(
+        wide.iter().filter(|s| s.as_str() == "→").count(),
+        2,
+        "{wide:?}"
+    );
+    assert_eq!(wide[2..6], ["→", "", "→", ""], "{wide:?}");
+    // A cluster is kept whole: "e" + combining acute is one column.
+    crate::width::set_ambiguous_wide(false);
+    let combined = render_title("e\u{301}e\u{301}e\u{301}e\u{301}e\u{301}e\u{301}");
+    assert_eq!(combined[7], "┐", "{combined:?}");
+    assert!(
+        combined[2..7].iter().all(|s| s == "e\u{301}"),
+        "{combined:?}"
+    );
+}
+
+#[test]
+fn issue_494_text_width_measured_once_per_frame() {
+    const ROWS: usize = 12;
+    let calls = || crate::cell::DISPLAY_WIDTH_CALLS.with(std::cell::Cell::get);
+    let mut tb = crate::TestBackend::new(40, ROWS as u32 + 3);
+    let frame = |ui: &mut crate::Context| {
+        let _ = ui.col(|ui| {
+            // One rich-text node with two segments: measured per segment.
+            let _ = ui.line(|ui| {
+                ui.text("styled ");
+                let _ = ui.text("run").bold();
+            });
+            for i in 0..ROWS {
+                if i % 3 == 0 {
+                    let _ = ui.text("centered row").align(Align::Center);
+                } else if i % 3 == 1 {
+                    let _ = ui.text("right row").align(Align::End);
+                } else {
+                    ui.text("plain row");
+                }
+            }
+        });
+    };
+    tb.render(frame);
+    let before = calls();
+    tb.render(frame);
+    let measured = calls() - before;
+    // Build measures each plain node and each rich-text segment once;
+    // render reuses the stored widths for alignment and clipping (before
+    // #494 render measured every one of them again, plain text twice).
+    assert_eq!(
+        measured,
+        ROWS + 2,
+        "display_width calls for {ROWS} plain nodes + 2 segments"
+    );
+    tb.assert_contains("centered row");
+    tb.assert_contains("styled run");
 }

@@ -1,3 +1,14 @@
+//! Behavior tests for the built-in widgets and their state types.
+//!
+//! Drives each widget through `TestBackend` with keyboard and mouse events
+//! and asserts on rendered text, `Response` signals, and state mutations:
+//! lists, tables, tabs, selects, text inputs, file pickers, palettes,
+//! trees, keymaps, and the feedback widgets. The `builder_and_pane_widgets`
+//! module covers spinner/progress `Response` returns (#212), the breadcrumb
+//! builder (#213), split panes (#223), gauge/line_gauge labels (#224),
+//! `scrollable_with_gutter` highlights (#235), and scrollbar mouse
+//! interaction (#249).
+
 #![allow(unused_must_use)]
 
 use slt::widgets::*;
@@ -210,11 +221,11 @@ fn text_input_validation_error_renders() {
 }
 
 #[test]
-fn text_input_validate_method() {
+fn text_input_validate_now_method() {
     let mut input = TextInputState::new();
     input.value = "abc".into();
 
-    input.validate(|value| {
+    input.validate_now(|value| {
         if value.len() >= 5 {
             Ok(())
         } else {
@@ -224,7 +235,7 @@ fn text_input_validate_method() {
     assert_eq!(input.validation_error.as_deref(), Some("too short"));
 
     input.value = "abcdef".into();
-    input.validate(|value| {
+    input.validate_now(|value| {
         if value.len() >= 5 {
             Ok(())
         } else {
@@ -232,6 +243,22 @@ fn text_input_validate_method() {
         }
     });
     assert_eq!(input.validation_error, None);
+}
+
+/// The deprecated `TextInputState::validate` keeps running immediately.
+#[test]
+#[allow(deprecated)]
+fn text_input_deprecated_validate_alias_runs_now() {
+    let mut input = TextInputState::new();
+    input.value = "abc".into();
+    input.validate(|value| {
+        if value.len() >= 5 {
+            Ok(())
+        } else {
+            Err("too short".into())
+        }
+    });
+    assert_eq!(input.validation_error.as_deref(), Some("too short"));
 }
 
 #[test]
@@ -251,65 +278,6 @@ fn form_renders_fields() {
 
     tb.assert_contains("Email");
     tb.assert_contains("Password");
-}
-
-// Exercises the deprecated positional `FormState::validate` shim (#252):
-// it must keep its exact pre-0.21.0 behavior. New code should attach
-// per-field validators via `FormField::validate` + `validate_all()`.
-#[test]
-#[allow(deprecated)]
-fn form_validation() {
-    let mut form = FormState::new()
-        .field(FormField::new("Email"))
-        .field(FormField::new("Password"));
-
-    form.fields[0].input.value = "invalid-email".into();
-    form.fields[1].input.value = "short".into();
-
-    let valid = form.validate(&[
-        |v| {
-            if v.contains('@') {
-                Ok(())
-            } else {
-                Err("invalid email".into())
-            }
-        },
-        |v| {
-            if v.len() >= 8 {
-                Ok(())
-            } else {
-                Err("too short".into())
-            }
-        },
-    ]);
-
-    assert!(!valid);
-    assert_eq!(form.fields[0].error.as_deref(), Some("invalid email"));
-    assert_eq!(form.fields[1].error.as_deref(), Some("too short"));
-
-    form.fields[0].input.value = "user@example.com".into();
-    form.fields[1].input.value = "long-enough".into();
-
-    let valid = form.validate(&[
-        |v| {
-            if v.contains('@') {
-                Ok(())
-            } else {
-                Err("invalid email".into())
-            }
-        },
-        |v| {
-            if v.len() >= 8 {
-                Ok(())
-            } else {
-                Err("too short".into())
-            }
-        },
-    ]);
-
-    assert!(valid);
-    assert_eq!(form.fields[0].error, None);
-    assert_eq!(form.fields[1].error, None);
 }
 
 #[test]
@@ -803,7 +771,7 @@ fn table_pagination_uses_absolute_view_indices_for_keyboard_and_mouse() {
         ui.table(&mut table);
     });
     assert_eq!(table.page, 2);
-    assert_eq!(table.selected, 4);
+    assert_eq!(table.selected_view_index(), 4);
     assert_eq!(
         table.selected_row().map(|row| row[0].as_str()),
         Some("row-4")
@@ -814,7 +782,7 @@ fn table_pagination_uses_absolute_view_indices_for_keyboard_and_mouse() {
     tb.render_with_events(click, 0, 1, |ui| {
         ui.table(&mut table);
     });
-    assert_eq!(table.selected, 5);
+    assert_eq!(table.selected_view_index(), 5);
     assert_eq!(
         table.selected_row().map(|row| row[0].as_str()),
         Some("row-5")
@@ -829,10 +797,10 @@ fn table_row_mutations_keep_filter_and_selection_caches_coherent() {
         vec![vec!["alpha"], vec!["beta"], vec!["alphabet"]],
     );
     table.set_filter("alpha");
-    table.selected = 1;
+    assert!(table.set_selected_view_index(1));
     table.set_rows(vec![vec!["gamma"]]);
     assert!(table.visible_indices().is_empty());
-    assert_eq!(table.selected, 0);
+    assert_eq!(table.selected_view_index(), 0);
     assert_eq!(table.selected_row(), None);
 
     table.push_row(vec!["alpha-new"]);
@@ -864,7 +832,7 @@ fn table_selected_row_with_sort() {
         vec![vec!["Bob", "2"], vec!["Alice", "1"], vec!["Carol", "3"]],
     );
     table.sort_by(0);
-    table.selected = 1;
+    assert!(table.set_selected_view_index(1));
     let selected = table
         .selected_row()
         .expect("expected selected row after sorting");
@@ -885,7 +853,7 @@ fn table_backward_compat() {
     assert_eq!(table.page_size, 0);
     assert_eq!(table.visible_indices(), &[0, 1]);
 
-    table.selected = 1;
+    assert!(table.set_selected_view_index(1));
     let selected = table
         .selected_row()
         .expect("expected selected row in default behavior");
@@ -1072,7 +1040,7 @@ fn table_multiselect_shift_down_extends_range() {
     let mut selected: Vec<usize> = table.multi_selected.iter().copied().collect();
     selected.sort_unstable();
     assert_eq!(selected, vec![0, 1, 2]);
-    assert_eq!(table.selected, 2);
+    assert_eq!(table.selected_view_index(), 2);
 }
 
 #[test]
@@ -1124,7 +1092,7 @@ fn table_multiselect_mouse_click_and_shift_click() {
     tb.render_with_events(click, 0, 1, |ui| {
         ui.table(&mut table);
     });
-    assert_eq!(table.selected, 0);
+    assert_eq!(table.selected_view_index(), 0);
     assert!(table.is_row_selected(0));
     assert_eq!(table.multi_selected.len(), 1);
 
@@ -2257,6 +2225,39 @@ fn link_default_style_is_underlined_cyan() {
 }
 
 #[test]
+fn link_with_disallowed_scheme_is_not_opened_and_warns() {
+    use slt::{EventBuilder, KeyCode};
+    // Rejected targets fail validation before any process is spawned; the
+    // failure is surfaced as a toast instead of being printed to stderr.
+    for url in [
+        "file:///etc/passwd",
+        "javascript:alert(1)",
+        "custom-scheme:payload",
+        "not a url",
+    ] {
+        let events = EventBuilder::new().key_code(KeyCode::Enter).build();
+        let mut tb = TestBackend::new(80, 6);
+        tb.render_with_events(events, 0, 1, |ui| {
+            ui.link("Open", url);
+        });
+        tb.assert_contains("Could not open link");
+        // The hyperlink is still emitted so the terminal can decide.
+        assert_eq!(tb.buffer().get(0, 0).hyperlink.as_deref(), Some(url));
+    }
+}
+
+#[test]
+fn markdown_link_with_disallowed_scheme_is_not_opened() {
+    use slt::{EventBuilder, KeyCode};
+    let events = EventBuilder::new().key_code(KeyCode::Enter).build();
+    let mut tb = TestBackend::new(80, 6);
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.markdown("[x](file:///etc/passwd)");
+    });
+    tb.assert_contains("Could not open link");
+}
+
+#[test]
 fn modal_dims_background_content() {
     let mut tb = TestBackend::new(40, 10);
     tb.render(|ui| {
@@ -2558,9 +2559,13 @@ fn select_renders_open() {
     let mut state = SelectState::new(vec!["Apple", "Banana", "Cherry"]);
     state.open = true;
 
-    tb.render(|ui| {
-        ui.select(&mut state);
-    });
+    // #459: the floating dropdown hangs off last frame's trigger rect,
+    // so it is drawn from the second frame on.
+    for _ in 0..2 {
+        tb.render(|ui| {
+            ui.select(&mut state);
+        });
+    }
 
     tb.assert_contains("Apple");
     tb.assert_contains("Banana");
@@ -2588,7 +2593,14 @@ fn select_open_rows_can_be_selected_with_mouse() {
         ui.select(&mut state);
     });
 
-    let click = slt::EventBuilder::new().click(2, 4).build();
+    // #459: the dropdown hangs off last frame's trigger rect, so it is drawn
+    // from the second frame on.
+    tb.render(|ui| {
+        ui.select(&mut state);
+    });
+    // It floats below the 3-row trigger with its own border, so "Apple" is
+    // on row 4 and "Banana" on row 5.
+    let click = slt::EventBuilder::new().click(2, 5).build();
     tb.render_with_events(click, 0, 1, |ui| {
         ui.select(&mut state);
     });
@@ -2604,9 +2616,13 @@ fn select_open_filter_narrows_visible_items() {
     state.open = true;
     state.filter = "an".to_string(); // matches Banana only
 
-    tb.render(|ui| {
-        ui.select(&mut state);
-    });
+    // #459: the floating dropdown hangs off last frame's trigger rect,
+    // so it is drawn from the second frame on.
+    for _ in 0..2 {
+        tb.render(|ui| {
+            ui.select(&mut state);
+        });
+    }
 
     tb.assert_contains("Banana");
     tb.assert_contains("/an"); // query feedback line
@@ -2620,9 +2636,13 @@ fn select_open_filter_no_match_shows_placeholder_line() {
     state.open = true;
     state.filter = "zzz".to_string();
 
-    tb.render(|ui| {
-        ui.select(&mut state);
-    });
+    // #459: the floating dropdown hangs off last frame's trigger rect,
+    // so it is drawn from the second frame on.
+    for _ in 0..2 {
+        tb.render(|ui| {
+            ui.select(&mut state);
+        });
+    }
 
     tb.assert_contains("(no matches)");
 }
@@ -2971,7 +2991,8 @@ fn virtual_list_variable_page_down_by_rows() {
     });
 
     assert_eq!(
-        state.selected, 2,
+        state.selected_view_index(),
+        2,
         "PageDown should advance by rows (item 2), not by 6 items"
     );
 }
@@ -3005,7 +3026,7 @@ fn virtual_list_variable_more_affordance_counts_items() {
     // the viewport at items 3..5.
     let mut state = ListState::new((0..10).map(|i| format!("Item {i}")).collect::<Vec<_>>())
         .with_item_heights(vec![1; 10]);
-    state.selected = 5;
+    assert!(state.set_selected_view_index(5));
 
     // First frame anchors the viewport bottom at item 5 (start = 3).
     tb.render(|ui| {
@@ -3248,34 +3269,6 @@ fn markdown_list() {
     });
     tb.assert_contains("item1");
     tb.assert_contains("item2");
-}
-
-#[test]
-#[allow(deprecated)] // intentionally exercising the deprecated `key_seq` alias
-fn key_seq_matches_sequence() {
-    let mut tb = TestBackend::new(80, 24);
-    let events = slt::EventBuilder::new().key('g').key('g').build();
-    let mut matched = false;
-
-    tb.render_with_events(events, 0, 1, |ui| {
-        matched = ui.key_seq("gg");
-    });
-
-    assert!(matched);
-}
-
-#[test]
-#[allow(deprecated)] // intentionally exercising the deprecated `key_seq` alias
-fn key_seq_rejects_non_sequence() {
-    let mut tb = TestBackend::new(80, 24);
-    let events = slt::EventBuilder::new().key('g').key('x').build();
-    let mut matched = false;
-
-    tb.render_with_events(events, 0, 1, |ui| {
-        matched = ui.key_seq("gg");
-    });
-
-    assert!(!matched);
 }
 
 #[test]
@@ -4158,7 +4151,7 @@ fn badge_renders_label() {
 fn badge_colored_has_bg() {
     let mut tb = TestBackend::new(20, 3);
     tb.render(|ui| {
-        ui.badge_colored("OK", slt::Color::Green);
+        ui.badge("OK").color(slt::Color::Green);
     });
     let cell = tb.buffer().get(1, 0);
     assert_eq!(cell.style.bg, Some(slt::Color::Green));
@@ -4264,10 +4257,10 @@ fn badge_colored_reports_hover() {
     let hovered = Cell::new(false);
     let mut tb = TestBackend::new(20, 3);
     tb.render(|ui| {
-        let _ = ui.badge_colored("OK", slt::Color::Green);
+        let _ = ui.badge("OK").color(slt::Color::Green);
     });
     tb.run_with_events(vec![slt::Event::mouse_move(1, 0)], |ui| {
-        hovered.set(ui.badge_colored("OK", slt::Color::Green).hovered);
+        hovered.set(ui.badge("OK").color(slt::Color::Green).hovered);
     });
     assert!(hovered.get(), "badge_colored should report hovered");
 }
@@ -4306,10 +4299,10 @@ fn stat_colored_reports_hover() {
     let hovered = Cell::new(false);
     let mut tb = TestBackend::new(20, 5);
     tb.render(|ui| {
-        let _ = ui.stat_colored("Err", "0", slt::Color::Green);
+        let _ = ui.stat("Err", "0").color(slt::Color::Green);
     });
     tb.run_with_events(vec![slt::Event::mouse_move(1, 1)], |ui| {
-        hovered.set(ui.stat_colored("Err", "0", slt::Color::Green).hovered);
+        hovered.set(ui.stat("Err", "0").color(slt::Color::Green).hovered);
     });
     assert!(hovered.get(), "stat_colored should report hovered");
 }
@@ -4405,9 +4398,9 @@ fn demo_v094_content_does_not_panic() {
         let _ = ui.breadcrumb(&["Home", "Settings"]);
         ui.stat("Uptime", "14d");
         ui.stat_trend("Revenue", "$12,400", Trend::Up);
-        ui.stat_colored("CPU", "72%", Color::Yellow);
+        ui.stat("CPU", "72%").color(Color::Yellow);
         ui.badge("v0.9.4");
-        ui.badge_colored("Stable", Color::Green);
+        ui.badge("Stable").color(Color::Green);
         ui.key_hint("Ctrl+S");
         ui.accordion("General", &mut acc_gen, |ui| {
             ui.definition_list(&[("Theme", "Dark")]);
@@ -4426,10 +4419,10 @@ fn demo_list_set_items_no_panic() {
     use slt::*;
     let mut tb = TestBackend::new(80, 24);
     let mut list = ListState::new(vec!["A", "B", "C", "D", "E"]);
-    list.selected = 4;
+    assert!(list.set_selected_view_index(4));
     // Shrink items - old selected (4) should be clamped
     list.set_items(vec!["X".to_string(), "Y".to_string(), "Z".to_string()]);
-    assert_eq!(list.selected, 2);
+    assert_eq!(list.selected_view_index(), 2);
     tb.render(|ui| {
         ui.list(&mut list);
     });
@@ -4480,7 +4473,7 @@ fn code_block_deprecated_aliases_match_builder() {
     // numbered + lang
     let mut tb_alias = slt::TestBackend::new(40, 10);
     tb_alias.render(|ui| {
-        ui.code_block_numbered_lang(code, "rust");
+        ui.code_block(code).lang("rust").numbered();
     });
     let mut tb_builder = slt::TestBackend::new(40, 10);
     tb_builder.render(|ui| {
@@ -4495,7 +4488,7 @@ fn code_block_deprecated_aliases_match_builder() {
     // lang only
     let mut tb_alias2 = slt::TestBackend::new(40, 10);
     tb_alias2.render(|ui| {
-        ui.code_block_lang(code, "rust");
+        ui.code_block(code).lang("rust");
     });
     let mut tb_builder2 = slt::TestBackend::new(40, 10);
     tb_builder2.render(|ui| {
@@ -4506,7 +4499,7 @@ fn code_block_deprecated_aliases_match_builder() {
     // numbered only
     let mut tb_alias3 = slt::TestBackend::new(40, 10);
     tb_alias3.render(|ui| {
-        ui.code_block_numbered(code);
+        ui.code_block(code).numbered();
     });
     let mut tb_builder3 = slt::TestBackend::new(40, 10);
     tb_builder3.render(|ui| {
@@ -5160,7 +5153,7 @@ fn slider_with_opts_uses_explicit_step() {
         .key_code(slt::KeyCode::Right)
         .build();
     tb.render_with_events(events, 0, 1, |ui| {
-        ui.slider_with(&mut value, SliderOpts::new("Volume", 0.0..=100.0).step(1.0));
+        ui.slider("Volume", &mut value, 0.0..=100.0).step(1.0);
     });
     assert!(
         (value - 51.0).abs() < f64::EPSILON,
@@ -5190,7 +5183,7 @@ fn deprecated_slider_with_step_delegates_to_opts_api() {
         .key_code(slt::KeyCode::Right)
         .build();
     tb.render_with_events(events, 0, 0, |ui| {
-        ui.slider_with_step("Volume", &mut value, 0.0..=100.0, 2.0);
+        ui.slider("Volume", &mut value, 0.0..=100.0).step(2.0);
     });
 
     assert_eq!(value, 52.0);
@@ -5218,10 +5211,8 @@ fn numeric_inputs_normalize_reversed_and_non_finite_values() {
 
     let mut slider_value = f64::NAN;
     tb.render(|ui| {
-        ui.slider_with(
-            &mut slider_value,
-            SliderOpts::new("Reversed", 10.0..=-10.0).step(f64::INFINITY),
-        );
+        ui.slider("Reversed", &mut slider_value, 10.0..=-10.0)
+            .step(f64::INFINITY);
     });
     assert!(slider_value.is_finite());
     assert!((-10.0..=10.0).contains(&slider_value));
@@ -5637,7 +5628,7 @@ fn grid_and_grid_with_produce_same_elements() {
 
     let mut tb2 = TestBackend::new(60, 10);
     tb2.render(|ui| {
-        ui.grid_with(
+        ui.grid_columns(
             &[
                 slt::GridColumn::Auto,
                 slt::GridColumn::Auto,
@@ -5761,7 +5752,7 @@ fn separator_still_callable_after_move() {
 fn separator_colored_still_callable_after_move() {
     let mut tb = TestBackend::new(40, 5);
     tb.render(|ui| {
-        ui.separator_colored(slt::Color::Red);
+        ui.separator().color(slt::Color::Red);
     });
     tb.assert_contains("─");
 }
@@ -5774,7 +5765,7 @@ fn separator_returns_response() {
     // so the rect is empty on frame 1 and populated on frame 2.
     let mut tb = TestBackend::new(40, 5);
     let render = |ui: &mut slt::Context| {
-        let r = ui.separator();
+        let r = ui.separator().show();
         // A real Response (not a chained `&mut Self`).
         assert!(!r.clicked, "no click event was injected");
         r
@@ -5793,7 +5784,7 @@ fn separator_returns_response() {
 #[test]
 fn separator_colored_returns_response() {
     let mut tb = TestBackend::new(40, 5);
-    let render = |ui: &mut slt::Context| ui.separator_colored(slt::Color::Cyan);
+    let render = |ui: &mut slt::Context| ui.separator().color(slt::Color::Cyan).show();
     tb.render(|ui| {
         render(ui);
     });
@@ -6352,7 +6343,7 @@ fn virtual_list_cursor_not_anchored_to_viewport_bottom() {
 
     // Frame 1: scroll the cursor to row 10. The viewport snaps so that
     // `Item 10` is the last visible row (start = 6).
-    state.selected = 10;
+    assert!(state.set_selected_view_index(10));
     tb.render(|ui| {
         ui.virtual_list(&mut state, visible_height, |ui, idx| {
             ui.text(format!("Item {idx}"));
@@ -6365,7 +6356,7 @@ fn virtual_list_cursor_not_anchored_to_viewport_bottom() {
     // visible. With the fix the viewport stays put and `Item 10` is still
     // on screen — the cursor moved off the bottom row instead of dragging
     // the viewport with it.
-    state.selected = 9;
+    assert!(state.set_selected_view_index(9));
     tb.render(|ui| {
         ui.virtual_list(&mut state, visible_height, |ui, idx| {
             ui.text(format!("Item {idx}"));
@@ -7094,8 +7085,8 @@ proptest::proptest! {
         h.resize(len, 1);
         let items: Vec<String> = (0..len).map(|i| format!("Item {i}")).collect();
         let mut state = ListState::new(items).with_item_heights(h.clone());
-        state.selected = selected.min(len - 1);
-        let sel = state.selected;
+        assert!(state.set_selected_view_index(selected.min(len - 1)));
+        let sel = state.selected_view_index();
 
         let mut tb = TestBackend::new(40, 40);
         let rendered = std::cell::RefCell::new(Vec::<usize>::new());
@@ -7132,5 +7123,749 @@ proptest::proptest! {
             "rows {} exceed vh {} without being a single tall item (range {}..{})",
             total_rows, visible_height, start, end
         );
+    }
+}
+
+/// Spinner/progress `Response` returns (#212), breadcrumb builder (#213),
+/// split pane drag handle (#223), gauge / line_gauge labels (#224),
+/// `scrollable_with_gutter` highlight navigation (#235), and scrollbar
+/// click / drag / wheel interaction (#249).
+mod builder_and_pane_widgets {
+    use slt::event::Event;
+    use slt::widgets::SpinnerState;
+    use slt::{
+        BreadcrumbResponse, Color, EventBuilder, GaugeResponse, GutterOpts, GutterResponse,
+        HighlightRange, KeyCode, Rect, ScrollState, SplitPaneState, TestBackend,
+    };
+
+    // ── #212: spinner / progress return Response ─────────────────────────────
+
+    #[test]
+    fn issue_212_spinner_returns_response_with_rect_after_warm_frame() {
+        let mut tb = TestBackend::new(20, 3);
+        let spinner = SpinnerState::dots();
+        // Warm frame so prev_hit_map populates.
+        tb.render(|ui| {
+            let _ = ui.spinner(&spinner);
+        });
+        let mut rect_w = 0u32;
+        tb.render(|ui| {
+            let r = ui.spinner(&spinner);
+            rect_w = r.rect.width;
+        });
+        assert!(rect_w > 0, "spinner Response.rect.width should be non-zero");
+    }
+
+    #[test]
+    fn issue_212_progress_returns_response() {
+        let mut tb = TestBackend::new(40, 3);
+        tb.render(|ui| {
+            let r = ui.progress(0.5);
+            // Compile-time check: Response field access works on the return value.
+            let _ = r.hovered;
+            let _ = r.rect;
+            let _ = r.clicked;
+        });
+    }
+
+    // ── #213: breadcrumb collapsed to BreadcrumbResponse ─────────────────────
+
+    #[test]
+    fn issue_213_breadcrumb_returns_breadcrumb_response() {
+        let mut tb = TestBackend::new(60, 3);
+        tb.render(|ui| {
+            let r: BreadcrumbResponse = ui.breadcrumb(&["Home", "Settings"]).show();
+            assert_eq!(r.clicked_segment, None);
+        });
+    }
+
+    #[test]
+    fn issue_213_breadcrumb_response_derefs_to_response() {
+        let mut tb = TestBackend::new(60, 3);
+        tb.render(|ui| {
+            let r = ui.breadcrumb(&["A", "B", "C"]).show();
+            // Via Deref<Target = Response>:
+            let _hovered: bool = r.hovered;
+            let _rect = r.rect;
+        });
+    }
+
+    #[test]
+    fn issue_213_breadcrumb_builder_separator_uses_custom_string() {
+        // The chainable `.separator(...)` is the only public form for custom
+        // breadcrumb separators in v0.20.0+.
+        let mut tb = TestBackend::new(60, 3);
+        tb.render(|ui| {
+            ui.breadcrumb(&["A", "B", "C"]).separator(" >> ");
+        });
+        let output = tb.to_string_trimmed();
+        assert!(output.contains(" >> "), "got: {output}");
+    }
+
+    #[test]
+    fn issue_213_breadcrumb_builder_color_overrides_link_color() {
+        // The .color() override changes link color without touching theme.
+        let mut tb = TestBackend::new(60, 3);
+        tb.render(|ui| {
+            ui.breadcrumb(&["A", "B", "C"]).color(Color::Red);
+        });
+        let output = tb.to_string_trimmed();
+        assert!(output.contains("A"));
+        assert!(output.contains("C"));
+    }
+
+    #[test]
+    fn issue_213_breadcrumb_drops_renders_without_show() {
+        // Letting the Breadcrumb builder drop without calling .show() must still
+        // emit the segments — the only difference is that no response is captured.
+        let mut tb = TestBackend::new(60, 3);
+        tb.render(|ui| {
+            ui.breadcrumb(&["alpha", "beta"]);
+        });
+        let output = tb.to_string_trimmed();
+        assert!(output.contains("alpha"), "drop renders: {output}");
+        assert!(output.contains("beta"), "drop renders: {output}");
+    }
+
+    // ── #223: split_pane / vsplit_pane ───────────────────────────────────────
+
+    #[test]
+    fn issue_223_split_pane_renders_handle_between_panes() {
+        let mut tb = TestBackend::new(40, 5);
+        let mut state = SplitPaneState::new(0.5);
+        tb.render(|ui| {
+            let _ = ui.split_pane(
+                &mut state,
+                |ui| {
+                    ui.text("LEFT");
+                },
+                |ui| {
+                    ui.text("RIGHT");
+                },
+            );
+        });
+        let output = tb.to_string_trimmed();
+        assert!(output.contains("LEFT"), "left pane visible: {output}");
+        assert!(output.contains("RIGHT"), "right pane visible: {output}");
+        assert!(output.contains('│'), "handle char visible: {output}");
+    }
+
+    #[test]
+    fn issue_223_split_pane_arrow_keys_adjust_ratio_when_focused() {
+        let mut tb = TestBackend::new(40, 5);
+        let mut state = SplitPaneState::new(0.5);
+        let initial = state.ratio;
+        let events = EventBuilder::new().key_code(KeyCode::Right).build();
+        // The handle is the first focusable in the widget; focus index 0 + 1
+        // total focusables → handle owns focus.
+        tb.render_with_events(events, 0, 1, |ui| {
+            let _ = ui.split_pane(
+                &mut state,
+                |ui| {
+                    ui.text("L");
+                },
+                |ui| {
+                    ui.text("R");
+                },
+            );
+        });
+        assert!(state.ratio > initial, "Right key should grow left pane");
+    }
+
+    #[test]
+    fn issue_223_vsplit_pane_renders_horizontal_divider() {
+        let mut tb = TestBackend::new(20, 8);
+        let mut state = SplitPaneState::new(0.5);
+        tb.render(|ui| {
+            let _ = ui.vsplit_pane(
+                &mut state,
+                |ui| {
+                    ui.text("TOP");
+                },
+                |ui| {
+                    ui.text("BOTTOM");
+                },
+            );
+        });
+        let output = tb.to_string_trimmed();
+        assert!(output.contains("TOP"));
+        assert!(output.contains("BOTTOM"));
+        assert!(output.contains('─'), "horizontal divider visible: {output}");
+    }
+
+    #[test]
+    fn issue_223_split_pane_state_clamps_to_min_ratio() {
+        let mut state = SplitPaneState::new(0.5);
+        state.set_ratio(0.001);
+        assert!(state.ratio >= state.min_ratio);
+        state.set_ratio(0.999);
+        assert!(state.ratio <= 1.0 - state.min_ratio);
+    }
+
+    #[test]
+    fn issue_223_split_pane_mouse_drag_updates_ratio() {
+        // Mouse drag is the primary advertised interaction for `split_pane`.
+        // The flow is:
+        //   1. MouseDown on the handle's prev-frame rect → state.dragging = true.
+        //   2. MouseDrag at a new x → state.ratio is recomputed from the
+        //      cursor's relative x within the outer container's rect.
+        //
+        // Both events must reuse the previous frame's `prev_hit_map`, so the
+        // first render seeds the map, and the second render fires the events.
+        let mut tb = TestBackend::new(40, 5);
+        let mut state = SplitPaneState::new(0.5);
+
+        // Warm the previous-frame geometry before targeting the actual divider.
+        for _ in 0..2 {
+            tb.render(|ui| {
+                let _ = ui.split_pane(
+                    &mut state,
+                    |ui| {
+                        ui.text("LEFT");
+                    },
+                    |ui| {
+                        ui.text("RIGHT");
+                    },
+                );
+            });
+        }
+
+        // Verify the handle char rendered (sanity-check before driving mouse).
+        let mut handle = None;
+        for y in 0..5u32 {
+            if let Some(x) = tb.line(y).chars().position(|ch| ch == '│') {
+                handle = Some((x as u32, y));
+                break;
+            }
+        }
+        let (handle_x, handle_y) = handle.expect("split_pane must render '│' handle");
+
+        let ratio_before_drag = state.ratio;
+        let events = EventBuilder::new()
+            .click(handle_x, handle_y)
+            .drag(5, handle_y)
+            .build();
+
+        // ── Frame 3: feed the click + drag events with the handle as the
+        // current focusable so we mirror the way the runtime presents the
+        // widget after Tab navigation. ──────────────────────────────────────
+        tb.render_with_events(events, 0, 1, |ui| {
+            let _ = ui.split_pane(
+                &mut state,
+                |ui| {
+                    ui.text("LEFT");
+                },
+                |ui| {
+                    ui.text("RIGHT");
+                },
+            );
+        });
+
+        // Mouse-Down must have entered drag mode; the Drag must have updated
+        // the ratio toward the left (smaller value).
+        assert!(
+            state.dragging,
+            "MouseDown on the divider must enter drag mode (state.dragging was false, ratio={})",
+            state.ratio
+        );
+        assert!(
+            state.ratio < ratio_before_drag,
+            "MouseDrag toward the left must shrink the left pane: ratio went from {} to {}",
+            ratio_before_drag,
+            state.ratio
+        );
+        // Ratio must respect the min_ratio clamp.
+        assert!(
+            state.ratio >= state.min_ratio,
+            "ratio must respect min_ratio clamp: ratio={}, min_ratio={}",
+            state.ratio,
+            state.min_ratio
+        );
+    }
+
+    // ── #224: gauge / line_gauge (builder API + f64) ─────────────────────────
+
+    #[test]
+    fn issue_224_gauge_renders_label_inside_bar() {
+        let mut tb = TestBackend::new(20, 3);
+        tb.render(|ui| {
+            let r: GaugeResponse = ui.gauge(0.5).label("50%").show();
+            assert!((r.ratio - 0.5).abs() < f64::EPSILON);
+        });
+        let output = tb.to_string_trimmed();
+        assert!(output.contains("50%"), "label visible: {output}");
+        assert!(output.contains('█'), "filled char visible: {output}");
+        assert!(output.contains('░'), "empty char visible: {output}");
+    }
+
+    #[test]
+    fn issue_224_gauge_clamps_ratio() {
+        let mut tb = TestBackend::new(20, 3);
+        tb.render(|ui| {
+            let r = ui.gauge(2.0).show();
+            assert!((r.ratio - 1.0).abs() < f64::EPSILON);
+            let r = ui.gauge(-0.5).show();
+            assert!((r.ratio - 0.0).abs() < f64::EPSILON);
+        });
+    }
+
+    #[test]
+    fn issue_224_gauge_takes_f64_ratio() {
+        // The gauge family was widened to f64 in v0.20.0 to match animate_value,
+        // chart APIs, and progress_bar. f32 → f64 inference must Just Work.
+        let mut tb = TestBackend::new(20, 3);
+        let ratio: f64 = 1.0 / 3.0;
+        tb.render(|ui| {
+            let r = ui.gauge(ratio).show();
+            // f64 precision must be preserved through the response field.
+            assert!((r.ratio - ratio).abs() < f64::EPSILON);
+        });
+    }
+
+    #[test]
+    fn issue_224_gauge_color_overrides_tier() {
+        // .color(...) replaces the auto-tiered color; the gauge still renders.
+        let mut tb = TestBackend::new(40, 3);
+        tb.render(|ui| {
+            ui.gauge(0.42).label("CPU").width(20).color(Color::Cyan);
+        });
+        let output = tb.to_string_trimmed();
+        assert!(output.contains("CPU"));
+        assert!(output.contains('█'));
+    }
+
+    #[test]
+    fn issue_224_gauge_drop_renders_without_show() {
+        // Letting Gauge drop without .show() must still emit the bar.
+        let mut tb = TestBackend::new(20, 3);
+        tb.render(|ui| {
+            ui.gauge(0.5).label("D");
+        });
+        let output = tb.to_string_trimmed();
+        assert!(output.contains('█') || output.contains('░'));
+    }
+
+    #[test]
+    fn issue_224_line_gauge_default_chars_render() {
+        let mut tb = TestBackend::new(40, 3);
+        tb.render(|ui| {
+            ui.line_gauge(0.5);
+        });
+        let output = tb.to_string_trimmed();
+        assert!(output.contains('━'), "filled char ━ visible: {output}");
+        assert!(output.contains('─'), "empty char ─ visible: {output}");
+    }
+
+    #[test]
+    fn issue_224_line_gauge_with_label_appended() {
+        let mut tb = TestBackend::new(40, 3);
+        tb.render(|ui| {
+            ui.line_gauge(0.6).label("60%");
+        });
+        let output = tb.to_string_trimmed();
+        assert!(output.contains("60%"), "label visible: {output}");
+    }
+
+    #[test]
+    fn issue_224_line_gauge_filled_char_override() {
+        // .filled(...) lets callers swap the bar character.
+        let mut tb = TestBackend::new(40, 3);
+        tb.render(|ui| {
+            ui.line_gauge(0.7).width(20).filled('#').empty('.');
+        });
+        let output = tb.to_string_trimmed();
+        assert!(output.contains('#'), "custom filled char: {output}");
+        assert!(output.contains('.'), "custom empty char: {output}");
+    }
+
+    // ── #235: scrollable gutter + highlight_next/prev ────────────────────────
+
+    #[test]
+    fn issue_235_set_highlights_initializes_current() {
+        let mut state = ScrollState::new();
+        state.set_highlights(&[HighlightRange::line(2), HighlightRange::line(5)]);
+        assert_eq!(state.current_highlight(), Some(0));
+    }
+
+    #[test]
+    fn issue_235_highlight_next_wraps_around() {
+        let mut state = ScrollState::new();
+        state.set_highlights(&[HighlightRange::line(1), HighlightRange::line(2)]);
+        state.highlight_next();
+        assert_eq!(state.current_highlight(), Some(1));
+        state.highlight_next();
+        assert_eq!(state.current_highlight(), Some(0));
+    }
+
+    #[test]
+    fn issue_235_highlight_previous_wraps_around() {
+        let mut state = ScrollState::new();
+        state.set_highlights(&[HighlightRange::line(1), HighlightRange::line(2)]);
+        state.highlight_previous();
+        assert_eq!(state.current_highlight(), Some(1));
+        state.highlight_previous();
+        assert_eq!(state.current_highlight(), Some(0));
+    }
+
+    #[test]
+    fn issue_235_highlight_next_scrolls_viewport() {
+        let mut state = ScrollState::new();
+        // Pretend we have 50 rows of content in a 10-row viewport.
+        state.set_highlights(&[HighlightRange::line(30)]);
+        // Manually populate bounds. We use the public scroll API to set offset.
+        state.scroll_down(0); // no-op; bounds set by widget on first frame.
+        // The set_bounds path is private, so simulate by accessing the
+        // highlight scroll-to via the public API; the math should clamp.
+        state.scroll_to_current_highlight();
+        // With viewport_height=0 (no widget run yet), scroll math no-ops, so
+        // offset stays at 0 — but at least the call must not panic.
+        assert_eq!(state.offset, 0);
+    }
+
+    #[test]
+    fn issue_235_scrollable_with_gutter_renders_line_numbers() {
+        let mut tb = TestBackend::new(40, 8);
+        let mut state = ScrollState::new();
+        let lines: Vec<String> = (0..20).map(|i| format!("line {i}")).collect();
+        tb.render(|ui| {
+            let _: GutterResponse = ui.scrollable_with_gutter(
+                &mut state,
+                GutterOpts::new(lines.len(), 5, |idx| format!("{:>3}", idx + 1)),
+                |ui, abs| {
+                    if let Some(s) = lines.get(abs) {
+                        ui.text(s.clone());
+                    }
+                },
+            );
+        });
+        let output = tb.to_string_trimmed();
+        assert!(output.contains("line 0"), "first line visible: {output}");
+        // gutter labels should display 1..=5 (the first five line numbers).
+        assert!(output.contains('1') && output.contains('5'));
+    }
+
+    #[test]
+    fn issue_235_scrollable_with_gutter_line_numbers_shortcut() {
+        // GutterOpts::line_numbers is the 90% case — no closure needed.
+        let mut tb = TestBackend::new(40, 8);
+        let mut state = ScrollState::new();
+        let lines: Vec<String> = (0..20).map(|i| format!("line {i}")).collect();
+        tb.render(|ui| {
+            let _: GutterResponse = ui.scrollable_with_gutter(
+                &mut state,
+                GutterOpts::line_numbers(lines.len(), 5),
+                |ui, abs| {
+                    if let Some(s) = lines.get(abs) {
+                        ui.text(s.clone());
+                    }
+                },
+            );
+        });
+        let output = tb.to_string_trimmed();
+        assert!(output.contains("line 0"));
+        // 1-based line numbers must show.
+        assert!(output.contains('1'));
+    }
+
+    #[test]
+    fn issue_235_scrollable_with_gutter_highlight_marks_line() {
+        let mut tb = TestBackend::new(40, 6);
+        let mut state = ScrollState::new();
+        state.set_highlights(&[HighlightRange::line(1)]);
+        let lines: Vec<String> = (0..10).map(|i| format!("L{i}")).collect();
+        tb.render(|ui| {
+            let r = ui.scrollable_with_gutter(
+                &mut state,
+                GutterOpts::line_numbers(lines.len(), 5),
+                |ui, abs| {
+                    if let Some(s) = lines.get(abs) {
+                        ui.text(s.clone());
+                    }
+                },
+            );
+            assert_eq!(r.total_highlights, 1);
+            assert_eq!(r.current_highlight, Some(0));
+        });
+    }
+
+    #[test]
+    fn issue_235_clear_highlights_resets_state() {
+        let mut state = ScrollState::new();
+        state.set_highlights(&[HighlightRange::line(1)]);
+        assert_eq!(state.current_highlight(), Some(0));
+        state.clear_highlights();
+        assert_eq!(state.current_highlight(), None);
+        assert!(state.highlights().is_empty());
+    }
+
+    // ── #249: scrollbar() click-to-jump + drag-to-scroll ─────────────────────
+
+    /// Render the standard `scroll_col + scrollbar` row for several warm-up
+    /// frames, then return the bar's track rect from the final `Response`.
+    ///
+    /// Three frames are required for the rect to stabilize: frame 0 has no
+    /// `scrollable` bounds yet (viewport_height 0 → the bar renders nothing);
+    /// frame 1 has bounds but the bar's hit rect is still absent from the
+    /// previous (frame-0) `prev_hit_map`; frame 2 finally reads frame 1's rect.
+    fn render_scrollbar_seeded(tb: &mut TestBackend, state: &mut ScrollState) -> Rect {
+        let mut rect = Rect::new(0, 0, 0, 0);
+        for _ in 0..3 {
+            tb.render(|ui| {
+                let _ = ui.row(|ui| {
+                    let _ = ui.scrollable(state).grow(1).col(|ui| {
+                        for i in 0..100 {
+                            ui.text(format!("Line {i}"));
+                        }
+                    });
+                    rect = ui.scrollbar(state).rect;
+                });
+            });
+        }
+        assert!(rect.height > 0, "scrollbar track must have a known rect");
+        rect
+    }
+
+    /// Render the standard row once with the given events applied.
+    fn render_scrollbar_with_events(
+        tb: &mut TestBackend,
+        state: &mut ScrollState,
+        events: Vec<Event>,
+    ) {
+        tb.run_with_events(events, |ui| {
+            let _ = ui.row(|ui| {
+                let _ = ui.scrollable(state).grow(1).col(|ui| {
+                    for i in 0..100 {
+                        ui.text(format!("Line {i}"));
+                    }
+                });
+                let _ = ui.scrollbar(state);
+            });
+        });
+    }
+
+    #[test]
+    fn issue_249_scrollbar_click_jumps_to_bottom() {
+        let mut tb = TestBackend::new(80, 20);
+        let mut state = ScrollState::new();
+        let track = render_scrollbar_seeded(&mut tb, &mut state);
+
+        let max_offset = (state.content_height() - state.viewport_height()) as usize;
+        assert!(max_offset > 0, "test needs overflow");
+
+        // Click the bottom track cell → jump to max_offset.
+        let bottom_y = track.bottom() - 1;
+        render_scrollbar_with_events(
+            &mut tb,
+            &mut state,
+            EventBuilder::new().click(track.x, bottom_y).build(),
+        );
+        assert_eq!(
+            state.offset, max_offset,
+            "clicking the bottom track cell must jump to max_offset"
+        );
+    }
+
+    #[test]
+    fn issue_249_scrollbar_click_jumps_to_top() {
+        let mut tb = TestBackend::new(80, 20);
+        let mut state = ScrollState::new();
+        let track = render_scrollbar_seeded(&mut tb, &mut state);
+        let max_offset = (state.content_height() - state.viewport_height()) as usize;
+
+        // Start scrolled to the bottom, then re-seed a frame so prev_hit_map's
+        // thumb position reflects it.
+        state.set_offset(max_offset);
+        render_scrollbar_with_events(&mut tb, &mut state, Vec::new());
+        assert_eq!(state.offset, max_offset, "precondition: scrolled to bottom");
+
+        // Click the top track cell → jump to 0.
+        render_scrollbar_with_events(
+            &mut tb,
+            &mut state,
+            EventBuilder::new().click(track.x, track.y).build(),
+        );
+        assert_eq!(
+            state.offset, 0,
+            "clicking the top track cell must jump to 0"
+        );
+    }
+
+    #[test]
+    fn issue_249_scrollbar_click_middle_is_near_half() {
+        let mut tb = TestBackend::new(80, 20);
+        let mut state = ScrollState::new();
+        let track = render_scrollbar_seeded(&mut tb, &mut state);
+        let max_offset = (state.content_height() - state.viewport_height()) as i64;
+
+        let mid_y = track.y + track.height / 2;
+        render_scrollbar_with_events(
+            &mut tb,
+            &mut state,
+            EventBuilder::new().click(track.x, mid_y).build(),
+        );
+        let half = max_offset / 2;
+        let got = state.offset as i64;
+        assert!(
+            (got - half).abs() <= 5,
+            "midpoint click offset {got} not within 5 of {half}"
+        );
+    }
+
+    #[test]
+    fn issue_249_scrollbar_thumb_drag_scrolls() {
+        let mut tb = TestBackend::new(80, 20);
+        let mut state = ScrollState::new();
+        let track = render_scrollbar_seeded(&mut tb, &mut state);
+
+        // Thumb starts at the top (offset 0). Grab it, then drag progressively
+        // further down across frames; offset must grow monotonically.
+        let thumb_top_y = track.y;
+        let mut offsets = Vec::new();
+        for k in [0u32, 3, 7] {
+            render_scrollbar_with_events(
+                &mut tb,
+                &mut state,
+                EventBuilder::new()
+                    .click(track.x, thumb_top_y)
+                    .drag(track.x, thumb_top_y + k)
+                    .build(),
+            );
+            offsets.push(state.offset);
+        }
+        assert!(
+            state.dragging,
+            "thumb still held (no mouse-up) → dragging stays true"
+        );
+        assert!(
+            offsets[1] > offsets[0] && offsets[2] > offsets[1],
+            "offset must grow monotonically with drag distance: {offsets:?}"
+        );
+
+        // Mouse-up releases the drag.
+        render_scrollbar_with_events(
+            &mut tb,
+            &mut state,
+            EventBuilder::new()
+                .mouse_up(track.x, thumb_top_y + 7)
+                .build(),
+        );
+        assert!(!state.dragging, "mouse-up must clear dragging");
+    }
+
+    #[test]
+    fn issue_249_scrollbar_drag_outside_track_x_still_scrolls() {
+        let mut tb = TestBackend::new(80, 20);
+        let mut state = ScrollState::new();
+        let track = render_scrollbar_seeded(&mut tb, &mut state);
+
+        // Grab the thumb, then drag far to the left (off the 1-cell-wide track).
+        render_scrollbar_with_events(
+            &mut tb,
+            &mut state,
+            EventBuilder::new()
+                .click(track.x, track.y)
+                .drag(track.x.saturating_sub(30), track.y + 8)
+                .build(),
+        );
+        assert!(state.dragging, "drag started");
+        assert!(
+            state.offset > 0,
+            "drag is not gated on x once started: offset must follow y"
+        );
+    }
+
+    #[test]
+    fn issue_249_scrollbar_no_overflow_is_inert() {
+        let mut tb = TestBackend::new(80, 20);
+        let mut state = ScrollState::new();
+        // Content fits the viewport → no overflow.
+        let render = |ui: &mut slt::Context, state: &mut ScrollState| {
+            let _ = ui.row(|ui| {
+                let _ = ui.scrollable(state).grow(1).col(|ui| {
+                    for i in 0..3 {
+                        ui.text(format!("Line {i}"));
+                    }
+                });
+                let _ = ui.scrollbar(state);
+            });
+        };
+        for _ in 0..2 {
+            tb.render(|ui| render(ui, &mut state));
+        }
+        // Click where the bar would be: nothing happens.
+        tb.run_with_events(EventBuilder::new().click(79, 19).build(), |ui| {
+            render(ui, &mut state)
+        });
+        assert_eq!(state.offset, 0, "no overflow → click is inert");
+        assert!(!state.dragging, "no overflow → never enters drag mode");
+    }
+
+    #[test]
+    fn issue_249_scrollbar_wheel_interop() {
+        // A wheel event over the scroll_col and a track click in the same batch
+        // both apply, clamped coherently.
+        let mut tb = TestBackend::new(80, 20);
+        let mut state = ScrollState::new();
+        let track = render_scrollbar_seeded(&mut tb, &mut state);
+        let max_offset = (state.content_height() - state.viewport_height()) as usize;
+
+        let events = EventBuilder::new()
+            .scroll_down(10, 10) // wheel over the scroll_col area
+            .click(track.x, track.bottom() - 1) // jump to bottom via the bar
+            .build();
+        render_scrollbar_with_events(&mut tb, &mut state, events);
+        assert_eq!(
+            state.offset, max_offset,
+            "wheel + track-click both apply and clamp to max_offset"
+        );
+    }
+
+    #[test]
+    fn issue_249_scrollbar_modal_suppression() {
+        let mut tb = TestBackend::new(80, 20);
+        let mut state = ScrollState::new();
+        let track = render_scrollbar_seeded(&mut tb, &mut state);
+
+        // Open a modal, then click where the bar is: the bar is inert.
+        let click = EventBuilder::new()
+            .click(track.x, track.bottom() - 1)
+            .build();
+        let offset_before = state.offset;
+        tb.run_with_events(click, |ui| {
+            let _ = ui.modal(|ui| {
+                ui.text("blocking");
+            });
+            let _ = ui.row(|ui| {
+                let _ = ui.scrollable(&mut state).grow(1).col(|ui| {
+                    for i in 0..100 {
+                        ui.text(format!("Line {i}"));
+                    }
+                });
+                let _ = ui.scrollbar(&mut state);
+            });
+        });
+        assert_eq!(
+            state.offset, offset_before,
+            "scrollbar interaction must be suppressed while a modal is active"
+        );
+        assert!(!state.dragging, "no drag entered under modal");
+    }
+
+    #[test]
+    fn issue_249_scrollbar_renders_thumb_after_offset_move() {
+        let mut tb = TestBackend::new(80, 20);
+        let mut state = ScrollState::new();
+        let track = render_scrollbar_seeded(&mut tb, &mut state);
+
+        render_scrollbar_with_events(
+            &mut tb,
+            &mut state,
+            EventBuilder::new()
+                .click(track.x, track.bottom() - 1)
+                .build(),
+        );
+        assert!(state.offset > 0, "offset moved");
+        // `assert_contains` panics on absence — calling it IS the assertion.
+        tb.assert_contains("█");
     }
 }

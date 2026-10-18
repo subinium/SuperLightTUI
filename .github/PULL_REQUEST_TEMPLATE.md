@@ -20,7 +20,7 @@
 ### Public API Changes
 
 - [ ] New public items have doc comments (`///`)
-- [ ] Widget follows the [Response pattern](DESIGN_PRINCIPLES.md#3-widget-contract)
+- [ ] Widget follows the [Response pattern](../docs/internals/design-principles.md#r3--widget-contract)
 - [ ] State struct in `widgets.rs`, impl on `Context`, re-export in `lib.rs`
 - [ ] Breaking change? Update CHANGELOG.md and note it here
 
