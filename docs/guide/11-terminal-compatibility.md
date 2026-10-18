@@ -135,6 +135,11 @@ Practical consequences:
   and SLT for ZWJ sequences, skin tones, and VS16 emoji, which can leave stray
   cells on that row. Width-conservative mode is on by default under
   multiplexers; the flush-side cursor reposition it drives lands with #441.
+  Under tmux older than 3.5 (or a tmux whose version is unknown, e.g. over
+  SSH) conservative mode also drops U+FE0F and draws VS16 emoji in text
+  presentation with a blank second column: those tmux versions widen a VS16
+  cluster but mark its padding one column too far right (fixed in tmux 3.5),
+  so the emoji itself would shift the rest of the row on every redraw.
 
 ## SSH
 

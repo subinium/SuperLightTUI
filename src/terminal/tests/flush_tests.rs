@@ -765,6 +765,44 @@ fn vs16_cluster_is_repositioned_not_padded() {
     );
 }
 
+/// Issue #441 on tmux < 3.5: tmux widens `U+2764 U+FE0F` but marks the
+/// padding cell one column too far right, so the pane keeps a stray cell and
+/// redraws shift the row. The fallback drops U+FE0F (text presentation),
+/// keeps the blank fill for the buffer's second column and still positions
+/// the next cell explicitly.
+#[test]
+fn tmux_vs16_fallback_emits_text_presentation() {
+    let area = Rect::new(0, 0, 8, 1);
+    let mut current = Buffer::empty(area);
+    current.set_string(0, 0, "A\u{2764}\u{FE0F}BC", Style::new());
+    let policy = WidthPolicy {
+        conservative: true,
+        ..WidthPolicy::default()
+    }
+    .with_tmux_vs16_fallback(true);
+    assert!(policy.text_presentation);
+    let mut out = Vec::new();
+    flush_buffer_diff_rows(
+        &mut out,
+        &current,
+        &Buffer::empty(area),
+        ColorDepth::TrueColor,
+        0,
+        &mut String::new(),
+        &[],
+        policy,
+    )
+    .unwrap();
+    assert_eq!(
+        String::from_utf8(out).unwrap(),
+        "\x1b[1;1HA\x1b[1;3H \x1b[1;2H\u{2764}\x1b[1;4HBC\x1b[0m"
+    );
+
+    // Explicitly non-conservative width handling trusts the terminal.
+    let trusting = WidthPolicy::default().with_tmux_vs16_fallback(true);
+    assert!(!trusting.text_presentation);
+}
+
 /// Issue #441: after frames that change only the trailing cell, the screen
 /// equals the buffer on both one- and two-column VS16 terminals.
 #[test]
