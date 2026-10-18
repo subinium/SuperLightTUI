@@ -526,6 +526,20 @@
   (−14%). Frame time is unchanged within noise. Breakdown, the rejected
   `str_width` change and follow-ups: docs/internals/performance.md "Binary size";
   re-measure with `bash bench/ratatui-compare/size.sh`.
+- Programs link only the parts of text handling and graphics they use
+  (#491): grapheme segmentation and the `unicode-width` string walk keep one
+  out-of-line copy instead of one per codegen unit (printable ASCII is still
+  measured inline), and the Kitty / Sixel / iTerm2 flush passes are linked
+  only by programs that draw an image. Output is byte-identical. Stripped
+  release sizes, aarch64 macOS, default features: hello-world 1,232,400 →
+  1,149,200 B (−6.8%), a list / table / gauge dashboard 1,367,208 →
+  1,250,904 B (−8.5%; ratatui 0.30.2 equivalent: 759,976 B),
+  `examples/demo` −7.7%, `examples/widgets_tour` −9.4%. Frame time is
+  unchanged (−2.9% to +0.5% per workload). `bench/ratatui-compare/size.sh`
+  now also measures the dashboard and a size profile (`opt-level = "z"`,
+  fat LTO, one codegen unit, `panic = "abort"`, `strip`), which takes the
+  hello-world to 688,304 B; the recipe and its trade-offs are in
+  docs/internals/performance.md "Binary size".
 - `list` and unpaged `table` per-frame work is proportional to the visible
   rows instead of the item count (#487): a 10k-item list at 100x50 drops
   from ~1,875 to ~255 µs and from 20,018 to 109 allocations per frame; a
