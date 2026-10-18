@@ -2051,7 +2051,19 @@ impl<'a> ContainerBuilder<'a> {
         self.ctx.response_for(interaction_id)
     }
 
-    fn finish(mut self, direction: Direction, f: impl FnOnce(&mut Context)) -> Response {
+    fn finish(self, direction: Direction, f: impl FnOnce(&mut Context)) -> Response {
+        // Binary size (#491): only this shim is monomorphized per closure; the
+        // container body below exists once instead of being copied into every
+        // `.col(..)` / `.row(..)` call site (122 copies, ~520 KB in `demo`).
+        let mut f = Some(f);
+        self.finish_dyn(direction, &mut |ui: &mut Context| {
+            if let Some(f) = f.take() {
+                f(ui);
+            }
+        })
+    }
+
+    fn finish_dyn(mut self, direction: Direction, f: &mut dyn FnMut(&mut Context)) -> Response {
         let interaction_id = self.ctx.next_interaction_id();
         // `row_gap` / `col_gap` are `Option<u32>` (positive override); fall back
         // to the signed builder `gap`, which alone can carry an overlap (#222).

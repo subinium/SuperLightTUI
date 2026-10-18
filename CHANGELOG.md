@@ -198,6 +198,17 @@
 
 ### Perf
 
+- Smaller release binaries (#491): `ContainerBuilder::col` / `row` / `line`,
+  the `Context` row/col helpers, `line_wrap` and `button_colored` keep only a
+  thin generic shim per closure or label type, the frame kernel takes the
+  frame closure as `dyn` (one copy for native, accessible and test runs), and
+  the F12 debug bar no longer links float formatting (identical output).
+  Stripped release sizes on aarch64 macOS: hello-world 1,198,888 →
+  1,164,360 B (−2.9%; ratatui 0.30.2: 553,384 B), `examples/demo` 2,698,200
+  → 2,070,704 B (−23%), `examples/widgets_tour` 1,715,256 → 1,466,920 B
+  (−14%). Frame time is unchanged within noise. Breakdown, the rejected
+  `str_width` change and follow-ups: docs/PERFORMANCE.md "Binary size";
+  re-measure with `bash bench/ratatui-compare/size.sh`.
 - `list` and unpaged `table` per-frame work is proportional to the visible
   rows instead of the item count (#487): a 10k-item list at 100x50 drops
   from ~1,875 to ~255 µs and from 20,018 to 109 allocations per frame; a

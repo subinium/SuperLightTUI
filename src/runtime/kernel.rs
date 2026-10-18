@@ -140,7 +140,9 @@ pub(crate) fn run_frame_kernel(
     size: (u32, u32),
     events: Vec<event::Event>,
     is_real_terminal: bool,
-    f: &mut impl FnMut(&mut context::Context),
+    // `dyn` (#491): one kernel copy per binary instead of one per run mode
+    // (native, accessible, test) and user closure; costs one indirect call.
+    f: &mut dyn FnMut(&mut context::Context),
 ) -> FrameKernelResult {
     // Issue #449: every width measurement in this frame (buffer, layout,
     // wrapping, truncation) follows the configured ambiguous-width rule.
