@@ -309,8 +309,8 @@ ui.canvas(40, 10, |cv| {
 | `text_tour` | `cargo run --example text_tour` | CJK 渲染、IME 输入、Pretext 重排、cargo 风格 CLI |
 | `canvas_tour` | `cargo run --example canvas_tour` | DOOM 火焰、游戏（tetris/snake/minesweeper）、raw draw、Kitty 图像、动画 |
 | `system_tour` | `cargo run --example system_tour --features async` | error boundary 和 overlay anchor 实时标签页；async/inline 模式以代码说明 |
-| `v020_tour` | `cargo run --example v020_tour` | v0.20 API 导览（包含 static output 的 `run_static`） |
-| `v0211_tour` | `cargo run --example v0211_tour` | v0.21.1 新增 API |
+| `widgets_tour` | `cargo run --example widgets_tour` | Hooks、主题、模态焦点陷阱、布局辅助与 static output（`run_static`） |
+| `interaction_tour` | `cargo run --example interaction_tour` | `Response` 点击 / 双击 / 滚动信号、`KeyMap`、焦点遍历 |
 
 完整的分类索引（包括各版本的特性导览和展示 demo）见[示例指南]。
 

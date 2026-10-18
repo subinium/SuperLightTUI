@@ -309,8 +309,8 @@ ui.canvas(40, 10, |cv| {
 | `text_tour` | `cargo run --example text_tour` | CJK 렌더링, IME 입력, Pretext reflow, cargo 스타일 CLI |
 | `canvas_tour` | `cargo run --example canvas_tour` | DOOM fire, 게임(tetris/snake/minesweeper), raw draw, Kitty 이미지, 애니메이션 |
 | `system_tour` | `cargo run --example system_tour --features async` | error boundary와 overlay anchor 라이브 탭. async/inline 모드는 코드로 설명 |
-| `v020_tour` | `cargo run --example v020_tour` | v0.20 API 투어(static output `run_static` 포함) |
-| `v0211_tour` | `cargo run --example v0211_tour` | v0.21.1 API 추가분 |
+| `widgets_tour` | `cargo run --example widgets_tour` | 훅, 테마, 모달 포커스 트랩, 레이아웃 헬퍼, static output(`run_static`) |
+| `interaction_tour` | `cargo run --example interaction_tour` | 클릭 / 더블클릭 / 스크롤 `Response` 신호, `KeyMap`, 포커스 이동 |
 
 릴리즈별 feature 투어와 쇼케이스 데모를 포함한 전체 분류 인덱스는 [예제 가이드]에 있습니다.
 

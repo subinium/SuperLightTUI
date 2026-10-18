@@ -1714,9 +1714,10 @@ Diagnostics: F12 toggles an overlay showing container bounds and FPS. `ui.debug_
 
 ## 20. See also
 
-- Runnable example targets (`cargo run --example <name>`; `Cargo.toml` sets `autoexamples = false`, so only these 20 names work):
-  - Entry: `hello`, `counter`, `demo`, `color_picker`.
-  - Tours: `cookbook_tour`, `showcase_tour`, `text_tour`, `canvas_tour`, `system_tour` (needs `--features async`), `v020_tour`, `v0211_tour`, `v0210_widgets`.
-  - Tools and reports: `debug_selection`, `demo_key_test`, `test_mouse`, `theme_hot_reload` (needs `--features theme-watch`), `perf_interactive`, `perf_regression`, `v020_perf_audit`, `v020_test_utils`.
-  - Other files in `examples/` (`demo_dashboard`, `demo_cli`, `demo_fire`, `inline`, `async_demo`, ...) are source modules shown inside a tour, or source-only. See `EXAMPLES.md` for the mapping.
+- Runnable example targets (`cargo run --example <name>`; `Cargo.toml` sets `autoexamples = false`, so only these 29 names work):
+  - Entry: `hello`, `counter`, `demo`, `color_picker`, `inline`, `async_demo` (needs `--features async`), `error_boundary_demo`.
+  - Tours: `cookbook_tour`, `showcase_tour`, `text_tour`, `canvas_tour`, `system_tour` (needs `--features async`), `widgets_tour`, `interaction_tour`, `widgets_extra`.
+  - Standalone feature demos: `feature_showcase`, `anim`, `demo_fire`, `demo_game`, `demo_kitty_image`, `demo_raw_draw`.
+  - Tools and reports: `debug_selection`, `demo_key_test`, `mouse_probe`, `theme_hot_reload` (needs `--features theme-watch`), `perf_interactive`, `perf_regression`, `perf_audit`, `testing_report`.
+  - Other files in `examples/` (`demo_dashboard`, `demo_cli`, `gauge`, `modal_trap`, ...) are source modules shown inside a tour or rendered by a test. See `EXAMPLES.md` for the mapping.
 - Per-topic guides: `QUICK_START.md`, `INTERACTION.md`, `WIDGETS.md`, `PATTERNS.md`, `AI_GUIDE.md`, `DESIGN_PRINCIPLES.md`, `ARCHITECTURE.md`, `THEMING.md`, `ANIMATION.md`, `BACKENDS.md`, `TESTING.md`, `DEBUGGING.md`, `FEATURES.md`, `EXAMPLES.md`.

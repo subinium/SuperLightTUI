@@ -719,7 +719,7 @@ This document does **not** define:
   placement) — those live in `AGENTS.md` because they're project-specific.
 - **Release process** — that lives in `AGENTS.md` "Release Workflow Checklist."
 - **Test coverage requirements** — that lives in CI config.
-- **Performance budgets** — that lives in `tests/v020_perf_alloc.rs` and
+- **Performance budgets** — that lives in `tests/alloc_budget.rs` and
   benchmark suites.
 
 Design principles are *what* the API should look like; the project's

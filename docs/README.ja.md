@@ -309,8 +309,8 @@ ui.canvas(40, 10, |cv| {
 | `text_tour` | `cargo run --example text_tour` | CJK 描画、IME 入力、Pretext リフロー、cargo 風 CLI |
 | `canvas_tour` | `cargo run --example canvas_tour` | DOOM fire、ゲーム（tetris/snake/minesweeper）、raw draw、Kitty 画像、アニメーション |
 | `system_tour` | `cargo run --example system_tour --features async` | error boundary と overlay anchor のライブタブ。async/inline モードはコードで解説 |
-| `v020_tour` | `cargo run --example v020_tour` | v0.20 API ツアー（static output の `run_static` を含む） |
-| `v0211_tour` | `cargo run --example v0211_tour` | v0.21.1 の API 追加分 |
+| `widgets_tour` | `cargo run --example widgets_tour` | フック、テーマ、モーダルのフォーカストラップ、レイアウトヘルパー、static output（`run_static`） |
+| `interaction_tour` | `cargo run --example interaction_tour` | クリック / ダブルクリック / スクロールの `Response` シグナル、`KeyMap`、フォーカス移動 |
 
 リリースごとの feature ツアーやショーケースを含む分類済みの完全な一覧は [サンプル集] にあります。
 

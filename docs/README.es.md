@@ -309,8 +309,8 @@ Para la lista categorizada de widgets, consulta la [Guía de Widgets]. Para comp
 | `text_tour` | `cargo run --example text_tour` | Renderizado CJK, entrada IME, reflow de Pretext, CLI estilo cargo |
 | `canvas_tour` | `cargo run --example canvas_tour` | Fuego DOOM, juegos (tetris/snake/minesweeper), raw draw, imágenes Kitty, animación |
 | `system_tour` | `cargo run --example system_tour --features async` | Pestañas en vivo de error boundary y overlay anchor; los modos async e inline se describen con código |
-| `v020_tour` | `cargo run --example v020_tour` | Tour de la API v0.20, incluida la salida estática (`run_static`) |
-| `v0211_tour` | `cargo run --example v0211_tour` | Novedades de la API v0.21.1 |
+| `widgets_tour` | `cargo run --example widgets_tour` | Hooks, temas, trampas de foco en modales, utilidades de layout y salida estática (`run_static`) |
+| `interaction_tour` | `cargo run --example interaction_tour` | Señales de clic / doble clic / scroll en `Response`, `KeyMap`, recorrido de foco |
 
 El índice completo categorizado, con los tours por versión y las demos de showcase, está en [Ejemplos].
 

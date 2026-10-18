@@ -129,7 +129,7 @@ These docs are maintained for the current release, but source and compile-tested
 - `docs/QUICK_START.md` — current.
 - `docs/COOKBOOK.md` — composition recipes; run through `cookbook_tour`.
 - `docs/THEMING.md` — current. `ThemeBuilder` `const fn` since v0.19.2.
-- `docs/TESTING.md` — covers v0.19.1 EventBuilder additions. Read alongside `tests/v020_test_utils_demo.rs` for v0.20 helpers.
+- `docs/TESTING.md` — covers v0.19.1 EventBuilder additions. Read alongside `tests/example_snapshots/testing_report.rs` for the `record_frames` / `sequence` helpers.
 - `docs/ANIMATION.md` — current.
 - `docs/AI_GUIDE.md` — concise overview, current.
 - `docs/BACKENDS.md` — `Backend`, `AppState`, `frame()` low-level paths.
@@ -142,12 +142,12 @@ These docs are maintained for the current release, but source and compile-tested
 - `docs/API_DESIGN.md` — current. The 5 rules this skill encodes.
 - `docs/DESIGN_PRINCIPLES.md` — current. North-star + audit matrix.
 
-**Authoritative when docs disagree**: source code (`src/lib.rs` re-exports, `src/context/widgets_*.rs` signatures), `examples/v020_*.rs` runnable demos, `tests/v020_*.rs` regression tests.
+**Authoritative when docs disagree**: source code (`src/lib.rs` re-exports, `src/context/widgets_*.rs` signatures), compile-checked `examples/*.rs` demos, `tests/*.rs` regression tests.
 
-## Examples (`examples/` — 63 Rust files, 20 Cargo-listed targets)
+## Examples (`examples/` — 63 Rust files, 29 Cargo-listed targets)
 
 The skill's `SKILL.md` lists the canonical reference example for each domain. Highlights:
-- **v0.20 surface**: `v020_tour.rs` (target `v020_tour`, tabbed over every `v020_*` demo), `v020_dx_shortcuts.rs` (on_hover/animate_bool/fill). `v020_showcase.rs` is not compiled by any target; do not use it as a reference.
+- **Feature demos**: `widgets_tour.rs` (target `widgets_tour`, tabbed over every single-feature demo such as `gauge.rs`, `modal_trap.rs`, `named_focus.rs`), `dx_shortcuts.rs` (on_hover/animate_bool/fill), `feature_showcase.rs` (target `feature_showcase`, the same features on one screen).
 - **Cookbook recipes**: `cookbook_login.rs`, `cookbook_table.rs`, `cookbook_modal_toast.rs`, `cookbook_dashboard.rs`, `cookbook_file_picker.rs`, `cookbook_tour.rs`
 - **Composition**: `demo_website.rs` (provide/use_context), `tests/context_provider.rs` (8 unit tests)
 - **CJK / wide chars**: `demo_cjk.rs`

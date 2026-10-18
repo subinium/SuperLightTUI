@@ -200,7 +200,7 @@ Constraint translation:
 | `.margin(1)` on Layout | `.p(1)` on parent container |
 | `.spacing(1)` between chunks | `.gap(1)` on parent `row` / `col` |
 
-`Constraints` value type also exposes the v0.20 `WidthSpec` set: `Constraints::default().w_pct(50)`, `.w_ratio(1, 3)`, `.w_minmax(10, 30)` — see `examples/v020_widthspec.rs`.
+`Constraints` value type also exposes the v0.20 `WidthSpec` set: `Constraints::default().w_pct(50)`, `.w_ratio(1, 3)`, `.w_minmax(10, 30)` — see `examples/widthspec.rs`.
 
 ### State mapping (re-exported via `slt::*`)
 
@@ -428,8 +428,8 @@ If a feature genuinely doesn't map, tell the user — don't fake it.
 
 - `.agents/skills/slt/SKILL.md` — SLT authoring skill (use after migration is done).
 - `.agents/skills/slt/REFERENCES.md` — feature flags, current surface, doc pointers.
-- `examples/v020_*.rs` — v0.20 feature demos (gauge, breadcrumb, scrollable_with_gutter, split_pane, etc.), compiled and run through `cargo run --example v020_tour`.
-- `tests/v020_*.rs` — regression tests showing canonical TestBackend + sequence patterns.
+- `examples/gauge.rs`, `examples/breadcrumb_response.rs`, `examples/gutter_highlights.rs`, `examples/split_pane.rs`, etc. — single-feature demos, compiled and run through `cargo run --example widgets_tour`.
+- `tests/hooks_focus.rs`, `tests/widgets.rs`, `tests/example_snapshots/` — regression tests showing canonical TestBackend + sequence patterns.
 - `src/lib.rs` — authoritative public re-exports.
 - `src/context/widgets_*.rs` — authoritative widget signatures.
 - ratatui repo: <https://github.com/ratatui-org/ratatui>

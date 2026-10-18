@@ -317,8 +317,8 @@ For composition advice, see [Patterns Guide].
 | `text_tour` | `cargo run --example text_tour` | CJK rendering, IME input, Pretext reflow, cargo-style CLI |
 | `canvas_tour` | `cargo run --example canvas_tour` | DOOM fire, games (tetris/snake/minesweeper), raw draw, Kitty images, animation |
 | `system_tour` | `cargo run --example system_tour --features async` | Live error boundary and overlay anchor tabs; async and inline modes described as code |
-| `v020_tour` | `cargo run --example v020_tour` | v0.20 API feature tour, including static output (`run_static`) |
-| `v0211_tour` | `cargo run --example v0211_tour` | v0.21.1 API additions |
+| `widgets_tour` | `cargo run --example widgets_tour` | Hooks, theming, modal focus traps, layout helpers, and static output (`run_static`) |
+| `interaction_tour` | `cargo run --example interaction_tour` | Click / double-click / scroll `Response` signals, `KeyMap`, focus traversal |
 
 The full categorized index — including per-release feature tours and showcase demos — lives in [Examples Guide].
 

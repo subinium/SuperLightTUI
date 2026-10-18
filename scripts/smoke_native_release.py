@@ -29,7 +29,7 @@ def main():
         (consumer / "src").mkdir()
         (consumer / "src/lib.rs").write_text("// Registry-only native acceptance consumer.\n", encoding="utf-8")
         (consumer / "tests/support").mkdir(parents=True)
-        shutil.copy2(root / "tests/v024_burst.rs", consumer / "tests/v024_burst.rs")
+        shutil.copy2(root / "tests/stdin_paste_burst.rs", consumer / "tests/stdin_paste_burst.rs")
         shutil.copy2(root / "tests/support/burst_pty.py", consumer / "tests/support/burst_pty.py")
         (consumer / "Cargo.toml").write_text(f'''[package]
 name = "slt-native-registry-smoke"
@@ -61,7 +61,7 @@ async = []
             if vcs["git"]["sha1"] != args.expect_commit or vcs["git"].get("dirty", False):
                 raise RuntimeError("Published native source provenance mismatch")
         result = subprocess.run(
-            ["cargo", "test", "--locked", "--test", "v024_burst", "--", "--test-threads=1", "--nocapture"],
+            ["cargo", "test", "--locked", "--test", "stdin_paste_burst", "--", "--test-threads=1", "--nocapture"],
             cwd=consumer, capture_output=True, text=True,
         )
         print(result.stdout, end="", flush=True)

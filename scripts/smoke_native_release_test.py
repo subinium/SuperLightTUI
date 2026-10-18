@@ -23,14 +23,14 @@ class NativeSmokeTests(unittest.TestCase):
                 "version": "=0.24.0", "features": ["async"],
             })
             self.assertEqual(manifest["features"]["default"], ["crossterm", "async"])
-            self.assertTrue((Path(cwd) / "tests/v024_burst.rs").is_file())
+            self.assertTrue((Path(cwd) / "tests/stdin_paste_burst.rs").is_file())
             self.assertTrue((Path(cwd) / "tests/support/burst_pty.py").is_file())
             if argv[1] == "metadata":
                 return subprocess.CompletedProcess(argv, 0, stdout=json.dumps({"packages": [{
                     "name": "superlighttui", "version": "0.24.0", "source": source,
                     "manifest_path": str(Path(cwd) / "Cargo.toml"),
                 }]}))
-            self.assertEqual(argv[1:5], ["test", "--locked", "--test", "v024_burst"])
+            self.assertEqual(argv[1:5], ["test", "--locked", "--test", "stdin_paste_burst"])
             return subprocess.CompletedProcess(argv, 0, stdout=f"test result: ok. {count} passed; 0 failed; 0 ignored\n", stderr="")
 
         with patch("sys.argv", ["smoke_native_release.py", "0.24.0"]), \

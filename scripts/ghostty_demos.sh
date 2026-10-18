@@ -36,9 +36,9 @@ SHOWCASE_PRESET=(
 # Registered tours that cover feature families without advertising source-only
 # modules as standalone Cargo targets.
 FEATURES_PRESET=(
-    "v020_tour"
-    "v0210_widgets"
-    "v0211_tour"
+    "widgets_tour"
+    "widgets_extra"
+    "interaction_tour"
     "canvas_tour"
     "text_tour"
     "system_tour"
@@ -67,7 +67,7 @@ POSITIONAL:
     <name> [<name>...]  Launch only the named Cargo example targets.
 
 INTERACTIVE MODE:
-    With no arguments, prints a numbered menu of all v020_* demos and
+    With no arguments, prints a numbered menu of all registered examples and
     prompts:
         select demos (e.g. 1 3 5 or 'all'):
 
@@ -85,7 +85,7 @@ EXAMPLES:
     scripts/ghostty_demos.sh --features
 
     # Specific registered targets
-    scripts/ghostty_demos.sh showcase_tour v020_tour
+    scripts/ghostty_demos.sh showcase_tour widgets_tour
 
 NOTES:
     - Requires Ghostty.app at /Applications/Ghostty.app. If missing, the

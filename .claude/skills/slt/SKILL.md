@@ -292,40 +292,40 @@ Red flags that mean STOP: "Probably fine", "Just a docs change", "CI will catch 
 
 ## Reference examples (skill should reference these by file:line)
 
-Only Cargo-listed targets are runnable (`cargo run --example <name>`; 20 targets, auto-discovery is off). Most other files under `examples/` are compiled as modules of a tour target (`#[path = ...] mod`), so they are type-checked by `cargo check --examples --all-features`. Files marked *source only* are not compiled by any target and can drift; prefer the compiled alternative.
+Only Cargo-listed targets are runnable (`cargo run --example <name>`; 29 targets, auto-discovery is off). Every other file under `examples/` is compiled as a module of a tour target or test (`#[path = ...] mod`), so all of them are type-checked by `cargo check --all-targets --all-features`; `tests/docs_contract.rs` enforces that no example source is left uncompiled.
 
 | Domain | Reference file | Compiled via | Key shape |
 |---|---|---|---|
 | Hello / minimal | `examples/hello.rs` (21 lines) | target `hello` | `slt::run`, `bordered.title.col`, quit triple |
 | Counter (state in closure) | `examples/counter.rs` | target `counter` | move-closure state pattern |
-| Inline mode | `examples/inline.rs` (23 lines) | *source only*; rustdoc of `slt::run_inline` in `src/lib.rs` is doctested | `run_inline(rows, ...)` |
+| Inline mode | `examples/inline.rs` (23 lines) | target `inline` | `run_inline(rows, ...)` |
 | Tabbed tour | `examples/cookbook_tour.rs` | target `cookbook_tour` | `TabsState` + child `pub fn render(ui, &mut DemoState)` |
 | Form / validators | `examples/cookbook_login.rs` | `cookbook_tour` | `TextInputState::with_placeholder`, masked password, validation |
 | Searchable+sortable table | `examples/cookbook_table.rs` | `cookbook_tour` | `TableState::set_filter`, `toggle_sort`, `consume_key` |
 | Modal + Toast | `examples/cookbook_modal_toast.rs` | `cookbook_tour` | `ButtonVariant::Danger`, `raw_key_code(Esc)` for modal-aware quit |
-| Modal focus trap | `examples/v020_modal_trap.rs` | `v020_tour` | `ModalOptions { tab_trap: true }` |
+| Modal focus trap | `examples/modal_trap.rs` | `widgets_tour` | `ModalOptions { tab_trap: true }` |
 | File picker | `examples/cookbook_file_picker.rs` | `cookbook_tour` | `FilePickerState::selected_file()` |
 | Dashboard (chart+sparkline) | `examples/cookbook_dashboard.rs` | `cookbook_tour` | `ui.chart(\|c\| c.line(...).color(..), w, h)`, rolling `VecDeque<f64>` |
-| Animation primitives | `examples/canvas_tour.rs` (Anim tab) | target `canvas_tour` | Tween/Spring/Keyframes/Sequence/Stagger; `examples/anim.rs` is *source only* |
-| `use_state_keyed` | `examples/v020_use_state_keyed.rs` | `v020_tour` | per-row counter via `format!("counter-{i}")` |
-| `use_effect` | `examples/v020_use_effect.rs` | `v020_tour` | three dep shapes (`&()`, `&i32`, `&bool`) |
+| Animation primitives | `examples/canvas_tour.rs` (Anim tab) | target `canvas_tour` | Tween/Spring/Keyframes/Sequence/Stagger; standalone version `examples/anim.rs` (target `anim`) |
+| `use_state_keyed` | `examples/use_state_keyed.rs` | `widgets_tour` | per-row counter via `format!("counter-{i}")` |
+| `use_effect` | `examples/use_effect.rs` | `widgets_tour` | three dep shapes (`&()`, `&i32`, `&bool`) |
 | `provide`/`use_context` | `tests/context_provider.rs`, `examples/demo_website.rs:139-152` | test / `showcase_tour` | injection + `try_use_context` |
-| Theme subtree | `examples/v020_theme_subtree.rs` | `v020_tour` | `container().theme(theme)` per-subtree override |
-| Theme density | `examples/v020_spacing_scale.rs` | `v020_tour` | `Theme::compact() / comfortable() / spacious()` |
-| Gauge builder | `examples/v020_gauge.rs:104-107` | `v020_tour` | `ui.gauge(value).label(...).width(24)` |
-| Line gauge | `examples/v020_gauge.rs:74-92` | `v020_tour` | `ui.line_gauge(0.45).filled('#').empty('.').width(24)` |
-| Breadcrumb response | `examples/v020_breadcrumb_response.rs:72-77` | `v020_tour` | `ui.breadcrumb(&segs).separator(" › ").show()` |
-| Scrollable + gutter | `examples/v020_gutter_highlights.rs:150-165` | `v020_tour` | `GutterOpts::line_numbers`, `HighlightRange::line` |
-| Split pane | `examples/v020_split_pane.rs` | `v020_tour` | `split_pane`, `vsplit_pane`, drag handle |
-| WidthSpec variants | `examples/v020_widthspec.rs` | `v020_tour` | `Constraints::default().w_pct(50)`, `.w_ratio(1,3)`, `.w_minmax(10,30)` |
-| Named focus | `examples/v020_named_focus.rs:187` | `v020_tour` | `register_focusable_named` + `focus_by_name` |
-| Keymap help overlay | `examples/v020_keymap_help.rs` | `v020_tour` | `WidgetKeyHelp`, `publish_keymap`, `keymap_help_overlay(open)` |
-| DX shortcuts | `examples/v020_dx_shortcuts.rs` | `v020_tour` | `on_hover`, `animate_bool`, `fill()`, `Rect::center_in` |
-| Static log / scrollback | `examples/v020_static_log.rs` | `v020_tour` | `slt::run_static`, `ui.static_log(...)` |
-| Async | `examples/async_demo.rs` | *source only*; rustdoc of `slt::run_async` in `src/lib.rs` is doctested | `slt::run_async` with tokio, `.sender()`, `.join()` |
-| All-in-one tour | `examples/v020_tour.rs` | target `v020_tour` | tabs over every v0.20 feature demo; `examples/v020_showcase.rs` is *source only* |
-| Recent widgets | `examples/v0210_widgets.rs`, `examples/v0211_tour.rs` | targets `v0210_widgets`, `v0211_tour` | v0.21 widget additions |
-| Test utilities | `tests/v020_test_utils_demo.rs` | test | `record_frames`, `sequence().tick(..).key(..).type_string(..)` |
+| Theme subtree | `examples/theme_subtree.rs` | `widgets_tour` | `container().theme(theme)` per-subtree override |
+| Theme density | `examples/spacing_scale.rs` | `widgets_tour` | `Theme::compact() / comfortable() / spacious()` |
+| Gauge builder | `examples/gauge.rs:104-107` | `widgets_tour` | `ui.gauge(value).label(...).width(24)` |
+| Line gauge | `examples/gauge.rs:74-92` | `widgets_tour` | `ui.line_gauge(0.45).filled('#').empty('.').width(24)` |
+| Breadcrumb response | `examples/breadcrumb_response.rs:72-77` | `widgets_tour` | `ui.breadcrumb(&segs).separator(" › ").show()` |
+| Scrollable + gutter | `examples/gutter_highlights.rs:150-165` | `widgets_tour` | `GutterOpts::line_numbers`, `HighlightRange::line` |
+| Split pane | `examples/split_pane.rs` | `widgets_tour` | `split_pane`, `vsplit_pane`, drag handle |
+| WidthSpec variants | `examples/widthspec.rs` | `widgets_tour` | `Constraints::default().w_pct(50)`, `.w_ratio(1,3)`, `.w_minmax(10,30)` |
+| Named focus | `examples/named_focus.rs:187` | `widgets_tour` | `register_focusable_named` + `focus_by_name` |
+| Keymap help overlay | `examples/keymap_help.rs` | `widgets_tour` | `WidgetKeyHelp`, `publish_keymap`, `keymap_help_overlay(open)` |
+| DX shortcuts | `examples/dx_shortcuts.rs` | `widgets_tour` | `on_hover`, `animate_bool`, `fill()`, `Rect::center_in` |
+| Static log / scrollback | `examples/static_log.rs` | `widgets_tour` | `slt::run_static`, `ui.static_log(...)` |
+| Async | `examples/async_demo.rs` | target `async_demo` (needs `--features async`) | `slt::run_async` with tokio, `.sender()`, `.join()` |
+| All-in-one tour | `examples/widgets_tour.rs` | target `widgets_tour` | tabs over every single-feature demo; `examples/feature_showcase.rs` (target `feature_showcase`) composes them on one screen |
+| Recent widgets | `examples/widgets_extra.rs`, `examples/interaction_tour.rs` | targets `widgets_extra`, `interaction_tour` | paginator / number_input / scheduler / inspector; `Response` interaction signals, `KeyMap`, focus traversal |
+| Test utilities | `tests/example_snapshots/testing_report.rs` | test | `record_frames`, `sequence().tick(..).key(..).type_string(..)` |
 
 ## Testing pattern (headless)
 
@@ -358,7 +358,7 @@ tb.assert_contains("after esc");
 // tb.type_string("hello", |ui| { ... }) or successive tb.render(...) calls.
 ```
 
-See `tests/v020_test_utils_demo.rs` for `record_frames`, `assert_not_contains`, `assert_style_at`.
+See `tests/example_snapshots/testing_report.rs` for `record_frames`, `assert_not_contains`, `assert_style_at`.
 
 ## File layout cheat sheet
 

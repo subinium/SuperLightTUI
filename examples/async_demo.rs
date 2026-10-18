@@ -1,5 +1,5 @@
 use slt::{Border, Color, Context};
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> std::io::Result<()> {

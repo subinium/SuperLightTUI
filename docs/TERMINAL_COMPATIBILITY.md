@@ -175,7 +175,7 @@ Two diagnostic examples ship with the crate:
   fixed set of inputs: Tab, Shift+Tab, Esc, F1, F2, Ctrl+T, Ctrl+C, and a
   click on the mode badge. It also has a text input for typing tests. Add
   `-- --kitty` to request the Kitty keyboard protocol.
-- `cargo run --example test_mouse` bypasses SLT and prints raw crossterm mouse
+- `cargo run --example mouse_probe` bypasses SLT and prints raw crossterm mouse
   events, to tell a terminal problem from an app problem.
 
 For any other key, log every event SLT receives:
@@ -224,9 +224,9 @@ ui.text(format!(
 
 1. Did you enable it? `RunConfig::default().mouse(true)`. It is off by
    default.
-2. Run `test_mouse`. If it prints no mouse events, the terminal or
+2. Run `mouse_probe`. If it prints no mouse events, the terminal or
    multiplexer is not reporting them: check multiplexer mouse mode
-   (`set -g mouse on` in tmux). If `test_mouse` works but your app does not,
+   (`set -g mouse on` in tmux). If `mouse_probe` works but your app does not,
    use the event logger above to see what reaches SLT.
 3. Clicks arrive but hit the wrong widget: hit-testing uses last frame's
    layout, so the first frame after a layout change still sees the old

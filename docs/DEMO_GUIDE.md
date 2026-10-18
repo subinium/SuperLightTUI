@@ -5,7 +5,8 @@
 > `examples/*.rs`. Every rule here exists because a real demo bug shipped
 > when the rule was implicit. The "Why" line cites the bug.
 
-If you're touching `examples/v020_*.rs`, `examples/cookbook_*.rs`, or
+If you're touching a `widgets_tour` part (`examples/gauge.rs`,
+`examples/modal_trap.rs`, ...), `examples/cookbook_*.rs`, or
 adding a new `demo_*.rs`, read this first. The audit checks
 (`scripts/api_audit.sh` V5-V7) catch the mechanical violations; the
 human-judgment items (sample widget policy, intent labeling) are
@@ -37,10 +38,10 @@ biggest layout decision; mismatches cause the bugs §3-§5 prevent.
 
 | Archetype | Owns frame buffer? | Owns scrollback? | Has overlay? | Example |
 |-----------|--------------------|--------------------|--------------|---------|
-| **Standard** | yes (full canvas) | no | no | `v020_named_focus`, `v020_split_pane` |
-| **Overlay-first** | yes | no | yes (centered modal/help) | `v020_modal_trap`, `v020_keymap_help`, `v020_dx_shortcuts` |
-| **Scrollback** | partial (inline) | yes (append-only) | no | `v020_static_log` |
-| **System** | no (passes through) | no | no | `v020_perf_audit`, `v020_test_utils` (non-interactive reports) |
+| **Standard** | yes (full canvas) | no | no | `named_focus`, `split_pane` |
+| **Overlay-first** | yes | no | yes (centered modal/help) | `modal_trap`, `keymap_help`, `dx_shortcuts` |
+| **Scrollback** | partial (inline) | yes (append-only) | no | `static_log` |
+| **System** | no (passes through) | no | no | `perf_audit`, `testing_report` (non-interactive reports) |
 
 **Why this matters**: the v0.20 tour combined demos from different
 archetypes into a 2x2 grid and broke them all (overlays covered
@@ -67,7 +68,7 @@ toggles, modal open/closed, input value), **the second form is
 mandatory**. The first form's caller has no place to keep state, so any
 mutation gets thrown away on the next call.
 
-**Why**: v0.20's `v020_modal_trap` shipped with the stateless signature
+**Why**: v0.20's `modal_trap` shipped with the stateless signature
 even though it had a `show_modal` flag — every frame reset the modal to
 "open", swallowing every Yes/No click. This was caught only when the
 tour embedded the demo and tried to use it for real.
@@ -112,7 +113,7 @@ let _ = ui
 let _ = ui.bordered(Border::Rounded).title("…").p(pad).col(|ui| { … });
 ```
 
-**Why**: v0.20 `v020_named_focus` shipped without `.grow(1)`; the input
+**Why**: v0.20 `named_focus` shipped without `.grow(1)`; the input
 boxes were 1 cell wide because a flex row with no parent grow gives its
 children only their natural minimum width. The bug was visible
 instantly on launch.
@@ -185,7 +186,7 @@ if state.show_modal && ui.raw_key_code(KeyCode::Esc) {
 ```
 
 **Why**: v0.20 tour ate Esc at the top-level dispatcher, leaving
-`v020_modal_trap`'s confirm modal undismissable.
+`modal_trap`'s confirm modal undismissable.
 
 ### Conflict avoidance
 
@@ -201,7 +202,7 @@ keymap-help convention.
 ## 5. Composition rules
 
 A "composition" is a demo that embeds other demos — the prime example
-is `v020_tour.rs`, which dispatches to one of N feature demos by tab.
+is `widgets_tour.rs`, which dispatches to one of N feature demos by tab.
 
 ### Rule C1: one archetype per tab/cell
 
@@ -219,7 +220,7 @@ fought. The fix was 4 separate tabs.
 
 ### Rule C2: scrollback demos can't be re-embedded
 
-`v020_static_log` calls `ui.static_log(line)` which writes to the
+`static_log` calls `ui.static_log(line)` which writes to the
 terminal scrollback. In a single-binary live run that's fine — the
 line lands above the inline buffer. In a composing demo (tour), every
 frame now appends a new line, scrolling the bordered frame off the top
@@ -228,7 +229,7 @@ of the screen.
 If you need to surface a scrollback demo inside a tour, render a
 **description page** with a code snippet and a "run standalone"
 pointer instead of calling the actual scrollback API. See
-`v020_tour.rs::render_log` for the pattern.
+`widgets_tour.rs::render_log` for the pattern.
 
 ### Rule C3: state passes through, not state resets
 
@@ -266,7 +267,7 @@ let _ = ui.button("Save").on_hover(ui, "…");
 ui.text(format!("#210 panel_alpha = {alpha:.2}")).dim();
 ```
 
-**Why**: v0.20 `v020_dx_shortcuts` packed four DX helpers (#209, #210,
+**Why**: v0.20 `dx_shortcuts` packed four DX helpers (#209, #210,
 #220, #221) onto one screen with no per-helper labels. Reviewers asked
 "what's this demo showing?" — answer required reading the source.
 
@@ -310,7 +311,7 @@ explanation, use `.line_wrap(...)` so the wrap is intentional.
 
 ## 8. Snapshot-vs-live render
 
-If your demo has both a snapshot test (`tests/v020_*_demo.rs`) and a
+If your demo has both a snapshot test (`tests/example_snapshots/`) and a
 live binary, use the §2 split:
 
 ```rust
@@ -378,7 +379,7 @@ Before submitting a demo (new or modified):
       interaction without manual prodding.
 - [ ] `scripts/api_audit.sh --strict` exits 0.
 - [ ] `cargo test --all-features` passes.
-- [ ] At least one assertion in `tests/v020_interaction_regression.rs`
+- [ ] At least one assertion in `tests/demo_interaction_regression.rs`
       or `tests/visual_snapshots.rs` covers the demo's headline
       interaction or layout.
 

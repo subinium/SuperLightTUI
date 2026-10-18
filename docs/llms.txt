@@ -9,7 +9,7 @@
 - [AI guide](AI_GUIDE.md): common questions agents get wrong, implementation rules
 - [Widgets](WIDGETS.md): categorized API catalog (50+ widgets, state types, runtime methods)
 - [Patterns](PATTERNS.md): composition patterns, state ownership, screens, forms
-- [Examples guide](EXAMPLES.md): the 20 runnable `cargo run --example` targets (8 tours + entry, tool, and report binaries) and which source files each tour uses
+- [Examples guide](EXAMPLES.md): the 29 runnable `cargo run --example` targets (8 tours + entry, feature, tool, and report binaries) and which source files each tour uses
 - [Architecture](ARCHITECTURE.md): module map, frame lifecycle, layout pipeline
 - [Design principles](DESIGN_PRINCIPLES.md): API philosophy, immediate-mode rationale
 
@@ -72,10 +72,13 @@ Runnable targets (`cargo run --example <name>`; `autoexamples = false`, so other
 - `counter` ([source](../examples/counter.rs)): state plus keyboard
 - `demo` ([source](../examples/demo.rs)): broad widget tour
 - `cookbook_tour` ([source](../examples/cookbook_tour.rs)): the COOKBOOK recipes as tabs
-- `v0211_tour` ([source](../examples/v0211_tour.rs)): click / double-click / scroll `Response` signals, `KeyMap`, focus traversal
+- `interaction_tour` ([source](../examples/interaction_tour.rs)): click / double-click / scroll `Response` signals, `KeyMap`, focus traversal
 - `showcase_tour` ([source](../examples/showcase_tour.rs)): dashboard, infoviz, website, spreadsheet, trading screens
 - `text_tour` ([source](../examples/text_tour.rs)): CJK, IME, CLI-style text
 - `system_tour --features async` ([source](../examples/system_tour.rs)): error boundary, overlay anchor, async / inline modes
+- `widgets_tour` ([source](../examples/widgets_tour.rs)): hooks, theming, modal focus traps, layout helpers as tabs
+- `inline` ([source](../examples/inline.rs)): `run_inline` below the shell prompt
+- `async_demo --features async` ([source](../examples/async_demo.rs)): `run_async` with a tokio producer
 
 Source modules shown inside tours (read them, run the tour):
 

@@ -1,3 +1,6 @@
+//! Property test: `frame()` with a custom backend matches `TestBackend` for
+//! arbitrary event sequences.
+
 mod support;
 
 use proptest::prelude::*;

@@ -1,3 +1,6 @@
+//! `run_static` signature and the zero-height inline-mode guard that fails
+//! before touching the terminal.
+
 #[test]
 fn run_static_signature_compiles() {
     let _signature_check = || -> std::io::Result<()> {
