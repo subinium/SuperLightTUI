@@ -212,17 +212,15 @@ pub fn render_frame(
                         ui.table(proc_table);
                         ui.separator();
                         ui.row(|ui| {
-                            if ui.button("Kill").clicked {
-                                if let Some(name) = proc_table.selected_row().and_then(|r| r.get(1))
-                                {
-                                    toasts.warning(format!("Killed: {name}"), tick);
-                                }
+                            if ui.button("Kill").clicked
+                                && let Some(name) = proc_table.selected_row().and_then(|r| r.get(1))
+                            {
+                                toasts.warning(format!("Killed: {name}"), tick);
                             }
-                            if ui.button("Restart").clicked {
-                                if let Some(name) = proc_table.selected_row().and_then(|r| r.get(1))
-                                {
-                                    toasts.success(format!("Restarted: {name}"), tick);
-                                }
+                            if ui.button("Restart").clicked
+                                && let Some(name) = proc_table.selected_row().and_then(|r| r.get(1))
+                            {
+                                toasts.success(format!("Restarted: {name}"), tick);
                             }
                         });
                     });
