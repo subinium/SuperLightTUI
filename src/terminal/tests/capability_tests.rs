@@ -274,6 +274,28 @@ fn remote_env_does_not_treat_inherited_outer_identity_as_endpoint_proof() {
     assert!(term_is_iterm_host_env("iterm.app", None, true, true));
 }
 
+/// #441: tmux before 3.5 marks a VS16 cluster's padding one column too far
+/// right; 3.5 fixed it. An unknown version is treated as affected.
+#[test]
+fn tmux_vs16_padding_bug_is_detected_by_version() {
+    for version in ["3.4", "3.3a", "3.2", "2.9a", "3"] {
+        assert!(
+            tmux_version_misplaces_vs16_padding("tmux", version),
+            "{version}"
+        );
+    }
+    for version in ["3.5", "3.5a", "3.6", "3.10", "next-3.6", "4.0"] {
+        assert!(
+            !tmux_version_misplaces_vs16_padding("tmux", version),
+            "{version}"
+        );
+    }
+    assert!(tmux_version_misplaces_vs16_padding("tmux", ""));
+    assert!(tmux_version_misplaces_vs16_padding("tmux", "master"));
+    assert!(tmux_version_misplaces_vs16_padding("", "3.5a"));
+    assert!(tmux_version_misplaces_vs16_padding("ghostty", "1.2.0"));
+}
+
 #[test]
 fn terminal_multiplexer_detection_is_conservative() {
     assert_eq!(

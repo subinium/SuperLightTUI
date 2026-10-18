@@ -538,14 +538,35 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y xterm xvfb xauth xdotool xfonts-base
           xterm -version
-          xdotool version
+      # Every X client (xdotool opens the display even for `version`) needs
+      # a running server, so start Xvfb once, export DISPLAY to all later
+      # steps and wait until it accepts connections.
+      - name: Start Xvfb
+        run: |
+          set -euo pipefail
+          display=:99
+          mkdir -p "$RUNNER_TEMP/slt-xterm"
+          nohup Xvfb "$display" -screen 0 1280x1024x24 -nolisten tcp \
+            >"$RUNNER_TEMP/slt-xterm/xvfb.log" 2>&1 &
+          echo "DISPLAY=$display" >> "$GITHUB_ENV"
+          for _ in $(seq 1 50); do
+            if DISPLAY="$display" xdotool getdisplaygeometry >/dev/null 2>&1; then
+              DISPLAY="$display" xdotool version
+              exit 0
+            fi
+            sleep 0.2
+          done
+          echo "::error::Xvfb did not accept connections on $display"
+          cat "$RUNNER_TEMP/slt-xterm/xvfb.log"
+          exit 1
       - name: Build terminal probe
         run: cargo build --manifest-path tests/fixtures/terminal_probe/Cargo.toml --target-dir target/terminal-probe
       - name: Drive the probe in xterm
         run: |
           set -euo pipefail
+          test -n "$DISPLAY"
           for attempt in 1 2; do
-            if timeout 240s xvfb-run -a -s "-screen 0 1280x1024x24" python3 scripts/xterm_smoke.py \
+            if timeout 240s python3 scripts/xterm_smoke.py \
                 --probe target/terminal-probe/debug/slt-terminal-probe \
                 --artifacts "$RUNNER_TEMP/slt-xterm/attempt-$attempt"; then
               exit 0
