@@ -28,6 +28,10 @@ fn move_table_selection(selected: &mut usize, start: usize, end: usize, key: &Ke
     }
 }
 
+/// Rows above an unpaged table body that never scroll: the header and the
+/// `─┼─` rule.
+const TABLE_CHROME_ROWS: u32 = 2;
+
 /// Per-column cell renderer for [`Context::table_with`]: maps
 /// `(row_view_index, col_index, raw_cell)` to styled content.
 type TableCellRenderer = Box<dyn Fn(usize, usize, &str) -> (String, Style)>;
@@ -38,6 +42,11 @@ impl Context {
     /// Handles Up/Down selection when focused. Column widths are computed
     /// automatically from header and cell content. The selected row is
     /// highlighted with the theme's selection colors.
+    ///
+    /// Without pagination (`page_size == 0`) the table scrolls itself: it is
+    /// at most as tall as the content height its parent leaves below it, the
+    /// header and rule stay pinned, only the body rows that fit are built, and
+    /// the body follows the focused row. Paged tables draw the whole page.
     pub fn table(&mut self, state: &mut TableState) -> Response {
         let colors = self.widget_theme.table;
         self.table_colored(state, &colors)
@@ -123,7 +132,7 @@ impl Context {
         let separators = (state.headers().len().saturating_sub(1) as u32).saturating_mul(3);
         state.resolve_column_widths(available.saturating_sub(separators));
 
-        self.table_render(state, focused, colors, cell);
+        self.table_render(state, interaction_id, focused, colors, cell);
 
         response.changed = state.view_cursor() != old_selected
             || state.sort_column != old_sort_column
@@ -171,11 +180,16 @@ impl Context {
                     continue;
                 }
 
+                // Body rows map through the window drawn last frame: the
+                // page start when paged, the scroll offset otherwise (#487).
                 let (page_start, page_end) = table_page_bounds(state);
-                let visible_len = page_end.saturating_sub(page_start);
-                let clicked_idx = (mouse.y - rect.y - 2) as usize;
-                if clicked_idx < visible_len {
-                    let clicked_idx = page_start + clicked_idx;
+                let row_start = if state.page_size == 0 {
+                    state.viewport_offset.min(page_end)
+                } else {
+                    page_start
+                };
+                let clicked_idx = row_start.saturating_add((mouse.y - rect.y - 2) as usize);
+                if clicked_idx < page_end {
                     *state.view_cursor_mut() = clicked_idx;
                     if mouse.modifiers.contains(KeyModifiers::SHIFT) {
                         let anchor = state.selection_anchor.unwrap_or(clicked_idx);
@@ -195,6 +209,7 @@ impl Context {
     fn table_render(
         &mut self,
         state: &mut TableState,
+        interaction_id: usize,
         focused: bool,
         colors: &WidgetColors,
         cell: Option<TableCellRenderer>,
@@ -219,6 +234,23 @@ impl Context {
         } else {
             *state.view_cursor_mut() = state.view_cursor().clamp(page_start, page_end - 1);
         }
+        // Unpaged tables scroll their body under the pinned header and rule:
+        // only the rows that fit are formatted, and the window follows the
+        // focused row (#487). Paged tables keep drawing the whole page.
+        let (body_start, body_len) = if state.page_size == 0 {
+            let rows =
+                self.collection_viewport_rows(interaction_id, total_visible, TABLE_CHROME_ROWS);
+            let start = keep_selection_in_window(
+                state.viewport_offset,
+                state.view_cursor(),
+                rows,
+                total_visible,
+            );
+            state.viewport_offset = start;
+            (start, rows.min(total_visible - start))
+        } else {
+            (page_start, visible_len)
+        };
 
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
@@ -240,7 +272,13 @@ impl Context {
             })));
 
         self.render_table_header(state, colors);
-        self.render_table_rows(state, focused, page_start, visible_len, colors, cell);
+        self.render_table_rows(
+            state,
+            focused,
+            (body_start, body_len, page_start),
+            colors,
+            cell,
+        );
 
         if state.page_size > 0 && state.total_pages() > 1 {
             let current_page = (state.page + 1).to_string();
@@ -365,13 +403,14 @@ impl Context {
         &mut self,
         state: &TableState,
         focused: bool,
-        page_start: usize,
-        visible_len: usize,
+        (start, len, zebra_origin): (usize, usize, usize),
         colors: &WidgetColors,
         cell: Option<TableCellRenderer>,
     ) {
-        for idx in 0..visible_len {
-            let view_idx = page_start + idx;
+        for view_idx in start..start + len {
+            // Stripe parity is anchored to the page (or view) start so stripes
+            // stay attached to their rows while an unpaged body scrolls.
+            let idx = view_idx - zebra_origin;
             let data_idx = state.visible_indices()[view_idx];
             let Some(row) = state.row(data_idx) else {
                 continue;

@@ -667,3 +667,77 @@ fn framestate_reuse_buffers_restored_on_error_boundary_panic() {
     });
     tb.assert_contains("post-recovery-frame");
 }
+
+// ---------------------------------------------------------------------------
+// Issue #487: `list` / unpaged `table` work tracks visible rows, not items
+// ---------------------------------------------------------------------------
+
+/// Steady-state allocations for 20 frames of a list and an unpaged table with
+/// `n` items at a fixed 100x50 viewport, selection on row 25.
+fn list_table_steady_allocs(n: usize) -> (usize, usize) {
+    use slt::TestBackend;
+    use slt::widgets::{ListState, TableState};
+
+    let mut list = ListState::new((0..n).map(|i| format!("Item {i:05}")).collect::<Vec<_>>());
+    assert!(list.set_selected_index(25));
+    let mut table = TableState::new(
+        vec!["ID", "Name"],
+        (0..n)
+            .map(|i| vec![i.to_string(), format!("User {i}")])
+            .collect::<Vec<_>>(),
+    );
+    assert!(table.set_selected_index(25));
+    let mut list_tb = TestBackend::new(100, 50);
+    let mut table_tb = TestBackend::new(100, 50);
+    for _ in 0..3 {
+        list_tb.render(|ui| {
+            let _ = ui.list(&mut list);
+        });
+        table_tb.render(|ui| {
+            let _ = ui.table(&mut table);
+        });
+    }
+    let (_, list_allocs) = measure_allocs("list_20_frames", || {
+        for _ in 0..20 {
+            list_tb.render(|ui| {
+                let _ = ui.list(&mut list);
+            });
+        }
+    });
+    let (_, table_allocs) = measure_allocs("table_20_frames", || {
+        for _ in 0..20 {
+            table_tb.render(|ui| {
+                let _ = ui.table(&mut table);
+            });
+        }
+    });
+    (list_allocs, table_allocs)
+}
+
+#[test]
+fn list_and_table_allocations_scale_with_viewport_not_items() {
+    let _guard = enter_perf_test();
+    let (list_1k, table_1k) = list_table_steady_allocs(1_000);
+    let (list_10k, table_10k) = list_table_steady_allocs(10_000);
+    // Before #487 every item cost a String + command per frame, so 10k items
+    // allocated ~10x the 1k count. Both now draw the same 50 rows, so the
+    // counts may differ only by a small constant over 20 frames.
+    const SLACK: usize = 40;
+    assert!(
+        list_10k.abs_diff(list_1k) < SLACK,
+        "list allocations grow with item count: 1k={list_1k} 10k={list_10k}"
+    );
+    assert!(
+        table_10k.abs_diff(table_1k) < SLACK,
+        "table allocations grow with item count: 1k={table_1k} 10k={table_10k}"
+    );
+    // About one row String per visible row per frame plus frame overhead.
+    assert!(
+        list_10k < 20 * 120,
+        "list 10k: {list_10k} allocations / 20 frames"
+    );
+    assert!(
+        table_10k < 20 * 120,
+        "table 10k: {table_10k} allocations / 20 frames"
+    );
+}

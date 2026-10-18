@@ -1098,6 +1098,9 @@ pub struct TableState {
     pub page_size: usize,
     /// Whether alternating row backgrounds are enabled.
     pub zebra: bool,
+    /// Top view row drawn by an unpaged `table` (#487). Clamped each frame so
+    /// the focused row stays inside the body viewport; ignored when paged.
+    pub(crate) viewport_offset: usize,
     view_indices: Vec<usize>,
     pub(super) row_search_cache: Vec<String>,
     pub(super) filter_tokens: Vec<String>,
@@ -1124,6 +1127,7 @@ impl Default for TableState {
             page: 0,
             page_size: 0,
             zebra: false,
+            viewport_offset: 0,
             view_indices: Vec::new(),
             row_search_cache: Vec::new(),
             filter_tokens: Vec::new(),

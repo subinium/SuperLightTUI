@@ -190,8 +190,8 @@ All return `Response`. Most have a `_colored(&WidgetColors)` variant.
 | `radio(state)` | `RadioState` | Radio button group. Variant: `radio_colored(...)` |
 | `multi_select(state)` | `MultiSelectState` | Multi-select checkbox list |
 | `tabs(state)` | `TabsState` | Tab bar. Variant: `tabs_colored(...)` |
-| `list(state)` | `ListState` | Scrollable list with selection. Variant: `list_colored(...)` |
-| `table(state)` | `TableState` | Data table with sorting, pagination, filtering. Variant: `table_colored(...)` |
+| `list(state)` | `ListState` | Self-scrolling list with selection: draws only the rows that fit the height its parent leaves (the terminal height at the top level) and keeps the selected row in view. Variant: `list_colored(...)` |
+| `table(state)` | `TableState` | Data table with sorting, pagination, filtering. Unpaged tables scroll their body under a pinned header and keep the focused row in view. Variant: `table_colored(...)` |
 | `tree(state)` | `TreeState` | Expandable tree view |
 | `directory_tree(state)` | `DirectoryTreeState` | Filesystem tree |
 | `calendar(state)` | `CalendarState` | Month calendar with date selection |
@@ -200,6 +200,12 @@ All return `Response`. Most have a `_colored(&WidgetColors)` variant.
 | `color_picker(state)` | `ColorPickerState` | Palette grid with optional hex-entry mode |
 | `command_palette(state)` | `CommandPaletteState` | Modal fuzzy-search command palette |
 | `virtual_list(state, visible_height, f)` | `ListState` | Virtualized list — only renders visible rows |
+
+`list` and unpaged `table` size themselves to the content height left below
+them in their parent. To keep siblings such as a footer or buttons visible
+below a long list, give the list a sized parent: `ui.container().grow(1).col(...)`,
+`.h(n)` or `.max_h(n)`. Inside a `scrollable` they size to that viewport and
+scroll themselves; the outer scroller does not see every row.
 
 ```rust
 // Interactive widget with Response

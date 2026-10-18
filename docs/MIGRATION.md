@@ -16,6 +16,11 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
   `list.remove_item(list.selected)` and `table.remove_row(table.selected)` with
   `remove_selected()`, and `table.rows()[table.selected]` with
   `selected_row()`; the old forms act on the wrong row under a filter or sort.
+- `list` and unpaged `table` scroll themselves (#487) and are at most as tall
+  as the space their parent leaves below them. Lists that fit are unchanged.
+  If you wrapped a long `ui.list` in a `scrollable` to make it scroll, you can
+  drop the wrapper. To keep a footer visible under a long list, put the list
+  in `ui.container().grow(1).col(...)` (or give it `.h(n)` / `.max_h(n)`).
 
 ---
 

@@ -12,11 +12,21 @@
 
 ### Changed
 
+- **Behaviour:** `list`, `list_colored`, `list_reorderable*` and unpaged
+  `table` / `table_colored` / `table_with` now scroll themselves (#487). They
+  are at most as tall as the content height their parent leaves below them
+  (the terminal height at the top level), build only the rows that fit, and
+  keep the selected row in view; table headers and the rule stay pinned.
+  Lists and tables that fit render exactly as before. An app that wrapped a
+  long `ui.list` in its own `scrollable` now gets a list sized to that
+  viewport that scrolls itself, instead of all rows for the outer scroller.
+  Siblings below a long list need a sized parent (`.grow(1)`, `.h(n)`,
+  `.max_h(n)`) to stay visible, as before. Paged tables, `virtual_list` and
+  `virtual_list_variable` are unchanged.
 - **Deprecated:** the public `ListState::selected` and `TableState::selected`
   fields (#455). They hold a view index, so `list.remove_item(list.selected)`
   removed a different item while a filter (or, for tables, a sort) was active.
   Use the accessors above; the fields become private in a later release.
-
 - **Breaking:** public dependencies upgraded to `crossterm` 0.29 and
   `compact_str` 0.10 (#475). The `slt::crossterm` re-export and
   `event::from_crossterm` now use crossterm 0.29 types, and `Cell::symbol` is a
@@ -30,6 +40,22 @@
   `compact_str` 0.10. MSRV stays at 1.88; `tree-sitter-highlight` stays on 0.26
   because 0.27 requires Rust 1.90, and the MSRV CI job now checks
   `--all-features` (every `syntax-*` grammar) on 1.88.
+
+### Fixed
+
+- `list` and unpaged `table` showed a selection below the viewport off
+  screen, and clicks mapped to the wrong row once scrolled; clicks now map
+  to `offset + row` (below the header for tables) (#487).
+
+### Perf
+
+- `list` and unpaged `table` per-frame work is proportional to the visible
+  rows instead of the item count (#487): a 10k-item list at 100x50 drops
+  from ~1,875 to ~255 µs and from 20,018 to 109 allocations per frame; a
+  1000x6 table at 200x60 from ~995 to ~600 µs (ratatui `Table`: ~1,035 µs)
+  and from 9,038 to 129 allocations (matched harness, `bench/ratatui-compare`).
+- Table rows are built into one `String` each, with no per-cell `String`, and
+  the header and rule no longer clone labels or join per-column strings.
 
 ### Security
 

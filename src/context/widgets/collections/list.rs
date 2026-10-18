@@ -5,6 +5,15 @@ impl Context {
     ///
     /// The selected item is highlighted with the theme's primary color. If the
     /// list is empty, nothing is rendered.
+    ///
+    /// The list scrolls itself: it is at most as tall as the content height
+    /// its parent has left below it (the terminal height at the top level),
+    /// only the rows that fit are built, and the viewport follows the
+    /// selection. A list that fits renders every row. Give it a sized parent
+    /// (`.h(n)`, `.max_h(n)` or a `.grow(1)` container) to leave room for
+    /// siblings below it. Inside a `scrollable` it sizes itself to that
+    /// viewport rather than exposing every row to the outer scroller; use
+    /// [`virtual_list`](Context::virtual_list) for custom row rendering.
     pub fn list(&mut self, state: &mut ListState) -> Response {
         let colors = self.widget_theme.list;
         self.list_colored(state, &colors)
@@ -44,17 +53,53 @@ impl Context {
             self.consume_indices(consumed_indices);
         }
 
-        if let Some((rect, clicks)) = self.left_clicks_for_interaction(interaction_id) {
-            let mut consumed = Vec::new();
-            for (i, mouse) in clicks {
-                let clicked_idx = (mouse.y - rect.y) as usize;
-                if clicked_idx < visible_len {
-                    *state.view_cursor_mut() = clicked_idx;
-                    consumed.push(i);
-                }
+        self.list_handle_clicks(state, interaction_id);
+        self.list_render_window(state, interaction_id, focused, colors);
+
+        response.changed = state.view_cursor() != old_selected;
+        response
+    }
+
+    /// Map left clicks on a self-scrolling list to view indices: the clicked
+    /// row plus the viewport offset that was drawn last frame (#487).
+    fn list_handle_clicks(&mut self, state: &mut ListState, interaction_id: usize) {
+        let Some((rect, clicks)) = self.left_clicks_for_interaction(interaction_id) else {
+            return;
+        };
+        let visible_len = state.visible_indices().len();
+        let mut consumed = Vec::new();
+        for (i, mouse) in clicks {
+            let clicked_idx = state
+                .viewport_offset
+                .saturating_add(mouse.y.saturating_sub(rect.y) as usize);
+            if clicked_idx < visible_len {
+                *state.view_cursor_mut() = clicked_idx;
+                consumed.push(i);
             }
-            self.consume_indices(consumed);
         }
+        self.consume_indices(consumed);
+    }
+
+    /// Emit the list container with only the rows that fit (#487).
+    ///
+    /// The window height comes from the parent's available content height
+    /// (see `collection_viewport_rows`), and the viewport offset is clamped so
+    /// the selected row stays inside it. Lists that fit render every row, so
+    /// their output is unchanged.
+    fn list_render_window(
+        &mut self,
+        state: &mut ListState,
+        interaction_id: usize,
+        focused: bool,
+        colors: &WidgetColors,
+    ) {
+        let total = state.visible_indices().len();
+        let rows = self.collection_viewport_rows(interaction_id, total, 0);
+        let start =
+            keep_selection_in_window(state.viewport_offset, state.view_cursor(), rows, total);
+        state.viewport_offset = start;
+        state.viewport_row_offset = start;
+        let end = start.saturating_add(rows).min(total);
 
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
@@ -75,41 +120,39 @@ impl Context {
                 group_name: None,
             })));
 
-        for (view_idx, &item_idx) in state.visible_indices().iter().enumerate() {
-            let item = &state.items()[item_idx];
-            if view_idx == state.view_cursor() {
-                let mut selected_style = Style::new()
-                    .bg(colors.accent.unwrap_or(self.theme.selected_bg))
-                    .fg(colors.fg.unwrap_or(self.theme.selected_fg));
-                if focused {
-                    selected_style = selected_style.bold();
-                }
-                let mut row = String::with_capacity(2 + item.len());
-                row.push_str("▸ ");
-                row.push_str(item);
-                self.styled(row, selected_style);
+        let selected = state.view_cursor();
+        let mut selected_style = Style::new()
+            .bg(colors.accent.unwrap_or(self.theme.selected_bg))
+            .fg(colors.fg.unwrap_or(self.theme.selected_fg));
+        if focused {
+            selected_style = selected_style.bold();
+        }
+        let item_style = Style::new().fg(colors.fg.unwrap_or(self.theme.text));
+        for view_idx in start..end {
+            let item = &state.items()[state.visible_indices()[view_idx]];
+            let (marker, style) = if view_idx == selected {
+                ("▸ ", selected_style)
             } else {
-                let mut row = String::with_capacity(2 + item.len());
-                row.push_str("  ");
-                row.push_str(item);
-                self.styled(row, Style::new().fg(colors.fg.unwrap_or(self.theme.text)));
-            }
+                ("  ", item_style)
+            };
+            let mut row = String::with_capacity(marker.len() + item.len());
+            row.push_str(marker);
+            row.push_str(item);
+            self.styled(row, style);
         }
 
         self.commands.push(Command::EndContainer);
         self.rollback.last_text_idx = None;
-
-        response.changed = state.view_cursor() != old_selected;
-        response
     }
 
     /// Render a selectable list that supports keyboard reordering of items.
     ///
     /// Behaves exactly like [`list`](Context::list) for navigation (Up/Down and
-    /// `k`/`j` move the selection) and click selection, but additionally lets the
-    /// focused user reorder the selected item with `Shift+Up`/`Shift+Down` or
-    /// `Alt+Up`/`Alt+Down`. Reordering operates on the underlying item order via
-    /// [`ListState::move_item`], keeping the selection on the moved item.
+    /// `k`/`j` move the selection), scrolling and click selection, but
+    /// additionally lets the focused user reorder the selected item with
+    /// `Shift+Up`/`Shift+Down` or `Alt+Up`/`Alt+Down`. Reordering operates on
+    /// the underlying item order via [`ListState::move_item`], keeping the
+    /// selection on the moved item.
     ///
     /// Returns a [`ListResponse`](crate::ListResponse) which derefs to the
     /// standard [`Response`] and exposes
@@ -149,14 +192,14 @@ impl Context {
         state: &mut ListState,
         colors: &WidgetColors,
     ) -> crate::widgets::ListResponse {
-        let visible = state.visible_indices().to_vec();
-        if visible.is_empty() && state.is_empty() {
+        let visible_len = state.visible_indices().len();
+        if visible_len == 0 && state.is_empty() {
             *state.view_cursor_mut() = 0;
             return crate::widgets::ListResponse::default();
         }
 
-        if !visible.is_empty() {
-            *state.view_cursor_mut() = state.view_cursor().min(visible.len().saturating_sub(1));
+        if visible_len > 0 {
+            *state.view_cursor_mut() = state.view_cursor().min(visible_len.saturating_sub(1));
         }
 
         let old_selected = state.view_cursor();
@@ -183,17 +226,19 @@ impl Context {
                 if modded {
                     if let Some(delta) = dir {
                         let cur_view = state.view_cursor();
+                        let view = state.visible_indices();
                         let target_view = if delta < 0 {
                             cur_view.checked_sub(1)
                         } else {
                             let next = cur_view + 1;
-                            (next < visible.len()).then_some(next)
+                            (next < view.len()).then_some(next)
                         };
                         // Map both endpoints from view positions to data indices
-                        // so reordering survives an active filter.
+                        // so reordering survives an active filter. The view is
+                        // read fresh: a previous move this frame rebuilt it.
                         if let Some(target_view) = target_view
                             && let (Some(&from), Some(&to)) =
-                                (visible.get(cur_view), visible.get(target_view))
+                                (view.get(cur_view), view.get(target_view))
                             && state.move_item(from, to)
                         {
                             reordered = Some((from, to));
@@ -208,7 +253,7 @@ impl Context {
                 if dir.is_some() {
                     let _ = handle_vertical_nav(
                         state.view_cursor_mut(),
-                        visible.len().saturating_sub(1),
+                        visible_len.saturating_sub(1),
                         key.code.clone(),
                     );
                     consumed_indices.push(i);
@@ -217,66 +262,8 @@ impl Context {
             self.consume_indices(consumed_indices);
         }
 
-        if let Some((rect, clicks)) = self.left_clicks_for_interaction(interaction_id) {
-            let mut consumed = Vec::new();
-            // `visible` may be stale after a reorder rebuilt the view; re-read
-            // the current visible count for bounds.
-            let visible_len = state.visible_indices().len();
-            for (i, mouse) in clicks {
-                let clicked_idx = (mouse.y - rect.y) as usize;
-                if clicked_idx < visible_len {
-                    *state.view_cursor_mut() = clicked_idx;
-                    consumed.push(i);
-                }
-            }
-            self.consume_indices(consumed);
-        }
-
-        // Re-read the (possibly reordered) view for rendering.
-        let visible = state.visible_indices().to_vec();
-
-        self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
-                direction: Direction::Column,
-                gap: 0,
-                align: Align::Start,
-                align_self: None,
-                justify: Justify::Start,
-                border: None,
-                border_sides: BorderSides::all(),
-                border_style: Style::new().fg(colors.border.unwrap_or(self.theme.border)),
-                bg_color: None,
-                padding: Padding::default(),
-                margin: Margin::default(),
-                constraints: Constraints::default(),
-                title: None,
-                grow: 0,
-                group_name: None,
-            })));
-
-        for (view_idx, &item_idx) in visible.iter().enumerate() {
-            let item = &state.items()[item_idx];
-            if view_idx == state.view_cursor() {
-                let mut selected_style = Style::new()
-                    .bg(colors.accent.unwrap_or(self.theme.selected_bg))
-                    .fg(colors.fg.unwrap_or(self.theme.selected_fg));
-                if focused {
-                    selected_style = selected_style.bold();
-                }
-                let mut row = String::with_capacity(2 + item.len());
-                row.push_str("▸ ");
-                row.push_str(item);
-                self.styled(row, selected_style);
-            } else {
-                let mut row = String::with_capacity(2 + item.len());
-                row.push_str("  ");
-                row.push_str(item);
-                self.styled(row, Style::new().fg(colors.fg.unwrap_or(self.theme.text)));
-            }
-        }
-
-        self.commands.push(Command::EndContainer);
-        self.rollback.last_text_idx = None;
+        self.list_handle_clicks(state, interaction_id);
+        self.list_render_window(state, interaction_id, focused, colors);
 
         response.changed = state.view_cursor() != old_selected || reordered.is_some();
         crate::widgets::ListResponse {
