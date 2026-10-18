@@ -617,6 +617,13 @@
 - Split-pane and scrollbar drags no longer stick to the pointer when the
   release is lost: they end on terminal focus loss, on resize, on a press
   elsewhere and on motion reported without a held button (#442).
+- Typing after a plain click in a `text_input` or `textarea` no longer drops
+  the first character (#465 follow-up). The click left an empty
+  `anchor == cursor` selection, the first typed character grew it into a
+  one-character selection and the second replaced it (`abc` became `bc`).
+  `set_selection(a, a)` now clears the selection on both states, and typing
+  or deleting drops an empty anchor (also left by a drag or Shift+arrow back
+  to its start).
 
 ### Security
 

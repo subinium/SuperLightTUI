@@ -358,6 +358,71 @@ fn textarea_mouse_drag_double_and_triple_click() {
     assert_eq!(s.selected_text().as_deref(), Some("one two"));
 }
 
+/// A plain click places the caret without selecting. Typing after it must
+/// insert every character; a degenerate `anchor == cursor` left by the
+/// click used to turn the first typed character into a selection that the
+/// second one replaced (`"abc"` became `"bc"`, seen in the browser runtime).
+#[test]
+fn text_input_click_then_typing_keeps_every_character() {
+    let mut tb = TestBackend::new(30, 5);
+    let mut s = TextInputState::new();
+    tb.render(|ui| {
+        let _ = ui.text_input(&mut s);
+    });
+    let (x, y) = tb.find_text("▎").expect("caret rendered");
+    let ev = EventBuilder::new()
+        .click(x, y)
+        .mouse_up(x, y)
+        .key('a')
+        .key('b')
+        .key('c')
+        .build();
+    drive(&mut tb, ev, |ui| {
+        let _ = ui.text_input(&mut s);
+    });
+    assert_eq!(s.value, "abc");
+    assert_eq!(s.selection(), None);
+
+    // A drag that returns to its start selects nothing either.
+    let (x, y) = tb.find_text("abc").expect("typed text rendered");
+    let ev = EventBuilder::new()
+        .click(x + 1, y)
+        .drag(x + 2, y)
+        .drag(x + 1, y)
+        .mouse_up(x + 1, y)
+        .key('X')
+        .key('Y')
+        .build();
+    drive(&mut tb, ev, |ui| {
+        let _ = ui.text_input(&mut s);
+    });
+    assert_eq!(s.value, "aXYbc");
+    assert_eq!(s.selection(), None);
+}
+
+#[test]
+fn textarea_click_then_typing_keeps_every_character() {
+    let mut tb = TestBackend::new(30, 6);
+    let mut s = area_with("one");
+    tb.render(|ui| {
+        let _ = ui.textarea(&mut s, 3);
+    });
+    let (x, y) = tb.find_text("one").expect("rendered");
+    // The focused caret glyph is drawn before "one"; x + 1 sits between
+    // 'o' and 'n'.
+    let ev = EventBuilder::new()
+        .click(x + 1, y)
+        .mouse_up(x + 1, y)
+        .key('a')
+        .key('b')
+        .build();
+    drive(&mut tb, ev, |ui| {
+        let _ = ui.textarea(&mut s, 3);
+    });
+    assert_eq!(s.value(), "oabne");
+    assert_eq!(s.selection(), None);
+}
+
 // ── rendering ───────────────────────────────────────────────────────────
 
 #[test]
