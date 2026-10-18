@@ -1,6 +1,6 @@
 //! Canvas Tour — five canvas/animation demos in one Tabs-driven tour.
 //!
-//! Mirrors `examples/v020_tour.rs`: each tab embeds the rendering logic
+//! Mirrors `examples/widgets_tour.rs`: each tab embeds the rendering logic
 //! of a single canvas/animation demo. Per-frame state (fire pixels,
 //! game boards, animation primitives, scroll offsets) lives in the
 //! `TourState` struct so switching tabs and back resumes where you left

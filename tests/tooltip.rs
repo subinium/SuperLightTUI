@@ -1,3 +1,5 @@
+//! Tooltip visibility: hidden unless the anchored widget is hovered.
+
 use slt::event::Event;
 use slt::rect::Rect;
 use slt::{Backend, Buffer, RunConfig, frame};

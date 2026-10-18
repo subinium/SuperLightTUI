@@ -102,18 +102,18 @@ worst case for output volume; steady-state frames emit few bytes (see
 
 ### v0.24 diagnostic baseline
 
-`benches/v024_audit.rs` is a standalone release diagnostic, not a timing gate.
+`benches/alloc_diagnostics.rs` is a standalone release diagnostic, not a timing gate.
 It covers idle rendering, typing, paste, filtered lists, static-log enqueue,
 and line charts at 80x24, 120x40 and 240x80, plus per-issue chart, animation
 and syntax workloads. It does not replace terminal resize, image-update or
 idle-process measurements.
 
 ```bash
-cargo +1.98.1 bench -p superlighttui --no-default-features --features syntax-cpp --bench v024_audit > before.csv
+cargo +1.98.1 bench -p superlighttui --no-default-features --features syntax-cpp --bench alloc_diagnostics > before.csv
 # Run the same command on the changed revision, using the identical harness:
-cargo +1.98.1 bench -p superlighttui --no-default-features --features syntax-cpp --bench v024_audit > after.csv
-SLT_AUDIT_FILTER=issue420 cargo +1.98.1 bench -p superlighttui --no-default-features --features syntax-cpp --bench v024_audit
-SLT_AUDIT_FILTER=textarea_memory cargo +1.98.1 bench -p superlighttui --no-default-features --features syntax-cpp --bench v024_audit
+cargo +1.98.1 bench -p superlighttui --no-default-features --features syntax-cpp --bench alloc_diagnostics > after.csv
+SLT_AUDIT_FILTER=issue420 cargo +1.98.1 bench -p superlighttui --no-default-features --features syntax-cpp --bench alloc_diagnostics
+SLT_AUDIT_FILTER=textarea_memory cargo +1.98.1 bench -p superlighttui --no-default-features --features syntax-cpp --bench alloc_diagnostics
 ```
 
 Compare matching rows without running workspace gates:
@@ -494,7 +494,7 @@ The Phase-0 baseline lives in `benches/benchmarks.rs` as
 ~2000 lines of static chrome above a streaming line): it quantifies the
 per-token full-frame cost the gate is designed to eventually elide.
 
-The bounded `issue419_chrome_2000` workload in `v024_audit` uses the same
+The bounded `issue419_chrome_2000` workload in `alloc_diagnostics` uses the same
 2,000 static lines and one changing, constant-length token label for both
 `.col(f)` and `.cached(1, f)`. Unlike an ever-growing streaming buffer, its
 input size is stable. In the secondary-only run, p50 was 549 us without the
@@ -502,7 +502,7 @@ diagnostic and 536 us with it; both requested exactly 1,823,798 bytes in
 4,017 allocations per frame, with zero sample-window retained growth and
 1,087,742 extra live bytes at peak. The small timing difference is noise,
 not evidence that `cached` skips work. Callback/output parity is covered by
-`tests/v024_secondary.rs`.
+`tests/chart_anim_edge_cases.rs`.
 
 Decision for #419: keep diagnostics-only semantics. No command/tree replay,
 new preparation cache, or promised cache speedup follows from this

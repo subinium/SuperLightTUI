@@ -133,7 +133,7 @@ slt::run_with(slt::RunConfig::default().mouse(true), |ui| {
 Buttons still work from the keyboard without it (Tab to focus, Enter / Space to
 activate), which can make the missing flag easy to overlook. `TestBackend`
 tests inject mouse events directly, so they pass either way. Run
-`cargo run --example test_mouse` to check whether your terminal delivers mouse
+`cargo run --example mouse_probe` to check whether your terminal delivers mouse
 events at all.
 
 ### 7. A shortcut fires while typing into an input

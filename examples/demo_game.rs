@@ -463,10 +463,11 @@ impl MinesweeperGame {
         while placed < MINE_COUNT {
             let x = (self.next_rand() % MINE_W as u64) as usize;
             let y = (self.next_rand() % MINE_H as u64) as usize;
-            if let Some((ax, ay)) = avoid {
-                if x == ax && y == ay {
-                    continue;
-                }
+            if let Some((ax, ay)) = avoid
+                && x == ax
+                && y == ay
+            {
+                continue;
             }
             if self.board[y][x].mine {
                 continue;
@@ -658,7 +659,7 @@ fn format_score(n: u64) -> String {
     let len = bytes.len();
     let mut out = String::with_capacity(len + len / 3);
     for (i, &b) in bytes.iter().enumerate() {
-        if i > 0 && (len - i) % 3 == 0 {
+        if i > 0 && (len - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(b as char);

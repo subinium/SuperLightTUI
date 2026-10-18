@@ -87,7 +87,7 @@ fn checkerboard_image(
     let mut rgba = Vec::with_capacity((width * height * 4) as usize);
     for y in 0..height {
         for x in 0..width {
-            let is_dark = ((x / cell_size) + (y / cell_size)) % 2 == 0;
+            let is_dark = ((x / cell_size) + (y / cell_size)).is_multiple_of(2);
             let v = if is_dark { 40u8 } else { 200u8 };
             rgba.extend_from_slice(&[v, v, v, 255]);
         }

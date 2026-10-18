@@ -14,8 +14,8 @@
 #         another is <= 6 chars. Often correct, but worth a glance.
 #   V4 — Public API missing rustdoc
 #         pub fn / pub struct / pub enum without /// directly above.
-#   V5 — Outer container missing grow/fill (v0.20+ demos)
-#         examples/v020_*.rs whose entry-point function ships an
+#   V5 — Outer container missing grow/fill (widget-tour demos)
+#         The FEATURE_DEMOS examples whose entry-point function ships an
 #         outermost `.bordered(...)` / `.container()` chain that lacks
 #         `.grow(N)` or `.fill()` before the `.col(|ui|`/`.row(|ui|`
 #         closure. Without one of those, the inner area collapses to
@@ -27,15 +27,15 @@
 #         not, producing inconsistent indentation/wrapping. v0.20 ships
 #         this as informational only — see the section below for the
 #         v0.21 dylint-based plan.
-#   V7 — Demo title wide-character drift (v0.20+ demos)
-#         `.title("…")` strings inside examples/v020_*.rs that contain
+#   V7 — Demo title wide-character drift (widget-tour demos)
+#         `.title("…")` strings inside the FEATURE_DEMOS examples that contain
 #         non-ASCII codepoints not in the per-check allowlist. Wide
 #         glyphs (em-dash U+2014, en-dash U+2013, ideographs, etc.)
 #         cause border-misalignment in terminals that report a
 #         single-cell width for them.
 #
 # Historical bugs each new check defends against:
-#   V5 → examples/v020_named_focus.rs shipped without `.grow(1)`,
+#   V5 → examples/named_focus.rs shipped without `.grow(1)`,
 #        making the email/name/city inputs render as a single column.
 #   V6 → src/context/widgets_display/status.rs `code_block_lang`
 #        previously wrapped the tree-sitter branch in `ui.line(...)`
@@ -61,6 +61,44 @@ set -uo pipefail
 REPO_ROOT="${SLT_AUDIT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 SRC="${REPO_ROOT}/src"
 EXAMPLES="${REPO_ROOT}/examples"
+
+# Examples covered by V5 and V7: the `widgets_tour` parts plus the
+# standalone feature showcase, regression panel, and report examples. This is
+# an explicit list rather than a glob because other examples (for example the
+# CJK demos embedded in `text_tour`) legitimately use wide-character titles.
+FEATURE_DEMOS=(
+    breadcrumb_response
+    ctrl_c_passthrough
+    dx_shortcuts
+    feature_showcase
+    gauge
+    gutter_highlights
+    keymap_help
+    modal_trap
+    named_focus
+    perf_audit
+    progress_response
+    regression_panel
+    spacing_scale
+    split_pane
+    static_log
+    testing_report
+    theme_subtree
+    use_effect
+    use_state_keyed
+    widgets_tour
+    widthspec
+)
+
+# Print the existing FEATURE_DEMOS files under ${EXAMPLES}, one per line.
+list_feature_demos() {
+    local name
+    for name in "${FEATURE_DEMOS[@]}"; do
+        if [[ -f "${EXAMPLES}/${name}.rs" ]]; then
+            printf '%s\n' "${EXAMPLES}/${name}.rs"
+        fi
+    done
+}
 
 if [[ ! -d "${SRC}" ]]; then
     echo "api_audit: src/ not found at ${SRC}" >&2
@@ -315,12 +353,12 @@ if [[ "${v4_count}" -eq 0 ]]; then
 fi
 violations=$((violations + v4_count))
 
-# --- V5: Outer container missing grow/fill (v0.20+ demos) --------------------
+# --- V5: Outer container missing grow/fill (widget-tour demos) ---------------
 
 echo
-echo "── V5: Outer container missing grow/fill (v020_*.rs) ──"
+echo "── V5: Outer container missing grow/fill (widget-tour demos) ──"
 
-# Heuristic. For each examples/v020_*.rs file:
+# Heuristic. For each FEATURE_DEMOS file:
 #   1. Locate the entry-point function: prefer `pub fn render(`, then
 #      `fn body(`, then `fn main(` (with `slt::run` inside).
 #   2. Extract its body by tracking `{`/`}` depth from the opening line.
@@ -337,7 +375,7 @@ echo "── V5: Outer container missing grow/fill (v020_*.rs) ──"
 # (e.g. width-bounded showcase with an outer scroll container). Add
 # basenames here to suppress flagging.
 V5_ALLOWLIST=(
-    "v020_test_utils.rs"   # not a runnable demo — exercises test harness only
+    "testing_report.rs"   # not a runnable demo — exercises test harness only
 )
 
 is_allowlisted_v5() {
@@ -408,7 +446,7 @@ if [[ -d "${EXAMPLES}" ]]; then
             echo "  V5: ${base} — outer chain lacks .grow(N) or .fill() before .col(|ui|/.row(|ui|"
             v5_count=$((v5_count + 1))
         fi
-    done < <(find "${EXAMPLES}" -maxdepth 1 -name 'v020_*.rs' -type f 2>/dev/null | sort)
+    done < <(list_feature_demos)
 fi
 
 if [[ "${v5_count}" -eq 0 ]]; then
@@ -437,12 +475,12 @@ echo "  V6 (informational): manual review required for fallback parity"
 echo "    (see status.rs::code_block_lang for the canonical pattern fixed in v0.20.x;"
 echo "     a future syntax-aware rule should mechanize this check)"
 
-# --- V7: Demo title wide-character drift (v0.20+ demos) ----------------------
+# --- V7: Demo title wide-character drift (widget-tour demos) -----------------
 
 echo
-echo "── V7: Demo title wide-character drift (v020_*.rs) ──"
+echo "── V7: Demo title wide-character drift (widget-tour demos) ──"
 
-# Heuristic. For each `.title("…")` call inside examples/v020_*.rs,
+# Heuristic. For each `.title("…")` call inside a FEATURE_DEMOS file,
 # inspect the literal between the first pair of double quotes and
 # flag any byte ≥ 0x80 (UTF-8 lead/cont byte) that isn't part of an
 # allowlisted multi-byte sequence.
@@ -494,7 +532,7 @@ if [[ -d "${EXAMPLES}" ]]; then
                 v7_count=$((v7_count + 1))
             fi
         done < <(LC_ALL=C grep -nE '\.title\("' "$f" 2>/dev/null || true)
-    done < <(find "${EXAMPLES}" -maxdepth 1 -name 'v020_*.rs' -type f 2>/dev/null | sort)
+    done < <(list_feature_demos)
 fi
 
 if [[ "${v7_count}" -eq 0 ]]; then

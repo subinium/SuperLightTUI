@@ -17,7 +17,7 @@
 //!   5. CLI      — cargo-style package manager UI
 //!
 //! Note on §7 of `docs/DEMO_GUIDE.md` (BMP ASCII titles): the audit V7
-//! rule only scans `examples/v020_*.rs`, not this file, so the embedded
+//! rule only scans the `widgets_tour` demos, not this file, so the embedded
 //! demos may legitimately use wide-character titles to exercise CJK
 //! rendering. The tour's *own* wrapper title stays BMP ASCII so the outer
 //! border alignment is guaranteed regardless of terminal width-reporting

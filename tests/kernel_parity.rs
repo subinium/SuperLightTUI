@@ -1,3 +1,7 @@
+//! Frame-kernel parity: `frame()` with a custom backend must produce the
+//! same buffers as `TestBackend` for stateful hooks and previous-frame hit
+//! testing.
+
 mod support;
 
 use slt::widgets::TabsState;

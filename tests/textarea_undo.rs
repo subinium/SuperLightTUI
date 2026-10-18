@@ -1,5 +1,5 @@
 //! Regression tests for the [`TextareaState`] undo/redo history stack
-//! introduced in v0.20.0 (issue #102).
+//! (issue #102).
 //!
 //! Ctrl+Z walks the history backward; Ctrl+Y walks it forward. Rapid char
 //! typing coalesces into one undoable batch — only the first char of a

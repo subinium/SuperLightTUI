@@ -40,9 +40,9 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      # `tests/v020_perf_alloc.rs` serialises every `#[test]` in the binary
+      # `tests/alloc_budget.rs` serialises every `#[test]` in the binary
       # via the file-wide `measure_lock` mutex (see
-      # `tests/v020_perf_alloc.rs::enter_perf_test`), so the parallel test
+      # `tests/alloc_budget.rs::enter_perf_test`), so the parallel test
       # runner is safe — the previous `--test-threads=1` workaround was
       # removed in v0.20.1 (#240) once the global-allocator-counter
       # cross-test contamination was fixed at the source.

@@ -1,3 +1,6 @@
+//! Render smoke tests for core layout, links, form fields, modals, and
+//! overlay positioning (alignment, offsets, anchors, raw draw).
+
 #![allow(unused_must_use)]
 
 use slt::widgets::*;
