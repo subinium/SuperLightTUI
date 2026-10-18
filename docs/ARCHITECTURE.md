@@ -260,13 +260,24 @@ src/
 │   ├── theme.rs                # Theme struct, Spacing, ThemeColor, 11 color presets + 3 density variants, ThemeBuilder, contrast helpers
 │   └── theme_io.rs             # TOML ThemeFile loading (`serde`) and ThemeWatcher hot reload (`theme-watch`)
 │
-├── terminal.rs                 # Terminal backend
+├── terminal.rs                 # Terminal backend facade: buffer helpers, Sink, Terminal, InlineTerminal
 │   ├── Terminal                # Full-screen mode — alternate screen, raw mode, mouse capture
 │   ├── InlineTerminal          # Inline mode — renders below cursor, no alternate screen
-│   └── ANSI output, synchronized output (DECSET 2026), event polling
+│   └── submodule re-exports    # Capabilities, ColorScheme, clipboard, bench hooks
 │
 ├── terminal/
-│   └── selection.rs            # SelectionState, text selection overlay rendering
+│   ├── kitty.rs                # KittyImageManager: upload dedup, placement diff, compression
+│   ├── cell_pixel.rs           # CSI 16 t cell-pixel probe + cache
+│   ├── capabilities.rs         # Capabilities, BlitterSupport, Blitter, host / multiplexer / env policy
+│   ├── query.rs                # Reply reader, DA1/DA2/DECRPM/XTGETTCAP parsing, sync-output resolution
+│   ├── session.rs              # Session registry/guard, enter/exit/cleanup writers, panic cleanup, suspend/resume
+│   ├── osc.rs                  # OSC 11 color scheme, OSC 52 clipboard, base64
+│   ├── flush.rs                # flush_buffer_diff*, cursor, SGR style delta
+│   ├── sprixel.rs              # Graphics emission policy, raw-sequence + sprixel flush
+│   ├── bench_hooks.rs          # `#[doc(hidden)]` __bench_* fixtures
+│   ├── selection.rs            # SelectionState, text selection overlay rendering
+│   ├── tests.rs                # Test facade
+│   └── tests/                  # capability / flush / graphics / lifecycle / query / selection tests
 │
 ├── anim.rs                     # Animation primitives
 │   ├── Tween                   # Linear interpolation with 9 easing functions
@@ -406,7 +417,7 @@ lib.rs (entry point)
   │     ├── event.rs
   │     └── rect.rs
   │
-  ├── terminal.rs ←── terminal/selection.rs
+  ├── terminal.rs ←── terminal/{kitty, cell_pixel, capabilities, query, session, osc, flush, sprixel, bench_hooks, selection}.rs
   │     ↑
   │     └── buffer.rs, event.rs (for flush and polling)
   │

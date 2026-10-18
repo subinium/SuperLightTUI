@@ -231,12 +231,23 @@ src/
 │   ├── theme.rs                # Theme struct, Spacing, ThemeColor, 11 color presets + 3 density variants, ThemeBuilder, contrast helpers
 │   └── theme_io.rs             # TOML ThemeFile loading (`serde`) and ThemeWatcher hot reload (`theme-watch`)
 │
-├── terminal.rs                 # Terminal backend
+├── terminal.rs                 # Terminal backend facade: buffer helpers, Sink, Terminal, InlineTerminal
 │   ├── Terminal                # Full-screen mode
 │   ├── InlineTerminal          # Inline mode
-│   └── ANSI diff output, synchronized output, event polling
+│   └── submodule re-exports    # Capabilities, ColorScheme, clipboard, bench hooks
 ├── terminal/
-│   └── selection.rs            # SelectionState, text selection overlay rendering
+│   ├── kitty.rs                # KittyImageManager: upload dedup, placement diff, compression
+│   ├── cell_pixel.rs           # CSI 16 t cell-pixel probe + cache
+│   ├── capabilities.rs         # Capabilities, BlitterSupport, Blitter, host / multiplexer / env policy
+│   ├── query.rs                # Reply reader, DA1/DA2/DECRPM/XTGETTCAP parsing, sync-output resolution
+│   ├── session.rs              # Session registry/guard, enter/exit/cleanup writers, panic cleanup, suspend/resume
+│   ├── osc.rs                  # OSC 11 color scheme, OSC 52 clipboard, base64
+│   ├── flush.rs                # flush_buffer_diff*, cursor, SGR style delta
+│   ├── sprixel.rs              # Graphics emission policy, raw-sequence + sprixel flush
+│   ├── bench_hooks.rs          # `#[doc(hidden)]` __bench_* fixtures
+│   ├── selection.rs            # SelectionState, text selection overlay rendering
+│   ├── tests.rs                # Test facade
+│   └── tests/                  # capability / flush / graphics / lifecycle / query / selection tests
 │
 ├── anim.rs                     # Tween, Spring, Keyframes, Sequence, Stagger
 ├── chart.rs                    # ChartBuilder, ChartConfig, Dataset, Marker
