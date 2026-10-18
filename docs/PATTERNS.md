@@ -368,11 +368,21 @@ let _ = ui
     });
 ```
 
-> **There is no disabled-button state.** `.with_if` only changes how
-> something *looks*. A button styled to look disabled is still focusable and
-> still reports `clicked`, so gate the action in your handler instead:
-> `if ui.button("Save").clicked && can_save { save(); }` (and change the
-> label, e.g. `"Save (fix errors)"`, so the user knows why nothing happens).
+> **Disabled is a state, not a style.** `.with_if` only changes how something
+> *looks*: a button styled to look disabled is still focusable and still
+> reports `clicked`. Wrap it in `ui.disabled(cond, ..)` instead. Widgets inside
+> keep their focus slot (later focus indices do not shift when `cond`
+> toggles), but Tab and clicks skip them, they ignore clicks, Enter, Space and
+> typing, render dimmed, and report `Response::disabled`. The same snippet is
+> compiled in [INTERACTION.md](INTERACTION.md) and as the rustdoc example of
+> `Context::disabled`.
+>
+> ```rust
+> let submit = ui.disabled(!form_valid, |ui| ui.button("Save"));
+> if submit.clicked {
+>     save(); // never runs while the form is invalid
+> }
+> ```
 
 ### When to use which
 

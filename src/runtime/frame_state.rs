@@ -66,6 +66,9 @@ pub(crate) struct FocusSlotMeta {
     /// redo, kill line). Shortcut queries do not see those chords while the
     /// widget owns focus.
     pub chords: u8,
+    /// Issue #458: registered inside `Context::disabled(true, ..)`. The slot
+    /// keeps its index but Tab and click-to-focus skip it.
+    pub disabled: bool,
 }
 
 /// Issue #465: the focused text widget handles `Ctrl+A`.
@@ -142,7 +145,11 @@ impl FocusIdentityCarry {
         let prev_text_entry = self
             .text_claim
             .map(|kind| (kind, 0))
-            .or(start.text_entry.map(|kind| (kind, start.chords)));
+            // #458: a disabled text field never owns the keyboard.
+            .or(start
+                .text_entry
+                .filter(|_| !start.disabled)
+                .map(|kind| (kind, start.chords)));
         let prev_focused_key = prev_focused
             .and_then(|id| prev_slots.get(id))
             .and_then(|slot| slot.key);

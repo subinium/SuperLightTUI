@@ -134,7 +134,7 @@ These are SLT additions; if your ratatui app hand-rolled them, replace with the 
 | Breadcrumb with click feedback | `let r = ui.breadcrumb(&segs).separator(" › ").show(); if let Some(i) = r.clicked_segment { ... }` |
 | Tooltips | `if ui.button("X").on_hover(ui, "Save").clicked { ... }` |
 | Animated value | `let alpha = ui.animate_value("fade", target, 30);` (eased, 1-line) |
-| Modal with focus trap (WCAG) | `ui.modal_with(slt::context::ModalOptions { tab_trap: true }, \|ui\| ...)` (plain `ui.modal` keeps legacy `tab_trap: false`) |
+| Modal with focus trap (WCAG) | `ui.modal(\|ui\| ...)` (traps by default since 0.26); `ui.modal_with(slt::ModalOpts::new().anchor(..), \|ui\| ...)` to pin it |
 | Scroll that follows Tab focus | `ui.scrollable(&mut scroll).col(...)` — automatic since v0.25; opt out with `scroll.follow_focus = false` |
 | Form field with geometry | `let r = ui.form_field_response(&mut field);` → `FormFieldResponse { response, input, layout_rect }` |
 | Per-subtree theme override | `ui.container().theme(custom_theme).col(\|ui\| ...)` |
@@ -227,7 +227,7 @@ Constraint translation:
 | your own `textarea: Vec<String>` | `slt::TextareaState::default().word_wrap(80)` |
 | your own selection set | `slt::SelectState`, `slt::RadioState`, `slt::MultiSelectState` |
 | tree view | `slt::TreeState`, `slt::DirectoryTreeState::from_paths(...)` |
-| modal flag | `slt::Context::modal(\|ui\| ...)` or `modal_with(ModalOptions{tab_trap:true}, ...)` |
+| modal flag | `slt::Context::modal(\|ui\| ...)` or `modal_with(ModalOpts::new(), ...)` |
 | toast queue | `slt::ToastState::default()` + `ui.toast(&mut toasts)`, or `ui.notify(msg, ToastLevel::Info)` for the built-in queue |
 | log/history view | `slt::RichLogState::new()` (capped at 10000) or `RichLogState::new_unbounded()` |
 

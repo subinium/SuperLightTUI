@@ -10,6 +10,30 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
 
 ## v0.25.x → v0.26.0
 
+- **`modal()` traps focus (#462).** `ui.modal(f)` now equals
+  `ui.modal_with(ModalOpts::default(), f)`: Tab cannot leave the modal and a
+  stale `set_focus_index` pointing at the background is pulled back in. For
+  the old behavior use `ui.modal_with(ModalOpts::new().tab_trap(false), f)`.
+  `ModalOptions { tab_trap: true }` literals no longer compile (the type is
+  now `#[non_exhaustive]` and renamed `ModalOpts`): write `ModalOpts::new()`.
+  Replace `modal_at(a, f)` with `modal_with(ModalOpts::new().anchor(a), f)`
+  and `modal_at_offset(a, dx, dy, f)` with
+  `modal_with(ModalOpts::new().anchor(a).offset(dx, dy), f)`.
+- **Group hover (#458).** `group_hover_bg` / `group_hover_border_style` light
+  up only the hovered group instance and no longer react to keyboard focus.
+  Drop the `format!("row-{i}")` unique names (or switch to `.hover_bg(..)`,
+  which needs no group), and add `.focus_within_bg(..)` /
+  `.focus_within_border_fg(..)` where the focus highlight is wanted.
+- **Disabled widgets (#458).** Replace "looks disabled" `.with_if` styling
+  plus handler guards with `ui.disabled(cond, |ui| ..)`. Code that builds
+  `Response { .. }` literals must add `disabled` (or use `..Default::default()`).
+- **Select dropdown (#459).** The open list no longer pushes content down, so
+  snapshot tests of an open select change, and item rows sit one row lower
+  than before (the dropdown has its own border, and opens above the trigger
+  near the bottom edge). The list is placed from the trigger's previous-frame
+  rect, so a select created with `open = true` shows its list from the second
+  frame on; render twice in tests that assert on an initially open select. A click outside an open select closes it and is not
+  delivered to the widget under the pointer.
 - **Accessible mode (#469).** `SLT_ACCESSIBLE=1` now switches
   `RunConfig::default()` (and so `slt::run`) to a line-oriented prompt mode
   for screen readers; nothing changes unless a user sets it. If your app must

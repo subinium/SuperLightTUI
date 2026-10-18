@@ -73,7 +73,7 @@ else has it.
 | Strength | SLT (verified in `src/`) | Comparison |
 |---|---|---|
 | Interaction on any container | `Response { clicked, right_clicked, double_clicked, hovered, scroll_delta, rect, .. }` from rows, columns, and widgets | ratatui: manual `Rect` hit-testing. Textual/Ink/OpenTUI have component events; Ink has no mouse API |
-| Focus management | Tab/Shift+Tab focus manager, named focus, modal focus trap (`ModalOptions { tab_trap }`), follow-focus scroll (`ScrollState::follow_focus`, v0.25) | ratatui: none built-in. Textual has a full focus system |
+| Focus management | Tab/Shift+Tab focus manager, named focus, modal focus trap (on by default, `ModalOpts::tab_trap`), follow-focus scroll (`ScrollState::follow_focus`, v0.25) | ratatui: none built-in. Textual has a full focus system |
 | Scrolling | `scrollable` containers, `scrollbar` with click-to-jump and thumb drag, `virtual_list`, `scrollable_with_gutter` | ratatui: `tui-scrollview` (ecosystem). Ink 8: `contentOffset` scroll views. OpenTUI: `ScrollBox` |
 | Forms | `FormState`/`FormField` with sync validators and async validation, `FormFieldResponse` (v0.25) | ratatui: app-built. Bubble Tea: Huh |
 | Built-in catalog | accordion, tree, draggable `split_pane`, command palette, table with sort/filter/paging, file picker, calendar, toasts | ratatui: ~15 core widgets plus crates |

@@ -1,0 +1,11 @@
+---
+source: tests/overlay_menus.rs
+expression: tb.to_string_trimmed()
+---
+[ notes.md ]
+    ╭─────────────────╮
+    │ Copy   Ctrl+C   │
+    │ Paste  Ctrl+V   │
+    │─────────────────│
+    │ Share         ▸ │ [ Other ]
+    ╰─────────────────╯

@@ -50,8 +50,11 @@ fn slt_warn(_msg: &str) {}
 
 mod widgets;
 pub use widgets::CodeEditor;
+#[allow(deprecated)]
+pub use widgets::ModalOptions;
+pub use widgets::ModalOpts;
 pub use widgets::{
-    Anchor, Breadcrumb, CodeBlock, DiffView, Gauge, GutterOpts, LineGauge, TreemapItem,
+    Anchor, Breadcrumb, CodeBlock, DiffView, Gauge, GutterOpts, LineGauge, Placement, TreemapItem,
 };
 
 mod state;

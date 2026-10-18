@@ -4,6 +4,41 @@
 
 ### Added
 
+- Element-level interactive state styles on `ContainerBuilder` (#458), the
+  CSS pseudo-classes as builder calls: `hover_bg` / `hover_fg` /
+  `hover_border_fg` (`:hover`, from the container's own previous-frame rect,
+  so identical code in a loop styles each row on its own), `focus_bg` /
+  `focus_fg` / `focus_border_fg` (`:focus`, the focusable registered right
+  before the container), `focus_within_bg` / `focus_within_border_fg`
+  (`:focus-within`), and `active_bg` / `active_fg` / `active_border_fg`
+  (`:active`, left button held after pressing). `ContainerStyle` gains the
+  same fields. Containers that set none of them do no extra work.
+- `Context::disabled(cond, |ui| ..)` and `Context::is_disabled()` (#458):
+  widgets inside keep their focus slot (focus indices after them do not move
+  when `cond` toggles) but Tab, Shift+Tab and click-to-focus skip them, they
+  ignore clicks, Enter, Space and typing, render with the theme's `text_dim`,
+  and report the new `Response::disabled`. Works for every built-in widget and
+  for custom widgets on `register_focusable` / `interaction`.
+- `Context::animate_bool_keyed` / `animate_value_keyed` take a runtime
+  `impl Into<String>` key (stored with `use_state_keyed` state, so
+  `remove_state_keyed` / `retain_state_keyed` compact them) for per-row
+  transitions (#458).
+- Element-anchored overlays and menus (#459): `Context::popover(rect,
+  Placement, f)` floats a bordered panel next to an element, flipping to the
+  opposite side at a screen edge and clamping inside the terminal
+  (`PopoverResponse::{placement, dismissed}`); `Context::context_menu(&mut
+  MenuState, &response)` opens at the pointer on right click or below a
+  focused trigger on `Shift+F10` / `Menu`; `Context::menu_bar(&mut
+  MenuBarState)` opens with a click, `F10` or `Alt+letter`. Menus support
+  shortcut hints, separators, disabled items and submenus, skip disabled
+  items on the keyboard, close on `Esc` or an outside click that does not
+  reach the widget underneath, and return focus to the trigger. New types:
+  `Placement`, `MenuItem`, `MenuState`, `MenuBarState`, `PopoverResponse`.
+  New example: `menus`.
+- `ModalOpts` (#462) at the crate root, `#[non_exhaustive]` with builders
+  `ModalOpts::new().tab_trap(bool).anchor(Anchor).offset(dx, dy)`, so
+  anchored modals can trap focus.
+
 - Accessible linear output mode for screen readers and pipelines (#469):
   `RunConfig::accessible(bool)`, enabled by default with `SLT_ACCESSIBLE=1`
   (an explicit call wins). `run`, `run_inline` and `run_static` then never
@@ -88,6 +123,22 @@
   Tab / Shift+Tab (`CodeEditorState::tab_indents(false)` opts out).
 
 ### Changed
+
+- `Context::modal(f)` is now exactly `modal_with(ModalOpts::default(), f)` and
+  traps focus by default, as `ModalOptions` already documented (#462).
+  `modal_with(ModalOpts::new().tab_trap(false), f)` restores the old
+  behavior. `modal_at` / `modal_at_offset` became thin wrappers over
+  `modal_with` and trap too.
+- An open `select` dropdown floats in an overlay below the trigger (above it
+  near the bottom edge) instead of pushing the widgets after it down, and a
+  click outside closes it without reaching the widget underneath (#459).
+- `group_hover_bg` / `group_hover_border_style` (and `is_group_hovered`
+  inside a group) follow the hovered group *instance*: rows that share a
+  group name no longer all highlight together. They also no longer fire when
+  a child of the group has keyboard focus; use `focus_within_bg` /
+  `focus_within_border_fg` for that (#458). The text-level
+  `Context::group_hover_fg` / `group_hover_bg` follow the hovered instance
+  too but still also react to focus.
 
 - Hover tooltips wait for `RunConfig::tooltip_delay` (500 ms by default) while
   the pointer rests on the same target, instead of appearing on the first
@@ -307,6 +358,10 @@
   `TableState::set_rows` already released them; filter changes keep capacity.
 
 ### Deprecated
+
+- `ModalOptions` is renamed `ModalOpts`, and `Context::modal_at` /
+  `modal_at_offset` are deprecated in favour of
+  `modal_with(ModalOpts::new().anchor(a).offset(dx, dy), f)` (#462).
 
 - `TextInputState::validate` is renamed `TextInputState::validate_now`
   (#461). On `FormField`, `validate` attaches a validator; on

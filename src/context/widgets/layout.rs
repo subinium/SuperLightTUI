@@ -350,6 +350,7 @@ impl Context {
             theme_override: None,
             pointer_flags: 0,
             pointer_shape: None,
+            state_styles: Default::default(),
         }
     }
 
@@ -1093,6 +1094,9 @@ impl Context {
     }
 
     pub(crate) fn response_for(&self, interaction_id: usize) -> Response {
+        if self.rollback.disabled_depth > 0 {
+            return self.disabled_response(interaction_id);
+        }
         if !self.interaction_allowed()
             || (self.rollback.new_focus_slot
                 && self
@@ -1117,9 +1121,22 @@ impl Context {
     /// `Context::build_hovered_groups()`; turns the previous O(n) scan over
     /// `prev_group_rects` into an O(1) lookup. Closes the cache half of
     /// #136 / #139.
+    ///
+    /// Inside a group instance named `name` this answers for that instance
+    /// (#458), so rows that share a group name are told apart; elsewhere it
+    /// reports whether any group with that name is hovered.
     pub fn is_group_hovered(&self, name: &str) -> bool {
         if self.mouse_pos.is_none() {
             return false;
+        }
+        let rollback = &self.rollback;
+        if let (Some(top), Some(&hovered)) = (
+            rollback.group_stack.last(),
+            rollback.group_hover_stack.last(),
+        ) && rollback.group_hover_stack.len() == rollback.group_stack.len()
+            && &**top == name
+        {
+            return hovered;
         }
         // `HashSet<Arc<str>>::contains` accepts `&str` via `Borrow<str>`, so
         // there is no allocation on the hot path.

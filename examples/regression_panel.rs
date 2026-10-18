@@ -228,7 +228,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
         // modal + tab_trap (#225). Toggled by `M`.
         if *modal_open {
             let pad = ui.theme().spacing.sm();
-            let _ = ui.modal_with(slt::context::ModalOptions { tab_trap: true }, |ui| {
+            let _ = ui.modal_with(slt::ModalOpts::new(), |ui| {
                 let _ = ui
                     .bordered(Border::Double)
                     .title("Modal (#225 tab_trap)")

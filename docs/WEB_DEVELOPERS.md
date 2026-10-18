@@ -185,8 +185,9 @@ so opt in with `RunConfig::default().mouse_mode(MouseMode::Hover)`; see
 | pointer capture + `pointermove` while dragging | `response.dragging` + `response.drag_delta` (the press captures the pointer until release) |
 | `onAuxClick` (middle button) | `response.middle_clicked` |
 | `event.shiftKey` / `ctrlKey` / `altKey` on a click | `response.modifiers.contains(KeyModifiers::SHIFT)` |
-| `onContextMenu` | `response.right_clicked` (no menu widget; render your own overlay) |
-| `onMouseEnter` / `:hover` | `response.hovered`, or group hover styling (below); needs `MouseMode::Hover` |
+| `onContextMenu` + a menu | `ui.context_menu(&mut MenuState, &response)`: opens on right click, `Shift+F10` or the `Menu` key; returns the activated item id |
+| `onMouseEnter` / `:hover` | `response.hovered`, or `.hover_bg(..)` styling (below); needs `MouseMode::Hover` |
+| `onMouseDown` held / `:active` | `.active_bg(..)` on a container: applies from press until release |
 | `title` attribute | `.on_hover(ui, "tooltip")` or `ui.tooltip("..")`; needs `MouseMode::Hover`, shows after `RunConfig::tooltip_delay` (500 ms) |
 | `cursor: pointer` / `text` / `grab` ... | `ui.container().pointer_shape(PointerShape::Pointer)` with `RunConfig::pointer_shapes(true)` (OSC 22) |
 | `caret-shape` | `ui.set_cursor_shape(CursorShape::SteadyBar)` (DECSCUSR) |
@@ -227,10 +228,12 @@ Two rules do not exist on the web:
 | chat "stick to bottom" | `ScrollState::new().stick_to_bottom(true)` | Follows new content while at the end; scrolling up disengages it. |
 | `scrollIntoView()` on focus | automatic: `ScrollState::follow_focus` (on by default) | Set `follow_focus = false` for app-controlled scrolling. |
 | `overflow: hidden` | the default: children clip to their container | |
-| `position: fixed` / `absolute` | `ui.overlay_at(Anchor::TopRight, \|ui\| ..)`, `ui.overlay_at_offset(anchor, dx, dy, ..)` | Positioned against the whole screen, not a parent element. |
-| `<dialog>` / modal | `ui.modal(..)`, `ui.modal_at(anchor, ..)`, `ui.modal_at_offset(..)` | Dims the background and blocks clicks and keys underneath. Non-modal overlays block clicks only where their content is. |
+| `position: fixed` | `ui.overlay_at(Anchor::TopRight, \|ui\| ..)`, `ui.overlay_at_offset(anchor, dx, dy, ..)` | Positioned against the whole screen. |
+| `position: absolute` next to an element / `popover` + anchor positioning | `ui.popover(response.rect, Placement::Below, \|ui\| ..)` | Floats next to the element without reflowing the page; flips at the screen edge (`position-try: flip-block`) and is clamped inside it. `PopoverResponse::dismissed` reports `Esc` or an outside press (light dismiss, the press still reaches what is underneath). |
+| `<dialog>` / `showModal()` | `ui.modal(..)`, `ui.modal_with(ModalOpts::new().anchor(Anchor::TopRight).offset(2, 1), ..)` | Dims the background, blocks clicks and keys underneath, and traps Tab inside. Focus returns to the previous widget when it closes. Non-modal overlays block clicks only where their content is. |
+| `<select>` dropdown | `ui.select(&mut SelectState)` | The open list floats over the content below; an outside click closes it without clicking through. |
+| context menu / menubar | `ui.context_menu(&mut MenuState, &response)`, `ui.menu_bar(&mut MenuBarState)` | Keyboard navigation, submenus, `Esc` and outside click close (the click is swallowed), focus returns to the trigger. |
 | `z-index` | none: overlays stack in call order | Later overlays draw on top. |
-| element-anchored popover | only tooltips (`on_hover`, `ui.tooltip`) | For other popovers, position an overlay from a previous-frame `Response.rect`. |
 | `position: sticky` | none | Render the header outside the scrollable instead. |
 
 ## Styling
@@ -243,10 +246,14 @@ Two rules do not exist on the web:
 | a subtree with a different theme | `ui.container().theme(Theme::light()).col(..)` |
 | `prefers-color-scheme` | call `slt::detect_color_scheme()` before `run` (asks the terminal for its background; `Unknown` when queries are unavailable) and pick a theme. Inside the closure, `ui.is_dark_mode()` follows the active theme, and `.dark_bg(..)` / `.dark_border_style(..)` apply in dark mode |
 | Tailwind color palette | `slt::palette::tailwind::BLUE.c500` (shades `c50` to `c950`) |
-| `transition` | `ui.animate_bool("id", flag)` / `ui.animate_value("id", target, ticks)` return a 0..1 or interpolated `f64` |
+| `transition` | `ui.animate_bool("id", flag)` / `ui.animate_value("id", target, ticks)` return a 0..1 or interpolated `f64`; `ui.animate_bool_keyed(format!("row-{id}"), flag)` per row |
 | keyframes, springs | `Tween`, `Spring`, `Keyframes` ([ANIMATION.md](ANIMATION.md)) |
-| `:hover` on a card | `ui.group("card-1")` + `.group_hover_bg(..)` / `.group_hover_border_style(..)` |
-| `:focus-within` | the same group styles also apply while a focusable child of the group has focus |
+| `:hover` | `ui.container().hover_bg(..)` / `.hover_fg(..)` / `.hover_border_fg(..)`: per element, so the same code in a loop styles each row on its own |
+| `:focus` | `.focus_bg(..)` / `.focus_fg(..)` / `.focus_border_fg(..)` on the container right after `ui.register_focusable()` |
+| `:focus-within` | `.focus_within_bg(..)` / `.focus_within_border_fg(..)`: a widget inside the container holds focus |
+| `:active` | `.active_bg(..)` / `.active_fg(..)` / `.active_border_fg(..)`: left button held after pressing the container |
+| `:disabled` / `<fieldset disabled>` | `ui.disabled(cond, \|ui\| ..)`: widgets inside keep their Tab position but skip focus, ignore clicks, Enter and typing, render dimmed, and report `Response::disabled` |
+| `:hover` on a named group | `ui.group("card")` + `.group_hover_bg(..)` / `.group_hover_border_style(..)` (hover of that group instance only, never focus) |
 | `font-family`, `font-size` | none: the user's terminal decides |
 
 <!-- slt-check: {"name":"web_styling","features":[],"context":"ui"} -->
@@ -322,9 +329,9 @@ Be honest with yourself about these before porting a design:
 - **No `grid-template`.** Use nested rows and columns, `.wrap()` rows, or
   `ui.grid(..)` for fixed column counts.
 - **No `z-index`.** Overlays stack in call order.
-- **No `:disabled` or `:active` states.** Render a dimmed, non-interactive
-  variant yourself and skip handling its `clicked`.
-- **No element-anchored popovers or context menus**, apart from tooltips.
+- **State styles are per container, not per selector.** `:hover`, `:focus`,
+  `:focus-within` and `:active` are builder calls on the container they style;
+  there is no `:nth-child`, `:has()` or sibling combinator.
 - **`cursor:` is best effort.** `ContainerBuilder::pointer_shape(..)` maps to
   OSC 22 and is opt-in (`RunConfig::pointer_shapes(true)`) because many
   terminals ignore or print it. The text cursor's shape is settable with
@@ -349,7 +356,7 @@ expands it, and the wheel scrolls the list.
 
 <!-- slt-check: {"name":"web_card_list","features":["crossterm"],"context":"module"} -->
 ```rust
-use slt::{Border, Color, Context, KeyCode, MouseMode, RunConfig, ScrollState, Style};
+use slt::{Border, Color, Context, KeyCode, MouseMode, RunConfig, ScrollState};
 
 struct Card {
     title: String,
@@ -360,14 +367,15 @@ struct Card {
 fn card_list(ui: &mut Context, cards: &mut [Card], scroll: &mut ScrollState) {
     // overflow-y: auto
     let _ = ui.scrollable(scroll).grow(1).p(1).gap(1).col(|ui| {
-        for (i, card) in cards.iter_mut().enumerate() {
-            // One unique group name per card, so only the hovered card lights up.
+        for card in cards.iter_mut() {
+            // :hover is per element: only the card under the pointer lights up.
             let response = ui
-                .group(&format!("card-{i}"))
+                .container()
                 .border(Border::Rounded)
                 .border_fg(Color::Indexed(240))
-                .group_hover_border_style(Style::new().fg(Color::Cyan)) // :hover border
-                .group_hover_bg(Color::Indexed(236)) // :hover background
+                .hover_border_fg(Color::Cyan) // :hover border
+                .hover_bg(Color::Indexed(236)) // :hover background
+                .active_bg(Color::Indexed(238)) // :active while pressed
                 .px(1)
                 .col(|ui| {
                     let marker = if card.expanded { "-" } else { "+" };
@@ -410,10 +418,11 @@ fn main() -> std::io::Result<()> {
 
 What to notice:
 
-- `ui.group(name)` is a container that also tracks hover. Its own
-  `group_hover_*` styles, and those of containers directly inside it, switch on
-  while the pointer is over the group (hence `MouseMode::Hover` above).
-  Reusing the same name for every card would highlight them all together.
+- `hover_*` and `active_*` styles belong to the container itself and use its
+  own previous-frame rect, so the same code in a loop highlights one card at a
+  time (hover needs `MouseMode::Hover` above). `ui.group(name)` with
+  `group_hover_*` is still there when nested containers should react to the
+  hover of a named parent.
 - The card container's `Response` is clickable. Clicks register on mouse
   press (or on release with `RunConfig::click_on_release(true)`), and
   hit-testing uses last frame's layout, so a card that just expanded has its

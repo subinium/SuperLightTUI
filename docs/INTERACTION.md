@@ -100,6 +100,7 @@ Most widgets and every container return a `#[must_use]` `Response`:
 | `changed` | The widget's value changed this frame | No |
 | `submitted` | Explicit submit gesture, such as Enter in a single-line `text_input` | No |
 | `rect` | Where the widget was laid out **last frame** (all zeros on frame 1) | No |
+| `disabled` | Rendered inside `ui.disabled(true, ..)`: every other field stays `false` | No |
 
 **Press or release?** `clicked` fires on the mouse *press* by default, which
 keeps toggles and selection immediate. `RunConfig::default().click_on_release(true)`
@@ -184,32 +185,69 @@ Containers are not keyboard-focusable on their own. To make one reachable with
 Tab, register a focus slot before it (see the tool-call log example below) or
 use a widget that already does this (`button`, `accordion`, `list`, ...).
 
-## Hover styling
+## Hover, focus, active and disabled styling
 
-Use `ui.group(name)` for CSS-`:hover`-like styling. The group's own
-`group_hover_bg` / `group_hover_border_style`, and those of containers nested
-inside it, apply while the pointer is over the group or while a focusable
-child of the group has focus. Pointer hover needs
-`RunConfig::default().mouse_mode(MouseMode::Hover)`; in the default `Drag`
-mode only the focus half works without a button held.
+Containers take CSS-pseudo-class-like state styles. Each resolves against the
+container itself (its previous-frame rect and its own press), so the same code
+in a loop styles each row independently, with no unique names:
 
-<!-- slt-check: {"name":"ix_group_hover","features":[],"context":"ui"} -->
+| CSS | `ContainerBuilder` | Applies while |
+|-----|--------------------|---------------|
+| `:hover` | `hover_bg`, `hover_fg`, `hover_border_fg` | the pointer is over the container (needs `MouseMode::Hover`) |
+| `:focus` | `focus_bg`, `focus_fg`, `focus_border_fg` | the focusable registered right before the container holds focus |
+| `:focus-within` | `focus_within_bg`, `focus_within_border_fg` | any widget inside the container holds focus |
+| `:active` | `active_bg`, `active_fg`, `active_border_fg` | the left button is held after pressing the container |
+
+Hover never comes from focus and focus never from hover. When several apply,
+later rows of the table win. `ContainerStyle` carries the same fields for
+reusable recipes.
+
+<!-- slt-check: {"name":"ix_state_styles","features":[],"context":"ui"} -->
 ```rust
 for i in 0..3 {
-    // Each row needs its own group name; a shared name highlights every row.
-    let _ = ui
-        .group(&format!("file-row-{i}"))
+    let focused = ui.register_focusable();
+    let row = ui
+        .container()
         .px(1)
-        .group_hover_bg(Color::Indexed(237))
+        .hover_bg(Color::Indexed(237))
+        .focus_bg(Color::Indexed(24))
+        .active_bg(Color::Indexed(239))
         .row(|ui| {
             ui.text(format!("file_{i}.rs"));
             ui.spacer();
             ui.text("12 KB").dim();
         });
+    if row.clicked || (focused && ui.key_code(KeyCode::Enter)) {
+        // open file_{i}.rs
+    }
 }
 ```
 
-For one-off logic, branch on `response.hovered` instead.
+`ui.group(name)` with `group_hover_bg` / `group_hover_border_style` still
+works when nested containers should react to a named parent's hover. It
+matches the hovered group *instance* (rows that share a name highlight one at
+a time) and, since 0.26, only the pointer: use `focus_within_*` for the
+keyboard look.
+
+`ui.disabled(cond, |ui| ..)` disables every widget inside (HTML `disabled` /
+`<fieldset disabled>`): they keep their place in the Tab order numbering, so
+focus indices after them do not move when `cond` toggles, but Tab and clicks
+skip them, they ignore clicks, Enter, Space and typing, render with the
+theme's `text_dim` color, and report `Response::disabled`. Custom widgets on
+`register_focusable` / `interaction` get the same treatment; check
+`ui.is_disabled()` before handling raw input.
+
+<!-- slt-check: {"name":"ix_disabled","features":[],"context":"ui"} -->
+```rust
+let name_filled = false;
+let submit = ui.disabled(!name_filled, |ui| ui.button("Submit"));
+if submit.clicked {
+    // never runs while the form is incomplete
+}
+```
+
+For one-off logic, branch on `response.hovered` instead, and use
+`ui.animate_bool_keyed(format!("row-{i}"), row.hovered)` for a per-row fade.
 
 ## Tooltips
 
@@ -637,8 +675,11 @@ edge cases.
 
 ## Modals block the background
 
-`ui.modal(..)`, `ui.modal_at(..)`, and `ui.modal_at_offset(..)` dim the screen
-and suppress clicks, hover, and keys for everything outside the modal.
+`ui.modal(..)` and `ui.modal_with(ModalOpts, ..)` dim the screen and suppress
+clicks, hover, and keys for everything outside the modal. Tab is trapped
+inside (`ModalOpts::new().tab_trap(false)` opts out), and when the modal stops
+rendering focus returns to the widget that had it. `ModalOpts::anchor` /
+`offset` pin the modal like `overlay_at_offset`.
 `ui.overlay(..)` and `ui.overlay_at(..)` block clicks only where their content
 is: a press on a popup button does not reach the widget drawn underneath, but a
 press beside the popup does, and keys still reach the background. Use a modal
@@ -654,7 +695,7 @@ if ui.button("Delete").clicked {
     confirm_open = true;
 }
 if confirm_open {
-    let _ = ui.modal_at(Anchor::Center, |ui| {
+    let _ = ui.modal_with(ModalOpts::new().anchor(Anchor::Center), |ui| {
         let _ = ui.bordered(Border::Rounded).p(1).gap(1).col(|ui| {
             ui.text("Delete 3 files?");
             let _ = ui.row(|ui| {
@@ -668,6 +709,40 @@ if confirm_open {
             });
         });
     });
+}
+```
+
+## Popovers, context menus and the menu bar
+
+`ui.popover(response.rect, Placement::Below, |ui| ..)` floats a bordered panel
+next to an element without moving anything else. It flips to the other side
+when it does not fit (below becomes above near the bottom edge, right becomes
+left near the right edge) and is clamped inside the screen.
+`PopoverResponse::dismissed` reports `Esc` or a press outside the panel and
+its anchor; that press still reaches the widget underneath.
+
+`ui.context_menu(&mut MenuState, &response)` opens at the pointer on a right
+click, or below a focused trigger on `Shift+F10` / the `Menu` key, and
+returns the id of the activated `MenuItem`. `ui.menu_bar(&mut MenuBarState)`
+draws a row of titles that open with a click, `F10` or `Alt` + the first
+letter. Both share one keyboard model: Up/Down skip separators and disabled
+items, Right/Enter open a submenu, Left/Esc close it, Enter/Space activate.
+An open menu works like a modal without the dim: widgets behind it ignore
+keys and clicks, an outside click closes it **without** reaching the widget
+under the pointer, and focus returns to the trigger when it closes. An open
+`select` dropdown also floats over the content below it and swallows the
+outside click that closes it.
+
+<!-- slt-check: {"name":"ix_context_menu","features":[],"context":"ui"} -->
+```rust
+let mut menu = MenuState::new(vec![
+    MenuItem::new("rename", "Rename").shortcut("F2"),
+    MenuItem::separator(),
+    MenuItem::new("delete", "Delete").disabled(true),
+]);
+let file = ui.button("notes.md");
+if let Some(id) = ui.context_menu(&mut menu, &file) {
+    ui.notify(&format!("chose {id}"), ToastLevel::Info);
 }
 ```
 
@@ -742,9 +817,7 @@ These are current behaviors, not misuse. Design around them for now.
    reposition in the diff flush lands with #441. For CJK terminals set to wide
    ambiguous characters, `RunConfig::ambiguous_wide(true)` already matches
    `→±①` widths.
-2. **Missing primitives.** No disabled or active (pressed) widget states and
-   no context-menu widget (use `right_clicked` plus your own overlay).
-3. **Off-screen selection text is not copied.** A selection that extends past
+2. **Off-screen selection text is not copied.** A selection that extends past
    a scrollable's viewport copies only the part visible at release.
 
 ## Related docs

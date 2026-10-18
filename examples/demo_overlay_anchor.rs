@@ -4,7 +4,7 @@
 //!
 //! Each badge sits in its own overlay with the corresponding [`Anchor`].
 //! The base layer renders a centered title behind them; the overlays float
-//! on top without dimming (use [`modal_at`] for a dimmed variant).
+//! on top without dimming (use `modal_with(ModalOpts::new().anchor(..))` for a dimmed variant).
 //!
 //! - Outer flush badges (`TL`..`BR`) call [`Context::overlay_at`] — the
 //!   widget sits flush against the screen edge / corner.

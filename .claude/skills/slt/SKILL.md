@@ -276,7 +276,7 @@ Red flags that mean STOP: "Probably fine", "Just a docs change", "CI will catch 
 - **Inventing method names.** Always grep `src/context/` and `src/widgets/` first.
 - **Expecting hover without `MouseMode::Hover`.** Clicks, wheel and drags work by default, but plain pointer moves are not reported; see "Two runtime rules" above. Do not add `.mouse(true)` just to "turn the mouse on".
 - **Shortcut checked before a text input renders.** Typing `q` quits the app. Render inputs first, then check `ui.key(...)`.
-- **Assuming `ui.modal` traps focus.** Plain `modal()` keeps legacy `tab_trap: false`. Use `ui.modal_with(slt::context::ModalOptions { tab_trap: true }, |ui| ...)` (also `ModalOptions::default()`).
+- **Building your own disabled / hover / context-menu machinery.** Use `ui.disabled(cond, |ui| ..)`, `.hover_bg(..)` / `.focus_bg(..)` / `.active_bg(..)` on containers, `ui.popover(..)`, `ui.context_menu(..)` and `ui.menu_bar(..)`. `ui.modal` traps focus since 0.26 (`ModalOpts::new().tab_trap(false)` opts out).
 - **Calling `ui.interaction(rect)` or `available_key_presses()`.** `interaction()` takes no arguments; `available_key_presses` is crate-private. Use `key_presses_when(focused)` + `consume_event(i)`.
 - **Stale removed APIs.** `gauge_w`, `gauge_colored`, `line_gauge_with`, `breadcrumb_sep`, `LineGaugeOpts`, `HighlightRange::single`, `label_owned` are GONE in v0.20. Use the builder forms.
 - **`Response.rect` on frame 1.** Zero `Rect`. Guard with `ui.tick() > 0`.
@@ -304,7 +304,8 @@ Only Cargo-listed targets are runnable (`cargo run --example <name>`; 29 targets
 | Form / validators | `examples/cookbook_login.rs` | `cookbook_tour` | `TextInputState::with_placeholder`, masked password, validation |
 | Searchable+sortable table | `examples/cookbook_table.rs` | `cookbook_tour` | `TableState::set_filter`, `toggle_sort`, `consume_key` |
 | Modal + Toast | `examples/cookbook_modal_toast.rs` | `cookbook_tour` | `ButtonVariant::Danger`, `raw_key_code(Esc)` for modal-aware quit |
-| Modal focus trap | `examples/modal_trap.rs` | `widgets_tour` | `ModalOptions { tab_trap: true }` |
+| Modal focus trap | `examples/modal_trap.rs` | `widgets_tour` | `ModalOpts::new()` |
+| Menus, popovers, disabled, state styles | `examples/menus.rs` | `menus` | `menu_bar`, `context_menu`, `popover`, `disabled`, `hover_bg` |
 | File picker | `examples/cookbook_file_picker.rs` | `cookbook_tour` | `FilePickerState::selected_file()` |
 | Dashboard (chart+sparkline) | `examples/cookbook_dashboard.rs` | `cookbook_tour` | `ui.chart(\|c\| c.line(...).color(..), w, h)`, rolling `VecDeque<f64>` |
 | Animation primitives | `examples/canvas_tour.rs` (Anim tab) | target `canvas_tour` | Tween/Spring/Keyframes/Sequence/Stagger; standalone version `examples/anim.rs` (target `anim`) |

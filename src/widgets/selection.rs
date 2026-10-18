@@ -28,6 +28,9 @@ pub struct SelectState {
     /// open/close and on selection. Printable keys append; Backspace pops.
     /// Public so callers can pre-fill or inspect the live query.
     pub filter: String,
+    /// Whether the floating dropdown (and its light-dismiss backdrop) was
+    /// drawn on the previous frame, so this frame's presses hit it (#459).
+    pub(crate) dropdown_drawn: bool,
 }
 
 impl SelectState {
@@ -40,6 +43,7 @@ impl SelectState {
             placeholder: String::new(),
             cursor: 0,
             filter: String::new(),
+            dropdown_drawn: false,
         }
     }
 

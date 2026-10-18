@@ -361,6 +361,10 @@ path = "examples/perf_audit.rs"
 name = "testing_report"
 path = "examples/testing_report.rs"
 
+[[example]]
+name = "menus"
+path = "examples/menus.rs"
+
 [[bench]]
 name = "benchmarks"
 harness = false

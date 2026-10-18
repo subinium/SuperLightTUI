@@ -475,6 +475,11 @@ ui.text(format!(
    `demo_key_test -- --kitty` shows whether Tab and Shift+Tab still arrive
    with the protocol on.
 3. Alt shortcuts on macOS depend on the terminal's Option-as-Meta setting.
+   That includes the `Alt+letter` menu-bar mnemonics of `ui.menu_bar`; `F10`
+   and a click on a title open the bar too, but some terminals (GNOME
+   Terminal, Windows Terminal) bind `F10` themselves, and `Shift+F10` / the
+   `Menu` key for `ui.context_menu` may be taken as well. Right click always
+   works with the mouse on.
 4. A shortcut that fires while typing in a text field is an ordering bug in
    the app: check shortcuts after rendering widgets
    ([INTERACTION.md](INTERACTION.md)).

@@ -2618,9 +2618,13 @@ fn select_renders_open() {
     let mut state = SelectState::new(vec!["Apple", "Banana", "Cherry"]);
     state.open = true;
 
-    tb.render(|ui| {
-        ui.select(&mut state);
-    });
+    // #459: the floating dropdown hangs off last frame's trigger rect,
+    // so it is drawn from the second frame on.
+    for _ in 0..2 {
+        tb.render(|ui| {
+            ui.select(&mut state);
+        });
+    }
 
     tb.assert_contains("Apple");
     tb.assert_contains("Banana");
@@ -2648,7 +2652,14 @@ fn select_open_rows_can_be_selected_with_mouse() {
         ui.select(&mut state);
     });
 
-    let click = slt::EventBuilder::new().click(2, 4).build();
+    // #459: the dropdown hangs off last frame's trigger rect, so it is drawn
+    // from the second frame on.
+    tb.render(|ui| {
+        ui.select(&mut state);
+    });
+    // It floats below the 3-row trigger with its own border, so "Apple" is
+    // on row 4 and "Banana" on row 5.
+    let click = slt::EventBuilder::new().click(2, 5).build();
     tb.render_with_events(click, 0, 1, |ui| {
         ui.select(&mut state);
     });
@@ -2664,9 +2675,13 @@ fn select_open_filter_narrows_visible_items() {
     state.open = true;
     state.filter = "an".to_string(); // matches Banana only
 
-    tb.render(|ui| {
-        ui.select(&mut state);
-    });
+    // #459: the floating dropdown hangs off last frame's trigger rect,
+    // so it is drawn from the second frame on.
+    for _ in 0..2 {
+        tb.render(|ui| {
+            ui.select(&mut state);
+        });
+    }
 
     tb.assert_contains("Banana");
     tb.assert_contains("/an"); // query feedback line
@@ -2680,9 +2695,13 @@ fn select_open_filter_no_match_shows_placeholder_line() {
     state.open = true;
     state.filter = "zzz".to_string();
 
-    tb.render(|ui| {
-        ui.select(&mut state);
-    });
+    // #459: the floating dropdown hangs off last frame's trigger rect,
+    // so it is drawn from the second frame on.
+    for _ in 0..2 {
+        tb.render(|ui| {
+            ui.select(&mut state);
+        });
+    }
 
     tb.assert_contains("(no matches)");
 }

@@ -1,7 +1,7 @@
 //! Modal focus trapping, subtree themes, and spacing presets.
 //!
 //! Covers:
-//! - #225 `ModalOptions::tab_trap` — focus cannot escape a trapped modal.
+//! - #225 `ModalOpts::tab_trap` — focus cannot escape a trapped modal.
 //! - #226 `ContainerBuilder::theme()` — per-subtree theme override.
 //! - #227 `Theme::spacing` activation — `compact`/`comfortable`/`spacious`
 //!   presets and the `with_spacing()` helper produce visibly different
@@ -9,7 +9,7 @@
 
 #![allow(unused_must_use)]
 
-use slt::{Color, EventBuilder, KeyCode, Spacing, TestBackend, Theme, context::ModalOptions};
+use slt::{Color, EventBuilder, KeyCode, ModalOpts, Spacing, TestBackend, Theme};
 
 // ── #226 per-subtree theme override ─────────────────────────────────
 
@@ -100,18 +100,14 @@ fn theme_override_updates_dark_mode_flag() {
     });
 }
 
-// ── #225 ModalOptions::tab_trap ─────────────────────────────────────
+// ── #225 ModalOpts::tab_trap ─────────────────────────────────────
 
 #[test]
 fn modal_options_default_is_trap_on() {
-    // The new `ModalOptions::default()` must enable tab_trap (WCAG 2.1
-    // SC 2.4.3 alignment). The legacy `modal()` method preserves the
-    // pre-v0.20 trap-off behavior.
-    let opts = ModalOptions::default();
-    assert!(
-        opts.tab_trap,
-        "ModalOptions::default() must enable tab_trap"
-    );
+    // The new `ModalOpts::default()` must enable tab_trap (WCAG 2.1
+    // SC 2.4.3 alignment), and `modal()` uses it (#462).
+    let opts = ModalOpts::default();
+    assert!(opts.tab_trap, "ModalOpts::default() must enable tab_trap");
 }
 
 #[test]
@@ -126,7 +122,7 @@ fn modal_with_tab_trap_clamps_focus_into_modal_range() {
 
     // Frame 1: prime prev_modal_* counters.
     tb.render(|ui| {
-        ui.modal_with(ModalOptions { tab_trap: true }, |ui| {
+        ui.modal_with(ModalOpts::new(), |ui| {
             ui.button("Yes");
             ui.button("No");
         });
@@ -136,7 +132,7 @@ fn modal_with_tab_trap_clamps_focus_into_modal_range() {
     // The tab_trap clamp in modal_with must pull it back to 0.
     let final_idx = std::cell::Cell::new(usize::MAX);
     tb.render_with_events(Vec::new(), 99, 2, |ui| {
-        ui.modal_with(ModalOptions { tab_trap: true }, |ui| {
+        ui.modal_with(ModalOpts::new(), |ui| {
             ui.button("Yes");
             ui.button("No");
         });
@@ -159,14 +155,14 @@ fn modal_with_tab_trap_off_allows_focus_outside() {
 
     // Prime prev_modal_* state.
     tb.render(|ui| {
-        ui.modal_with(ModalOptions { tab_trap: false }, |ui| {
+        ui.modal_with(ModalOpts::new().tab_trap(false), |ui| {
             ui.button("OK");
         });
     });
 
     let final_idx = std::cell::Cell::new(usize::MAX);
     tb.render_with_events(Vec::new(), 99, 1, |ui| {
-        ui.modal_with(ModalOptions { tab_trap: false }, |ui| {
+        ui.modal_with(ModalOpts::new().tab_trap(false), |ui| {
             ui.button("OK");
         });
         final_idx.set(ui.focus_index());
@@ -180,11 +176,10 @@ fn modal_with_tab_trap_off_allows_focus_outside() {
 }
 
 #[test]
-fn modal_legacy_method_preserves_legacy_behavior() {
-    // Plain `ui.modal()` (no opts) keeps the v0.19 behavior of NOT
-    // trapping focus. This is the backward-compatibility guarantee for
-    // existing callers — they don't get the focus trap unless they migrate
-    // to `modal_with(ModalOptions::default(), ...)`.
+fn modal_method_traps_focus_by_default() {
+    // Since v0.26 (#462) plain `ui.modal()` is `modal_with(ModalOpts::default())`
+    // and traps focus; the stale index is clamped into the modal range. The
+    // pre-0.26 behavior is `ModalOpts::new().tab_trap(false)` (tests/modal_opts.rs).
     let mut tb = TestBackend::new(60, 8);
     tb.render(|ui| {
         ui.modal(|ui| {
@@ -200,11 +195,7 @@ fn modal_legacy_method_preserves_legacy_behavior() {
         final_idx.set(ui.focus_index());
     });
 
-    assert_eq!(
-        final_idx.get(),
-        99,
-        "legacy modal() must not introduce a tab trap"
-    );
+    assert_eq!(final_idx.get(), 0, "modal() clamps focus into its range");
 }
 
 #[test]
@@ -214,7 +205,7 @@ fn modal_with_tab_trap_tab_cycles_inside_modal() {
 
     // Prime — first frame establishes prev_modal_*.
     tb.render(|ui| {
-        ui.modal_with(ModalOptions { tab_trap: true }, |ui| {
+        ui.modal_with(ModalOpts::new(), |ui| {
             ui.button("Yes");
             ui.button("No");
         });
@@ -226,7 +217,7 @@ fn modal_with_tab_trap_tab_cycles_inside_modal() {
     let events = EventBuilder::new().key_code(KeyCode::Tab).build();
     let final_idx = std::cell::Cell::new(usize::MAX);
     tb.render_with_events(events, 0, 2, |ui| {
-        ui.modal_with(ModalOptions { tab_trap: true }, |ui| {
+        ui.modal_with(ModalOpts::new(), |ui| {
             ui.button("Yes");
             ui.button("No");
         });

@@ -229,6 +229,13 @@ pub use context::{
     CodeBlock, ContainerBuilder, Context, DiffView, Gauge, GutterOpts, LineGauge, Memo, Response,
     State, TreemapItem, Widget,
 };
+// Issue #462: modal options at the crate root; `ModalOptions` is the
+// deprecated former name, kept for one release.
+#[allow(deprecated)]
+pub use context::ModalOptions;
+pub use context::ModalOpts;
+// Issue #459: element-anchored popovers and menus.
+pub use context::Placement;
 // Issue #466: code editor builder and state.
 pub use context::CodeEditor;
 pub use widgets::CodeEditorState;
@@ -269,12 +276,13 @@ pub use widgets::{
     DiffState, DirectoryTreeState, FileEntry, FilePickerScanError, FilePickerScanOperation,
     FilePickerScanStatus, FilePickerState, FormField, FormFieldResponse, FormState, GaugeResponse,
     GridColumn, GutterResponse, HighlightRange, HunkAction, HunkDecision, HunkId, ListResponse,
-    ListState, ModeState, MultiSelectState, NumberInputState, PaginatorState, PaginatorStyle,
-    PaletteCommand, PickerMode, RadioState, RichLogEntry, RichLogState, SchedulerState,
-    ScreenState, ScrollState, SelectState, SliderOpts, SpinnerPreset, SpinnerState,
-    SplitPaneResponse, SplitPaneState, StaticOutput, StreamingMarkdownState, StreamingTextState,
-    TableColumn, TableState, TabsState, TextInputState, TextareaState, ToastLevel, ToastMessage,
-    ToastState, ToolApprovalState, TreeNode, TreeState, Trend, ValidateTrigger, Validator,
+    ListState, MenuBarState, MenuItem, MenuState, ModeState, MultiSelectState, NumberInputState,
+    PaginatorState, PaginatorStyle, PaletteCommand, PickerMode, PopoverResponse, RadioState,
+    RichLogEntry, RichLogState, SchedulerState, ScreenState, ScrollState, SelectState, SliderOpts,
+    SpinnerPreset, SpinnerState, SplitPaneResponse, SplitPaneState, StaticOutput,
+    StreamingMarkdownState, StreamingTextState, TableColumn, TableState, TabsState, TextInputState,
+    TextareaState, ToastLevel, ToastMessage, ToastState, ToolApprovalState, TreeNode, TreeState,
+    Trend, ValidateTrigger, Validator,
 };
 
 /// Rendering backend for SLT.

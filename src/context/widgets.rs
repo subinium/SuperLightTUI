@@ -4,7 +4,7 @@
 //! [`crate::widgets`]: `context/widgets/selection.rs` renders the types in
 //! `widgets/selection.rs`, `context/widgets/collections.rs` renders the types
 //! in `widgets/collections.rs`, and so on. Families without persistent state
-//! (`overlay`, `media`, `viz`, `events`) have no state file. See
+//! (`media`, `viz`, `events`) have no state file. See
 //! `docs/ARCHITECTURE.md` for the full family table.
 
 use super::*;
@@ -31,8 +31,10 @@ mod viz;
 pub use display::Breadcrumb;
 pub use feedback::{Gauge, LineGauge};
 pub use layout::GutterOpts;
-pub use overlay::Anchor;
+#[allow(deprecated)]
+pub use overlay::ModalOptions;
 pub(super) use overlay::wrap_tooltip_text;
+pub use overlay::{Anchor, ModalOpts, Placement};
 pub use rich::{CodeBlock, DiffView};
 pub use text_input::CodeEditor;
 pub use viz::TreemapItem;
