@@ -50,6 +50,7 @@
 //! | `kitty-compress` | zlib-compress Kitty graphics protocol payloads |
 //! | `syntax` / `syntax-*` | Enable tree-sitter syntax highlighting (all bundled grammars, or one language) |
 //! | `full` | `crossterm`, `async`, `serde`, `theme-watch`, `image`, `qrcode`, `kitty-compress`, `bidi`. Does **not** include `syntax` or `pty-test`. |
+//! | `ratatui` | Render ratatui widgets inside SLT containers via `ContainerBuilder::ratatui` / `ratatui_widget` and `Color`/`Modifiers`/`Style` conversions (adds `ratatui-core` 0.1, no ratatui backend). Not part of `full`. Since 0.26.0. |
 //! | `pty-test` | Dev-only test harness: exposes `PtyBackend` / `PtyFrame`, which drive the real terminal flush pipeline into an in-process byte sink for escape-code assertions. Not for application use. |
 //!
 //! # Learn More
@@ -105,6 +106,9 @@ pub mod keymap;
 pub mod layout;
 /// Color palettes (Tailwind-style).
 pub mod palette;
+#[cfg(feature = "ratatui")]
+#[cfg_attr(docsrs, doc(cfg(feature = "ratatui")))]
+pub mod ratatui_compat;
 /// Rectangular region type used throughout SLT layout.
 pub mod rect;
 #[cfg(feature = "crossterm")]

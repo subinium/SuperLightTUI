@@ -18,6 +18,16 @@
   because 0.27 requires Rust 1.90, and the MSRV CI job now checks
   `--all-features` (every `syntax-*` grammar) on 1.88.
 
+### Added
+
+- Opt-in `ratatui` feature (#470): `ContainerBuilder::ratatui(|area, buf| …)`
+  and `ratatui_widget(widget)` render ratatui-core `Widget`s inside SLT
+  containers, honouring scroll/clip geometry, wide graphemes and the parent
+  background; `From` conversions map `Color`, `Modifiers` and `Style` both
+  ways (lossy cases documented in `slt::ratatui_compat`). Depends only on
+  `ratatui-core` 0.1 (ratatui 0.30, no backend) and is not part of `full`, so
+  default and `full` dependency trees are unchanged.
+
 ### Security
 
 - `Context::link` (and Markdown links) now only open `http`, `https` and

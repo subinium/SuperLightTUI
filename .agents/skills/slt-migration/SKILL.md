@@ -165,6 +165,18 @@ ui.widget(&mut label);
 
 Note: SLT's `Widget` trait is different from ratatui's. ratatui's `Widget::render(self, area, buf)` is a stateless paint into a `Buffer`. SLT's `Widget::ui(&mut self, ui)` is an immediate-mode call that returns a `Response`.
 
+### Incremental path — keep ratatui widgets (`ratatui` feature, v0.26+)
+
+When a rewrite is too big to do at once, or a third-party ratatui widget has no SLT equivalent, enable `superlighttui = { version = "0.26", features = ["ratatui"] }` and render the ratatui widget inside an SLT container. The feature depends only on `ratatui-core` 0.1 (ratatui 0.30), not on a ratatui backend, and is not part of `full`.
+
+```rust
+use ratatui_widgets::{block::Block, paragraph::Paragraph}; // or `ratatui::widgets`
+ui.container().h(5).ratatui_widget(Paragraph::new(text.clone()).block(Block::bordered()));
+ui.container().grow(1).ratatui(move |area, buf| sparkline.render(area, buf));
+```
+
+The closure is deferred (`'static`): move owned data in. It is render-only — input, focus and `StatefulWidget` state stay in SLT code. `slt::Color` / `Modifiers` / `Style` convert to and from the ratatui types with `From`; see `src/ratatui_compat.rs` for the lossy cases (blink variants, `HIDDEN`, `OVERLINE`). Port these regions to native SLT widgets later, one at a time.
+
 ### Layout mapping
 
 ratatui:

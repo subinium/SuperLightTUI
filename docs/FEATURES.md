@@ -31,6 +31,7 @@ For the canonical API surface, also check docs.rs and `src/lib.rs`.
 | `syntax` | Convenience: enables all per-language `syntax-*` bundles below |
 | `syntax-*` | Per-language syntax bundles such as `syntax-rust`, `syntax-python`, `syntax-typescript` |
 | `kitty-compress` | zlib compression for Kitty image protocol uploads |
+| `ratatui` | Render ratatui widgets inside SLT containers: `ContainerBuilder::ratatui` (closure over a ratatui `Rect` + `Buffer`) / `ratatui_widget(widget)` plus `From` conversions for `Color`, `Modifiers` and `Style`. Adds only `ratatui-core` 0.1 (ratatui 0.30), no ratatui backend; not part of `full`. Render-only — see `slt::ratatui_compat` for clipping and lossy style rules |
 | `pty-test` | Development-only in-process PTY backend contract tests; not part of `full` |
 | `full` | Convenience bundle: enables `crossterm`, `async`, `serde`, `theme-watch`, `image`, `qrcode`, `kitty-compress`, and `bidi` (does **not** include `syntax` — add language bundles separately) |
 
