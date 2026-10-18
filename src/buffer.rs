@@ -723,6 +723,68 @@ impl Buffer {
         }
     }
 
+    /// Paint every cell of `rect` as a blank space in `style` (#493).
+    ///
+    /// Produces exactly the cells of writing `" "` with `style` to each cell
+    /// of `rect` in row-major order through [`Buffer::set_string`]: writes
+    /// are restricted to the area and the active clip, a cell that holds a
+    /// one-byte symbol is replaced directly (in bulk runs), and any other
+    /// cell (a wide leading cell, a continuation, a combined cluster) goes
+    /// through the general write so a grapheme straddling the rect edge is
+    /// cleared as a unit, or left alone when clearing it would cross the
+    /// clip.
+    pub(crate) fn fill_rect(&mut self, rect: Rect, style: Style) {
+        let clip = self.effective_clip().copied();
+        let Some(mut region) = self.area.intersection(rect) else {
+            return;
+        };
+        if let Some(clip) = clip {
+            let Some(clipped) = region.intersection(clip) else {
+                return;
+            };
+            region = clipped;
+        }
+        let blank = Cell {
+            symbol: compact_str::CompactString::const_new(" "),
+            style,
+            hyperlink: None,
+        };
+        let (left, right) = (region.x, region.right());
+        for y in region.y..region.bottom() {
+            self.touch_cols(y, left, right);
+            let row_base = self.index_of(left, y);
+            let mut col = left;
+            while col < right {
+                let start = row_base + (col - left) as usize;
+                let mut run = 0usize;
+                for cell in &mut self.content[start..row_base + (right - left) as usize] {
+                    if cell.symbol.len() != 1 {
+                        break;
+                    }
+                    // One-byte symbols are inline: overwrite in place.
+                    cell.symbol.clone_from(&blank.symbol);
+                    cell.style = style;
+                    cell.hyperlink = None;
+                    run += 1;
+                }
+                if run > 0 {
+                    col += run as u32;
+                    continue;
+                }
+                self.set_grapheme_normalized(
+                    col,
+                    y,
+                    compact_str::CompactString::const_new(" "),
+                    1,
+                    style,
+                    None,
+                    clip,
+                );
+                col += 1;
+            }
+        }
+    }
+
     /// Return a description of the first cell that breaks the written-span
     /// invariant, or `None` when every untouched cell equals the fill cell.
     #[cfg(any(test, debug_assertions))]
@@ -1510,13 +1572,16 @@ impl Buffer {
                     continue;
                 }
                 let base = row * width;
-                self.content[base + span.lo as usize..base + span.hi as usize].fill(blank.clone());
+                blank_cells(
+                    &mut self.content[base + span.lo as usize..base + span.hi as usize],
+                    &blank,
+                );
                 *span = RowSpan::EMPTY;
             }
         } else {
             self.fill_bg = bg;
             let blank = self.fill_cell();
-            self.content.fill(blank);
+            blank_cells(&mut self.content, &blank);
             self.touched.clear();
             self.touched.resize(height, RowSpan::EMPTY);
         }
@@ -1820,6 +1885,21 @@ pub(crate) fn sanitize_osc8_url(url: &str) -> Option<String> {
         Some(url.to_string())
     } else {
         None
+    }
+}
+
+/// Overwrite every cell of `cells` with `blank` (a space with no hyperlink).
+///
+/// Field-wise assignment: equivalent to `*cell = blank.clone()` but lets the
+/// inline one-byte symbol overwrite in place, which measures faster than
+/// `slice::fill` on the 64-byte `Cell`.
+#[inline]
+fn blank_cells(cells: &mut [Cell], blank: &Cell) {
+    debug_assert!(blank.hyperlink.is_none());
+    for cell in cells {
+        cell.symbol.clone_from(&blank.symbol);
+        cell.style = blank.style;
+        cell.hyperlink = None;
     }
 }
 
@@ -2648,6 +2728,38 @@ mod tests {
     }
 
     #[test]
+    fn fill_rect_clears_wide_glyphs_straddling_its_edges() {
+        use crate::style::Color;
+        let bg = Style::new().bg(Color::Rgb(20, 20, 30));
+        // 世 at columns 1-2 straddles the left edge (x = 2); 界 at 5-6
+        // straddles the right edge (right = 6).
+        let mut buf = Buffer::empty(Rect::new(0, 0, 8, 1));
+        buf.set_string(1, 0, "世", Style::new());
+        buf.set_string(5, 0, "界", Style::new());
+        buf.fill_rect(Rect::new(2, 0, 4, 1), bg);
+        let symbols: Vec<&str> = (0..8).map(|x| buf.get(x, 0).symbol.as_str()).collect();
+        assert_eq!(symbols, [" "; 8]);
+        // Cells outside the rect that belonged to the cut glyphs are blanked
+        // with the default style; cells inside carry the fill style.
+        assert_eq!(*buf.get(1, 0), Cell::default());
+        assert_eq!(*buf.get(6, 0), Cell::default());
+        assert!((2..6).all(|x| buf.get(x, 0).style == bg));
+        assert_eq!(buf.fill_invariant_violation(), None);
+
+        // When the clip excludes the straddled leading cell, the glyph is
+        // left intact rather than split.
+        let mut buf = Buffer::empty(Rect::new(0, 0, 8, 1));
+        buf.set_string(1, 0, "世", Style::new());
+        buf.push_clip(Rect::new(2, 0, 6, 1));
+        buf.fill_rect(Rect::new(0, 0, 8, 1), bg);
+        assert_eq!(buf.get(1, 0).symbol, "世");
+        assert!(buf.get(2, 0).is_continuation());
+        assert_eq!(buf.get(0, 0).symbol, " ");
+        assert_eq!(buf.get(0, 0).style, Style::new(), "outside the clip");
+        assert!((3..8).all(|x| buf.get(x, 0).style == bg));
+    }
+
+    #[test]
     fn crlf_grapheme_occupies_exactly_one_cell() {
         let mut buf = Buffer::empty(Rect::new(0, 0, 6, 1));
         buf.set_string(0, 0, "aXYb", Style::new());
@@ -2887,6 +2999,14 @@ mod tests {
                 y: u32,
                 symbol: String,
             },
+            /// Container background fill (#493).
+            Fill {
+                x: u32,
+                y: u32,
+                w: u32,
+                h: u32,
+                style: u8,
+            },
         }
 
         fn style_of(index: u8) -> Style {
@@ -2913,6 +3033,8 @@ mod tests {
                 1 => (x.clone(), y.clone(), 0u32..12, 0u32..5)
                     .prop_map(|(x, y, w, h)| Op::PushClip { x, y, w, h }),
                 1 => Just(Op::PopClip),
+                2 => (x.clone(), y.clone(), 0u32..14, 0u32..5, any::<u8>())
+                    .prop_map(|(x, y, w, h, style)| Op::Fill { x, y, w, h, style }),
                 1 => (x, y, prop_oneof![Just(String::new()), Just("ab".to_string()), Just("\u{1b}]52".to_string()), Just("世界".to_string()), fragment()])
                     .prop_map(|(x, y, symbol)| Op::Mutate { x, y, symbol }),
             ]
@@ -2962,6 +3084,26 @@ mod tests {
                 Op::Mutate { x, y, symbol } => {
                     if let Some(cell) = buf.try_get_mut(*x, *y) {
                         cell.symbol = compact_str::CompactString::new(symbol);
+                    }
+                }
+                Op::Fill { x, y, w, h, style } => {
+                    let rect = Rect::new(*x, *y, *w, *h);
+                    if reference {
+                        // The pre-#493 container background loop.
+                        for yy in rect.y..rect.bottom() {
+                            for xx in rect.x..rect.right() {
+                                cell_write_oracle::set_string(
+                                    buf,
+                                    xx,
+                                    yy,
+                                    " ",
+                                    style_of(*style),
+                                    None,
+                                );
+                            }
+                        }
+                    } else {
+                        buf.fill_rect(rect, style_of(*style));
                     }
                 }
             }
@@ -3101,6 +3243,7 @@ mod tests {
             GetMut(u32, u32),
             TryGetMut(u32, u32),
             DirectWrite(u32, u32, u32, u32),
+            Fill(u32, u32, u32, u32),
             DimAll,
             DimAround(u32, u32, u32, u32),
             PushClip(u32, u32, u32, u32),
@@ -3119,6 +3262,7 @@ mod tests {
                 1 => (c.clone(), c.clone()).prop_map(|(x, y)| Op::TryGetMut(x, y)),
                 1 => (c.clone(), c.clone(), 0u32..8, 0u32..4)
                     .prop_map(|(x, y, w, h)| Op::DirectWrite(x, y, w, h)),
+                2 => (c.clone(), c.clone(), 0u32..12, 0u32..6).prop_map(|(x, y, w, h)| Op::Fill(x, y, w, h)),
                 1 => Just(Op::DimAll),
                 1 => (c.clone(), c.clone(), 0u32..10, 0u32..6)
                     .prop_map(|(x, y, w, h)| Op::DimAround(x, y, w, h)),
@@ -3158,6 +3302,9 @@ mod tests {
                         }
                     }
                     buf.mark_touched_rect(rect);
+                }
+                Op::Fill(x, y, w, h) => {
+                    buf.fill_rect(Rect::new(*x, *y, *w, *h), Style::new().bg(Color::Blue))
                 }
                 Op::DimAll => crate::layout::render_test_hooks::dim_entire(buf),
                 Op::DimAround(x, y, w, h) => {

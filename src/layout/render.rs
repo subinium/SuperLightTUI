@@ -1045,12 +1045,9 @@ fn render_inner(
             if let Some(color) = node.bg_color
                 && let Some(area) = visible_area(node, x_offset, y_offset, buf.area)
             {
-                let fill_style = Style::new().bg(color);
-                for y in area.y..area.bottom() {
-                    for x in area.x..area.right() {
-                        buf.set_string(x, y, " ", fill_style);
-                    }
-                }
+                // Bulk blank fill; edge cells that cut a wide grapheme take
+                // the general write path inside `fill_rect` (#493).
+                buf.fill_rect(area, Style::new().bg(color));
             }
             let child_bg = node.bg_color.or(parent_bg);
             render_container_border(node, buf, x_offset, y_offset, child_bg);
