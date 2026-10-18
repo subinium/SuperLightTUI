@@ -374,7 +374,7 @@ fn run_async_loop_inner<M: Send + 'static>(
         config.report_all_keys,
         color_depth,
     )?;
-    set_terminal_title(&config.title);
+    term.apply_run_config(&config);
     if config.theme.bg != Color::Reset {
         term.theme_bg = Some(config.theme.bg);
     }

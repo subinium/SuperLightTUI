@@ -12,7 +12,6 @@ use crate::cell::{Cell, normalize_cell_symbol};
 use crate::rect::Rect;
 use crate::style::Style;
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
 
 /// Maximum cells allocated by one [`Buffer`].
 ///
@@ -985,7 +984,7 @@ impl Buffer {
         clip: Option<Rect>,
     ) -> u32 {
         let symbol = normalize_cell_symbol(grapheme);
-        let width = UnicodeWidthStr::width(symbol.as_str()) as u32;
+        let width = crate::width::str_width(symbol.as_str()) as u32;
         if width == 0 {
             self.append_zero_width(x, y, &symbol, clip);
             return 0;
@@ -1046,7 +1045,7 @@ impl Buffer {
             left = x - 1;
         }
         let symbol = self.content[self.index_of(left, y)].normalized_symbol();
-        let width = (UnicodeWidthStr::width(symbol.as_str()) as u32).max(1);
+        let width = (crate::width::str_width(symbol.as_str()) as u32).max(1);
         (left, left.saturating_add(width).min(self.area.right()))
     }
 

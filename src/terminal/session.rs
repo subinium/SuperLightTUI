@@ -44,6 +44,17 @@ pub(super) fn register_active_session(snapshot: SessionSnapshot) -> u64 {
     id
 }
 
+pub(super) fn update_active_session(id: u64, snapshot: SessionSnapshot) {
+    if let Some(session) = ACTIVE_SESSIONS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter_mut()
+        .rfind(|session| session.id == id)
+    {
+        session.snapshot = snapshot;
+    }
+}
+
 pub(super) fn unregister_active_session(id: u64) {
     let mut sessions = ACTIVE_SESSIONS
         .lock()
@@ -91,7 +102,7 @@ impl TerminalSessionGuard {
         kitty_keyboard: bool,
         report_all_keys: bool,
     ) -> io::Result<Self> {
-        let kitty_keyboard = kitty_keyboard && terminal_kitty_keyboard_allowed();
+        let kitty_requested = kitty_keyboard && terminal_kitty_keyboard_allowed();
         *CELL_PIXEL_CACHE
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = CellPixelCache::default();
@@ -100,10 +111,12 @@ impl TerminalSessionGuard {
             terminal::enable_raw_mode()?;
         }
 
+        // Issue #448: the Kitty keyboard push waits for the capability probe
+        // below, so the guard starts without it.
         let mut guard = Self {
             mode,
             mouse_enabled,
-            kitty_keyboard,
+            kitty_keyboard: false,
             report_all_keys,
             raw_mode_owned,
             registry_id: None,
@@ -122,7 +135,30 @@ impl TerminalSessionGuard {
         // never re-probes. Never runs on the PTY-harness path (`harness` is
         // always `false` here, but resume/harness re-entries go through
         // `write_session_enter` directly, not `enter`).
-        let _ = capabilities();
+        let caps = capabilities();
+
+        // Issue #448: push the Kitty keyboard protocol only where it will take
+        // effect: confirmed by `CSI ? u`, forced, or (when queries cannot run)
+        // allowed by multiplexer policy. The registry snapshot is updated
+        // before the push so panic / suspend cleanup pops exactly what was
+        // pushed.
+        if kitty_keyboard_push_decision(
+            kitty_requested,
+            true,
+            automatic_terminal_queries_allowed(),
+            caps.kitty_keyboard,
+            force_env_enabled("SLT_FORCE_KITTY_KEYBOARD"),
+        ) {
+            guard.kitty_keyboard = true;
+            if let Some(id) = guard.registry_id {
+                update_active_session(id, guard.snapshot());
+            }
+            if let Err(err) = write_kitty_keyboard_push(stdout, report_all_keys) {
+                guard.restore(stdout, false);
+                return Err(err);
+            }
+            stdout.flush()?;
+        }
 
         crate::event::reply::prepare_input()?;
 
@@ -283,6 +319,9 @@ pub(super) fn write_session_exit(
     mouse_enabled: bool,
     kitty_keyboard: bool,
 ) -> io::Result<()> {
+    // Issue #468: undo title / progress / status / cursor-shape changes made
+    // by this process (no bytes when nothing was emitted).
+    let _ = write_terminal_meta_restore(stdout);
     if kitty_keyboard {
         write_kitty_keyboard_pop(stdout)?;
     }

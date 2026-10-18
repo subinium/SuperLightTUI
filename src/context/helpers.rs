@@ -135,7 +135,7 @@ pub(crate) fn byte_index_for_grapheme(s: &str, cluster_index: usize) -> usize {
 /// glyph, not the per-scalar sum.
 #[inline]
 pub(crate) fn cluster_width(cluster: &str) -> u32 {
-    UnicodeWidthStr::width(cluster) as u32
+    crate::width::str_width(cluster) as u32
 }
 
 pub(crate) fn format_token_count(count: usize) -> String {
@@ -149,7 +149,7 @@ pub(crate) fn format_token_count(count: usize) -> String {
 }
 
 pub(crate) fn format_table_row(cells: &[String], widths: &[u32], separator: &str) -> String {
-    let sep_width = UnicodeWidthStr::width(separator);
+    let sep_width = crate::width::str_width(separator);
     let total_cells_width: usize = widths.iter().map(|w| *w as usize).sum();
     let mut row = String::with_capacity(
         total_cells_width + sep_width.saturating_mul(widths.len().saturating_sub(1)),
@@ -177,7 +177,7 @@ pub(crate) fn clamp_table_cell(cell: &str, width: u32) -> String {
     if width == 0 {
         return String::new();
     }
-    let cell_width = UnicodeWidthStr::width(cell);
+    let cell_width = crate::width::str_width(cell);
     if cell_width <= width {
         let mut out = String::with_capacity(width);
         out.push_str(cell);
@@ -191,7 +191,7 @@ pub(crate) fn clamp_table_cell(cell: &str, width: u32) -> String {
     let mut out = String::with_capacity(width);
     let mut acc = 0usize;
     for grapheme in cell.graphemes(true) {
-        let ch_width = UnicodeWidthStr::width(grapheme);
+        let ch_width = crate::width::str_width(grapheme);
         if acc + ch_width > target {
             break;
         }
@@ -200,7 +200,7 @@ pub(crate) fn clamp_table_cell(cell: &str, width: u32) -> String {
     }
     out.push('\u{2026}');
     // Pad in case the last char was wide and left a one-cell gap before `…`.
-    let out_width = UnicodeWidthStr::width(out.as_str());
+    let out_width = crate::width::str_width(out.as_str());
     out.extend(std::iter::repeat_n(' ', width.saturating_sub(out_width)));
     out
 }
@@ -221,7 +221,7 @@ mod v024_table_tests {
             for width in 0..=10 {
                 let rendered = clamp_table_cell(&source, width);
                 assert_eq!(
-                    UnicodeWidthStr::width(rendered.as_str()),
+                    crate::width::str_width(rendered.as_str()),
                     width as usize,
                     "{source:?} width={width}"
                 );
@@ -297,7 +297,7 @@ pub(crate) fn format_compact_number(value: f64) -> String {
 }
 
 pub(crate) fn center_text(text: &str, width: usize) -> String {
-    let text_width = UnicodeWidthStr::width(text);
+    let text_width = crate::width::str_width(text);
     if text_width >= width {
         return text.to_string();
     }
@@ -458,7 +458,7 @@ impl Context {
         let height = lines.len().max(1);
         let width = lines
             .iter()
-            .map(|line| UnicodeWidthStr::width(line.as_str()))
+            .map(|line| crate::width::str_width(line.as_str()))
             .max()
             .unwrap_or(0);
 

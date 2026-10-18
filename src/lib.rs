@@ -123,6 +123,7 @@ mod terminal;
 pub mod test_utils;
 /// Widget state types (list, table, input, select, etc.).
 pub mod widgets;
+mod width;
 
 use std::io;
 use std::time::Duration;
@@ -221,6 +222,8 @@ pub use context::{
     CodeBlock, ContainerBuilder, Context, DiffView, Gauge, GutterOpts, LineGauge, Memo, Response,
     State, TreemapItem, Widget,
 };
+// Issues #446 / #468: terminal metadata and clipboard outcome types.
+pub use context::{ClipboardStatus, CursorShape, ProgramState, ProgramStatus, Progress};
 // Issue #234: opaque handle from `Context::spawn`, gated behind `async`.
 #[cfg(feature = "async")]
 #[cfg_attr(docsrs, doc(cfg(feature = "async")))]

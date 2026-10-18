@@ -1068,7 +1068,7 @@ impl TableState {
         let index = self.rows.len();
         if !self.widths_dirty {
             for (width, cell) in self.content_widths.iter_mut().zip(&row) {
-                *width = (*width).max(UnicodeWidthStr::width(cell.as_str()) as u32);
+                *width = (*width).max(crate::width::str_width(cell.as_str()) as u32);
             }
             self.column_widths.clone_from(&self.content_widths);
         }
@@ -1459,7 +1459,7 @@ impl TableState {
         let col_count = self.headers.len();
         self.content_widths = vec![0u32; col_count];
         for (i, header) in self.headers.iter().enumerate() {
-            let mut width = UnicodeWidthStr::width(header.as_str()) as u32;
+            let mut width = crate::width::str_width(header.as_str()) as u32;
             if self.sort_column == Some(i) {
                 width += 2;
             }
@@ -1468,7 +1468,7 @@ impl TableState {
         for row in &self.rows {
             for (i, cell) in row.iter().enumerate() {
                 if i < col_count {
-                    let w = UnicodeWidthStr::width(cell.as_str()) as u32;
+                    let w = crate::width::str_width(cell.as_str()) as u32;
                     self.content_widths[i] = self.content_widths[i].max(w);
                 }
             }

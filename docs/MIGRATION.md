@@ -8,6 +8,32 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
 
 ---
 
+## v0.25.x → v0.26.0
+
+- Color depth auto-detection now also uses terminal identity, a
+  probe-confirmed XTGETTCAP `Tc` reply, and VT-enabled Windows consoles, so
+  Kitty, Ghostty, WezTerm, iTerm2, VS Code, and Windows Terminal may get 24-bit
+  color where 0.25 picked 16 or 256. `TERM=dumb` now resolves to
+  `ColorDepth::NoColor`. Set `RunConfig::color_depth(..)` to pin a depth; an
+  explicit depth still wins over everything, including `NO_COLOR` (#447).
+- `RunConfig::kitty_keyboard(true)` no longer pushes the protocol on a direct
+  terminal that answers startup queries but not `CSI ? u`.
+  `ui.capabilities().kitty_keyboard` now reports the probe result instead of
+  always `false`. Set `SLT_FORCE_KITTY_KEYBOARD=1` to push regardless (#448).
+- `ui.copy_to_clipboard` payloads over 74,994 bytes are no longer sent; raise
+  `RunConfig::clipboard_max_bytes(..)` if your terminal accepts more. Write
+  failures are reported through `ui.clipboard_status()` instead of
+  `eprintln!`, and a failed selection copy no longer aborts the frame (#446).
+- The window title from `RunConfig::title` is now written through the frame
+  flush and restored on exit (XTWINOPS title stack) instead of staying set
+  after the app quits (#468).
+- `RunConfig` gained `clipboard_passthrough`, `clipboard_max_bytes`,
+  `ambiguous_wide`, `width_conservative`, and `width_probe`. `RunConfig` is
+  `#[non_exhaustive]`; keep using the builder methods.
+- Inside tmux with `default-terminal "screen-256color"`, SLT now identifies the
+  multiplexer as tmux (it was GNU screen). Protocol policy for the two is the
+  same; only OSC 52 passthrough wrapping differs.
+
 ## 1. v0.24.x → v0.25.0
 
 Existing `form_field`, `scrollable`, and native/browser entry points remain
