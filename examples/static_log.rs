@@ -33,7 +33,7 @@ const LOG_EVERY: u32 = 5;
 /// Shared inline-area body. Used by both `render` (one-frame snapshot) and
 /// `main` (live loop) so the visible UI stays identical across both paths.
 fn inline_body(ui: &mut Context, count: u32) {
-    let _ = ui.col(|ui| {
+    ui.col(|ui| {
         ui.styled(
             format!("Counter: {count}"),
             Style::new().bold().fg(Color::Cyan),

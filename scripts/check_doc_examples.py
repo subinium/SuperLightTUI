@@ -18,7 +18,14 @@ MAINTAINED_DOCS = (
     "WEB_DEVELOPERS",
     "INTERACTION",
     "TERMINAL_COMPATIBILITY",
+    "QUICK_START",
 )
+
+# Docs whose recipes must also compile warning-free (issue #456: the Quick
+# Start is pasted verbatim into new projects, so it must not need `let _ =`).
+# Fragment-only lints (unused imports, an unused `main`) stay allowed.
+STRICT_DOCS = ("QUICK_START",)
+STRICT_PRELUDE = "#![deny(warnings, unused)]\n#![allow(unused_imports, dead_code)]\n"
 
 
 @dataclasses.dataclass
@@ -128,6 +135,8 @@ def check(args):
                 code = "use slt::*;\n" + example.code
                 if example.context == "ui":
                     code = "use slt::*;\nfn recipe(ui: &mut Context) {\n" + example.code + "\n}\n"
+                if Path(example.source).stem in STRICT_DOCS:
+                    code = STRICT_PRELUDE + code
                 (source / (example.name + ".rs")).write_text(code, encoding="utf-8")
                 modules.append(f"mod {example.name};")
                 print(f"  {example.name}: {example.source}:{example.line}; features={list(features)}", flush=True)

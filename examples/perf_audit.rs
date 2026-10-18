@@ -62,7 +62,7 @@ fn audit_framestate_reuse() {
     let mut tb = TestBackend::new(RENDER_W, RENDER_H);
     bench("steady-state render", ITERS, || {
         tb.render(|ui| {
-            let _ = ui.bordered(Border::Rounded).title("audit").col(|ui| {
+            ui.bordered(Border::Rounded).title("audit").col(|ui| {
                 ui.text("hello").bold();
                 ui.text("world").dim();
             });

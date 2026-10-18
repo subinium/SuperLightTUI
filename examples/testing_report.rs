@@ -27,7 +27,7 @@ const STEPS_H: u32 = 6;
 /// Single source of truth — `main()` and the snapshot tests both call this
 /// so the example and its regression coverage cannot drift.
 pub fn render_demo(ui: &mut Context) {
-    let _ = ui.col(|ui| {
+    ui.col(|ui| {
         ui.text("v0.20 test-utils showcase").fg(Color::Cyan).bold();
         ui.text("--------------------------").fg(Color::Cyan);
         ui.text("normal").fg(Color::White);
@@ -38,7 +38,7 @@ pub fn render_demo(ui: &mut Context) {
 
 /// Render a single animation step — used to demo `record_frames`.
 pub fn render_step(ui: &mut Context, label: &str, n: usize) {
-    let _ = ui.col(|ui| {
+    ui.col(|ui| {
         ui.text(format!("step {n}: {label}")).bold();
         ui.text("---------------------").fg(Color::DarkGray);
         ui.text(format!("count = {n}")).fg(Color::Green);

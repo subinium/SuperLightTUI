@@ -101,7 +101,7 @@ is intentionally letting content flow only as wide as it needs.
 
 ```rust
 // good
-let _ = ui
+ui
     .bordered(Border::Rounded)
     .title("…")
     .p(pad)
@@ -110,7 +110,7 @@ let _ = ui
 
 // bad — outer box only fills its content's natural size, leaving the
 // rest of the terminal blank. Inputs inside flex rows shrink to 1 cell.
-let _ = ui.bordered(Border::Rounded).title("…").p(pad).col(|ui| { … });
+ui.bordered(Border::Rounded).title("…").p(pad).col(|ui| { … });
 ```
 
 **Why**: v0.20 `named_focus` shipped without `.grow(1)`; the input
@@ -126,14 +126,14 @@ claims the row's remaining width.
 
 ```rust
 // good — input fills row's remaining width
-let _ = ui.row_gap(gap, |ui| {
+ui.row_gap(gap, |ui| {
     ui.text("Name: ");
-    let _ = ui.register_focusable_named("name");
+    ui.register_focusable_named("name");
     let r = ui.container().fill().col(|ui| {
-        let _ = ui.text_input(&mut state.name);
+        ui.text_input(&mut state.name);
     });
     if r.clicked {
-        let _ = ui.focus_by_name("name");
+        ui.focus_by_name("name");
     }
 });
 ```
@@ -262,7 +262,7 @@ the *backdrop*.
 ```rust
 // good — viewer maps each visible element to a v0.20 issue
 ui.text("(buttons here demo #209 on_hover)").dim().fg(Color::Cyan);
-let _ = ui.button("Save").on_hover(ui, "…");
+ui.button("Save").on_hover(ui, "…");
 
 ui.text(format!("#210 panel_alpha = {alpha:.2}")).dim();
 ```

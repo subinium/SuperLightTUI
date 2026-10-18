@@ -69,8 +69,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
     let gap = ui.spacing().xs();
     let row_gap = ui.spacing().xs();
 
-    let _ = ui
-        .bordered(Border::Rounded)
+    ui.bordered(Border::Rounded)
         .title("register_focusable_named + focus_by_name")
         .p(pad)
         .gap(gap)
@@ -96,13 +95,13 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
     // quits; if an input has focus, the keys flow into it as text. Use
     // Esc or Ctrl-Q to quit unconditionally.
     if ui.key('1') {
-        let _ = ui.focus_by_name("name");
+        ui.focus_by_name("name");
     }
     if ui.key('2') {
-        let _ = ui.focus_by_name("email");
+        ui.focus_by_name("email");
     }
     if ui.key('3') {
-        let _ = ui.focus_by_name("city");
+        ui.focus_by_name("city");
     }
     if ui.key('q') {
         ui.quit();
@@ -116,7 +115,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 /// row routes through `focus_by_name` so mouse focus matches keyboard
 /// focus — text_input itself doesn't claim focus on click.
 fn render_input_rows(ui: &mut Context, state: &mut DemoState) {
-    let _ = ui.col(|ui| {
+    ui.col(|ui| {
         let row_gap = ui.spacing().xs();
 
         // The wrapping `container().fill().col()` has its own hit area, so
@@ -127,44 +126,44 @@ fn render_input_rows(ui: &mut Context, state: &mut DemoState) {
         // routing them through the same `focus_by_name` call.
         let name_row = ui.container().gap(row_gap).row(|ui| {
             ui.text("Name: ");
-            let _ = ui.register_focusable_named("name");
+            ui.register_focusable_named("name");
             let r = ui.container().fill().col(|ui| {
-                let _ = ui.text_input(&mut state.name);
+                ui.text_input(&mut state.name);
             });
             if r.clicked {
-                let _ = ui.focus_by_name("name");
+                ui.focus_by_name("name");
             }
         });
         if name_row.clicked {
-            let _ = ui.focus_by_name("name");
+            ui.focus_by_name("name");
         }
 
         let email_row = ui.container().gap(row_gap).row(|ui| {
             ui.text("Email:");
-            let _ = ui.register_focusable_named("email");
+            ui.register_focusable_named("email");
             let r = ui.container().fill().col(|ui| {
-                let _ = ui.text_input(&mut state.email);
+                ui.text_input(&mut state.email);
             });
             if r.clicked {
-                let _ = ui.focus_by_name("email");
+                ui.focus_by_name("email");
             }
         });
         if email_row.clicked {
-            let _ = ui.focus_by_name("email");
+            ui.focus_by_name("email");
         }
 
         let city_row = ui.container().gap(row_gap).row(|ui| {
             ui.text("City: ");
-            let _ = ui.register_focusable_named("city");
+            ui.register_focusable_named("city");
             let r = ui.container().fill().col(|ui| {
-                let _ = ui.text_input(&mut state.city);
+                ui.text_input(&mut state.city);
             });
             if r.clicked {
-                let _ = ui.focus_by_name("city");
+                ui.focus_by_name("city");
             }
         });
         if city_row.clicked {
-            let _ = ui.focus_by_name("city");
+            ui.focus_by_name("city");
         }
     });
 }
@@ -172,15 +171,15 @@ fn render_input_rows(ui: &mut Context, state: &mut DemoState) {
 /// Render three focus buttons. Each button targets a name; clicking it
 /// asks the focus system to jump on the next frame.
 fn render_focus_buttons(ui: &mut Context, gap: u32) {
-    let _ = ui.container().gap(gap).row(|ui| {
+    ui.container().gap(gap).row(|ui| {
         if ui.button("Focus name").clicked {
-            let _ = ui.focus_by_name("name");
+            ui.focus_by_name("name");
         }
         if ui.button("Focus email").clicked {
-            let _ = ui.focus_by_name("email");
+            ui.focus_by_name("email");
         }
         if ui.button("Focus city").clicked {
-            let _ = ui.focus_by_name("city");
+            ui.focus_by_name("city");
         }
     });
 }

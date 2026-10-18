@@ -27,20 +27,19 @@ fn main() {
         input.cursor = frame % input.value.chars().count().max(1);
         textarea.scroll_offset = frame % 20;
         tb.render(|ui| {
-            let _ = ui
-                .bordered(slt::Border::Rounded)
+            ui.bordered(slt::Border::Rounded)
                 .title("Perf sanity")
                 .p(1)
                 .grow(1)
                 .col(|ui| {
                     ui.text("Input cursor path").bold();
-                    let _ = ui.text_input(&mut input);
-                    let _ = ui.separator();
+                    ui.text_input(&mut input);
+                    ui.separator();
                     ui.text("Wrapped text path").bold();
                     ui.text(long_text.clone()).wrap();
-                    let _ = ui.separator();
+                    ui.separator();
                     ui.text("Textarea cursor path").bold();
-                    let _ = ui.textarea(&mut textarea, 8);
+                    ui.textarea(&mut textarea, 8);
                 });
         });
     }

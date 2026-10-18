@@ -39,7 +39,7 @@ fn main() -> std::io::Result<()> {
             app.count += 1;
         }
 
-        let _ = ui.checkbox("Dark mode", &mut app.dark);
+        ui.checkbox("Dark mode", &mut app.dark);
         ui.text(format!("count: {}", app.count));
 
         // Global shortcuts can go anywhere; focused text fields keep their keys.
@@ -112,7 +112,7 @@ It is a helper function.
 use slt::{Border, Context};
 
 fn panel(ui: &mut Context, title: &str, f: impl FnOnce(&mut Context)) {
-    let _ = ui
+    ui
         .bordered(Border::Rounded)
         .title(title)
         .p(1)
@@ -144,7 +144,7 @@ The simplest reusable component is a free function that takes `&mut Context` and
 use slt::{Border, Context, Trend};
 
 fn metric_card(ui: &mut Context, label: &str, value: f64, trend: Trend) {
-    let _ = ui.bordered(Border::Single).p(1).col(|ui| {
+    ui.bordered(Border::Single).p(1).col(|ui| {
         ui.text(label).dim();
         ui.text(format!("{:.1}", value)).bold();
         let arrow = match trend {
@@ -209,7 +209,7 @@ fn expandable_card(
     body: impl FnOnce(&mut Context),
 ) {
     let expanded = ui.use_state_named_default::<bool>(id);
-    let _ = ui.bordered(Border::Single).col(|ui| {
+    ui.bordered(Border::Single).col(|ui| {
         let label = if *expanded.get(ui) { "▼" } else { "▶" };
         if ui.button(label).clicked {
             let v = *expanded.get(ui);
@@ -360,7 +360,7 @@ builder, so its closure takes the builder and must **return** it
 `&mut Context` and returns `()`:
 
 ```rust
-let _ = ui
+ui
     .bordered(Border::Single)
     .with_if(panel_focused, |c| c.title("(focused)").p(2))
     .col(|ui| {
@@ -400,7 +400,7 @@ For full working apps that combine these patterns, see `COOKBOOK.md`. For the pe
 ```rust
 fn render_sidebar(ui: &mut Context, app: &mut App) {
     ui.text("Navigation").bold();
-    let _ = ui.list(&mut app.sidebar);
+    ui.list(&mut app.sidebar);
 }
 
 fn render_content(ui: &mut Context, app: &mut App) {
@@ -437,8 +437,8 @@ For larger forms, reach for `FormField` and `FormState`.
 
 ```rust
 // Render widgets first...
-let _ = ui.text_input(&mut search);
-let _ = ui.list(&mut results);
+ui.text_input(&mut search);
+ui.list(&mut results);
 
 // ...then check shortcuts. Only keys no widget consumed reach these checks.
 if ui.key('q') {

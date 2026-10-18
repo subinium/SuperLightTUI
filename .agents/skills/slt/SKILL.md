@@ -17,7 +17,7 @@ Targets SLT v0.25.0. Verify every API against `src/` before using it.
 2. **Focused text fields own their keys.** While `text_input` / `textarea` / a form field / an open command palette has focus, `ui.key('q')`, `ui.key_code(..)`, `ui.key_mod(..)` and `ui.shortcut(..)` skip the keys it edits with (printable keys without Ctrl/Super/Meta, Backspace, Delete, arrows, Home, End; Enter/Up/Down for `textarea`; also Tab, Shift+Tab, PageUp/PageDown for `code_editor`), in any call order. Chords, Esc, Tab (outside `code_editor`) and F-keys still reach shortcuts; `ui.raw_key(c)` sees every press.
    ```rust
    if ui.shortcut(KeyCode::Char('q'), KeyModifiers::NONE) { ui.quit(); } // safe before the input
-   let _ = ui.text_input(&mut search);                                   // typing 'q' inserts it
+   ui.text_input(&mut search);                                   // typing 'q' inserts it
    ```
 
 ## Mental model

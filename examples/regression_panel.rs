@@ -147,34 +147,33 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
     let scroll = &mut state.scroll;
     let modal_open = &mut state.modal_open;
     ui.error_boundary(|ui| {
-        let _ = ui
-            .bordered(Border::Rounded)
+        ui.bordered(Border::Rounded)
             .title("v0.20 Regression Panel")
             .p(pad)
             .gap(pad)
             .grow(1)
             .col(|ui| {
                 // Row 1: gauges (#224 — builder API).
-                let _ = ui.row(|ui| {
-                    let _ = ui.container().fill().col(|ui| {
+                ui.row(|ui| {
+                    ui.container().fill().col(|ui| {
                         ui.text("Gauges (#224)").bold();
                         ui.gauge(0.42).label("CPU 42%").width(28);
                         ui.line_gauge(0.78).label("MEM 78%").width(28);
                     });
-                    let _ = ui.container().w(36).col(|ui| {
+                    ui.container().w(36).col(|ui| {
                         ui.text("Sparkline + chart").bold();
-                        let _ = ui.sparkline(&cpu_history, 30);
-                        let _ = ui.sparkline(&req_history, 30);
+                        ui.sparkline(&cpu_history, 30);
+                        ui.sparkline(&req_history, 30);
                     });
                 });
 
                 // Row 2: table + log/gutter highlights (#235).
-                let _ = ui.row(|ui| {
-                    let _ = ui.container().fill().col(|ui| {
+                ui.row(|ui| {
+                    ui.container().fill().col(|ui| {
                         ui.text("Table (j/k or ↑/↓)").bold();
-                        let _ = ui.table(table);
+                        ui.table(table);
                     });
-                    let _ = ui.container().w(40).col(|ui| {
+                    ui.container().w(40).col(|ui| {
                         ui.text("Gutter highlights (#235) n/p").bold();
                         let r = ui.scrollable_with_gutter(
                             scroll,
@@ -203,20 +202,20 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 
         // overlay_anchor (#200) — 4 corners + center, all visible at once.
         // Colors come from the active theme so the demo also showcases #226.
-        let _ = ui.overlay_at(Anchor::TopLeft, |ui| {
+        ui.overlay_at(Anchor::TopLeft, |ui| {
             ui.styled(" ◤ TL ", slt::Style::new().bg(badge_bg).fg(badge_fg));
         });
-        let _ = ui.overlay_at(Anchor::TopRight, |ui| {
+        ui.overlay_at(Anchor::TopRight, |ui| {
             ui.styled(" TR ◥ ", slt::Style::new().bg(badge_bg).fg(badge_fg));
         });
-        let _ = ui.overlay_at(Anchor::BottomLeft, |ui| {
+        ui.overlay_at(Anchor::BottomLeft, |ui| {
             ui.styled(" ◣ BL ", slt::Style::new().bg(badge_bg).fg(badge_fg));
         });
-        let _ = ui.overlay_at(Anchor::BottomRight, |ui| {
+        ui.overlay_at(Anchor::BottomRight, |ui| {
             ui.styled(" BR ◢ ", slt::Style::new().bg(badge_bg).fg(badge_fg));
         });
         let modal_is_open = *modal_open;
-        let _ = ui.overlay_at(Anchor::Center, |ui| {
+        ui.overlay_at(Anchor::Center, |ui| {
             if modal_is_open {
                 // The actual modal renders below; this overlay just shows
                 // we did NOT confuse overlay_at with modal.
@@ -228,9 +227,8 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
         // modal + tab_trap (#225). Toggled by `M`.
         if *modal_open {
             let pad = ui.theme().spacing.sm();
-            let _ = ui.modal_with(slt::context::ModalOptions { tab_trap: true }, |ui| {
-                let _ = ui
-                    .bordered(Border::Double)
+            ui.modal_with(slt::context::ModalOptions { tab_trap: true }, |ui| {
+                ui.bordered(Border::Double)
                     .title("Modal (#225 tab_trap)")
                     .p(pad)
                     .theme(Theme::dracula())

@@ -152,8 +152,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
     }
     state.inspector_on = ui.inspector();
 
-    let _ = ui
-        .bordered(Border::Rounded)
+    ui.bordered(Border::Rounded)
         .title(
             "SLT v0.21.0 Widgets — paginator · number_input · virtual_list · scheduler · inspector",
         )
@@ -171,23 +170,23 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                 ))
                 .fg(Color::Green);
             }
-            let _ = ui.separator();
+            ui.separator();
 
             // Top row: paginator + numeric steppers.
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 render_paginator(ui, state);
                 render_steppers(ui, state);
             });
 
-            let _ = ui.separator();
+            ui.separator();
 
             // Bottom row: variable-height virtual_list + debounced search.
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 render_feed(ui, state);
                 render_search(ui, state);
             });
 
-            let _ = ui.separator();
+            ui.separator();
             render_inspector_hint(ui, state);
         });
 }
@@ -195,21 +194,20 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 /// Standalone `paginator`: pages over CATALOG, slicing with `page_bounds()`.
 fn render_paginator(ui: &mut Context, state: &mut DemoState) {
     let pad = ui.spacing().xs();
-    let _ = ui.container().fill().col(|ui| {
-        let _ = ui
-            .bordered(Border::Single)
+    ui.container().fill().col(|ui| {
+        ui.bordered(Border::Single)
             .title("paginator (Left/Right when focused)")
             .p(pad)
             .col(|ui| {
                 let (start, end) = state.paginator.page_bounds();
                 for &(sku, name) in &CATALOG[start..end] {
-                    let _ = ui.container().gap(1).row(|ui| {
+                    ui.container().gap(1).row(|ui| {
                         ui.text(sku).bold().fg(Color::Cyan);
                         ui.text(name).dim();
                     });
                 }
                 ui.text("").dim();
-                let _ = ui.paginator(&mut state.paginator);
+                ui.paginator(&mut state.paginator);
                 ui.text(format!(
                     "page {}/{} — items {}..{} of {}",
                     state.paginator.page + 1,
@@ -227,20 +225,19 @@ fn render_paginator(ui: &mut Context, state: &mut DemoState) {
 /// is true on the frame the committed value moves.
 fn render_steppers(ui: &mut Context, state: &mut DemoState) {
     let pad = ui.spacing().xs();
-    let _ = ui.container().fill().col(|ui| {
-        let _ = ui
-            .bordered(Border::Single)
+    ui.container().fill().col(|ui| {
+        ui.bordered(Border::Single)
             .title("number_input (Up/Down · type + Enter)")
             .p(pad)
             .col(|ui| {
-                let _ = ui.container().gap(1).row(|ui| {
+                ui.container().gap(1).row(|ui| {
                     ui.text("Qty  ").dim();
                     let r = ui.number_input(&mut state.qty);
                     if r.changed {
                         ui.text("← changed").fg(Color::Green);
                     }
                 });
-                let _ = ui.container().gap(1).row(|ui| {
+                ui.container().gap(1).row(|ui| {
                     ui.text("Price").dim();
                     let r = ui.number_input(&mut state.price);
                     if r.changed {
@@ -265,9 +262,8 @@ fn render_steppers(ui: &mut Context, state: &mut DemoState) {
 /// only the visible range invokes the per-item closure.
 fn render_feed(ui: &mut Context, state: &mut DemoState) {
     let pad = ui.spacing().xs();
-    let _ = ui.container().fill().col(|ui| {
-        let _ = ui
-            .bordered(Border::Single)
+    ui.container().fill().col(|ui| {
+        ui.bordered(Border::Single)
             .title("virtual_list (variable height · Up/Down)")
             .p(pad)
             .col(|ui| {
@@ -276,7 +272,7 @@ fn render_feed(ui: &mut Context, state: &mut DemoState) {
                 // 1-row reply pack correctly into the viewport. Snapshot the
                 // cursor before the call — the closure borrows `feed` mutably.
                 let cursor = state.feed.selected_index();
-                let _ = ui.virtual_list_variable(&mut state.feed, 8, |ui, idx| {
+                ui.virtual_list_variable(&mut state.feed, 8, |ui, idx| {
                     let (text, _h) = FEED[idx];
                     let selected = Some(idx) == cursor;
                     let marker = if selected { "▸ " } else { "  " };
@@ -302,9 +298,8 @@ fn render_feed(ui: &mut Context, state: &mut DemoState) {
 /// after a quiet window, the search-as-you-type primitive.
 fn render_search(ui: &mut Context, state: &mut DemoState) {
     let pad = ui.spacing().xs();
-    let _ = ui.container().fill().col(|ui| {
-        let _ = ui
-            .bordered(Border::Single)
+    ui.container().fill().col(|ui| {
+        ui.bordered(Border::Single)
             .title("debounce (scheduler · 300ms quiet)")
             .p(pad)
             .col(|ui| {
@@ -319,7 +314,7 @@ fn render_search(ui: &mut Context, state: &mut DemoState) {
                     ui.text("(no settled query yet — stop typing for 300ms)")
                         .dim();
                 } else {
-                    let _ = ui.container().gap(1).row(|ui| {
+                    ui.container().gap(1).row(|ui| {
                         ui.text("settled →").dim();
                         ui.text(state.settled_query.as_str())
                             .bold()
@@ -333,7 +328,7 @@ fn render_search(ui: &mut Context, state: &mut DemoState) {
 /// Devtools inspector hint + state. The panel itself is drawn by the runtime
 /// (Ctrl+F12 / `set_inspector`) on top of everything else.
 fn render_inspector_hint(ui: &mut Context, state: &mut DemoState) {
-    let _ = ui.container().gap(1).row(|ui| {
+    ui.container().gap(1).row(|ui| {
         let (label, color) = if state.inspector_on {
             ("inspector: ON", Color::Green)
         } else {

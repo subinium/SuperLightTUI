@@ -269,7 +269,8 @@ pub fn badge(&mut self, label: &str) -> Response            // most widgets
 - Only the inline-text chain returns `&mut Self`: `text`, `link`, `styled`,
   `line`, and the style mutators that follow them (`.bold().fg(Color::Cyan)`).
 - Other display widgets (`badge`, `stat`, `alert`, `separator`, `markdown`,
-  `big_text`, `empty_state`, …) return a `#[must_use]` `Response` so hover,
+  `big_text`, `empty_state`, …) return a `Response` (not `#[must_use]`, so
+  no `let _ =` is needed) so hover,
   right-click, and `on_hover` tooltips work. Builder widgets (`gauge`,
   `breadcrumb`, `code_block`) return a consuming builder that renders on
   `Drop`; `.show()` returns its response.

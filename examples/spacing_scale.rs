@@ -25,8 +25,7 @@ fn body(ui: &mut Context) {
     // Outer-frame spacing comes from the active (default) theme. The inner
     // panels each pick up their own scale via the per-subtree theme override.
     let sp = ui.spacing();
-    let _ = ui
-        .bordered(Border::Rounded)
+    ui.bordered(Border::Rounded)
         .title("SLT v0.20: Density presets")
         .p(sp.xs())
         .grow(1)
@@ -36,7 +35,7 @@ fn body(ui: &mut Context) {
             ui.text("compact = base 1, comfortable = base 2, spacious = base 3.")
                 .dim();
 
-            let _ = ui.container().gap(sp.sm()).row(|ui| {
+            ui.container().gap(sp.sm()).row(|ui| {
                 panel(ui, "compact", Theme::compact());
                 panel(ui, "comfortable", Theme::comfortable());
                 panel(ui, "spacious", Theme::spacious());
@@ -51,19 +50,18 @@ fn panel(ui: &mut Context, label: &str, theme: Theme) {
     // Capture the panel's spacing BEFORE entering the closure so the
     // padding helpers below see the override theme, not the outer one.
     let inner_sp = theme.spacing;
-    let _ = ui
-        .container()
+    ui.container()
         .theme(theme)
         .border(Border::Rounded)
         .title(label)
         .p(inner_sp.xs())
         .grow(1)
         .col(|ui| {
-            let _ = ui.help(&[("Tab", "next"), ("Enter", "ok"), ("Esc", "cancel")]);
+            ui.help(&[("Tab", "next"), ("Enter", "ok"), ("Esc", "cancel")]);
             ui.text("");
             let _ = ui.button("Click me");
             ui.text("");
-            let _ = ui.code_block("fn main() {\n    println!(\"hi\");\n}");
+            ui.code_block("fn main() {\n    println!(\"hi\");\n}");
         });
 }
 

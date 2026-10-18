@@ -114,8 +114,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
     let visible = state.log_visible;
     let log = state.log.clone();
 
-    let _ = ui
-        .bordered(Border::Rounded)
+    ui.bordered(Border::Rounded)
         .title("use_effect: dep-tracked side effects")
         .p(pad)
         .gap(gap)
@@ -131,8 +130,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
             ui.text(format!("log panel: {status}")).fg(status_color);
 
             if visible {
-                let _ = ui
-                    .bordered(Border::Single)
+                ui.bordered(Border::Single)
                     .title("Effect log")
                     .p(pad)
                     .col(|ui| render_log_tail(ui, &log));

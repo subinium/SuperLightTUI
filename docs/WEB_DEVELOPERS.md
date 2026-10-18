@@ -110,17 +110,17 @@ There are no pixels. Everything is measured in **terminal cells**.
 // Responsive: stack on narrow terminals, side-by-side on wide ones.
 match ui.breakpoint() {
     Breakpoint::Xs | Breakpoint::Sm => {
-        let _ = ui.col(|ui| {
+        ui.col(|ui| {
             ui.text("sidebar");
             ui.text("main");
         });
     }
     _ => {
-        let _ = ui.row(|ui| {
-            let _ = ui.container().w(24).col(|ui| {
+        ui.row(|ui| {
+            ui.container().w(24).col(|ui| {
                 ui.text("sidebar");
             });
-            let _ = ui.container().grow(1).col(|ui| {
+            ui.container().grow(1).col(|ui| {
                 ui.text("main");
             });
         });
@@ -128,7 +128,7 @@ match ui.breakpoint() {
 }
 
 // Or per-breakpoint widths on one container (like Tailwind's md:w-*).
-let _ = ui.container().w(20).md_w(40).lg_w(60).col(|ui| {
+ui.container().w(20).md_w(40).lg_w(60).col(|ui| {
     ui.text("panel");
 });
 ```
@@ -254,7 +254,7 @@ Two rules do not exist on the web:
 use slt::palette::tailwind;
 
 let accent = ui.color(ThemeColor::Primary);
-let _ = ui
+ui
     .bordered(Border::Rounded)
     .border_fg(accent)
     .bg(tailwind::SLATE.c900)
@@ -267,7 +267,7 @@ let _ = ui
 let expanded = true;
 let t = ui.animate_bool("panel::expand", expanded);
 let width = (10.0 + 30.0 * t) as u32;
-let _ = ui.container().w(width).bg(tailwind::INDIGO.c700).col(|ui| {
+ui.container().w(width).bg(tailwind::INDIGO.c700).col(|ui| {
     ui.text("grows smoothly");
 });
 ```
@@ -359,7 +359,7 @@ struct Card {
 
 fn card_list(ui: &mut Context, cards: &mut [Card], scroll: &mut ScrollState) {
     // overflow-y: auto
-    let _ = ui.scrollable(scroll).grow(1).p(1).gap(1).col(|ui| {
+    ui.scrollable(scroll).grow(1).p(1).gap(1).col(|ui| {
         for (i, card) in cards.iter_mut().enumerate() {
             // One unique group name per card, so only the hovered card lights up.
             let response = ui

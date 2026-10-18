@@ -201,7 +201,7 @@ use slt::TestBackend;
 fn dashboard_snapshot() {
     let mut tb = TestBackend::new(40, 10);
     tb.render(|ui| {
-        let _ = ui.container().border(slt::Border::Rounded).p(1).col(|ui| {
+        ui.container().border(slt::Border::Rounded).p(1).col(|ui| {
             ui.text("Dashboard").bold();
             ui.text("42 events");
         });

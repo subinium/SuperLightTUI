@@ -111,8 +111,7 @@ fn body(ui: &mut Context, state: &mut DemoState) {
     // calls in the same app don't collide.
     let panel_alpha = ui.animate_bool("dx_demo::panel_open", state.panel_open);
 
-    let _ = ui
-        .bordered(Border::Rounded)
+    ui.bordered(Border::Rounded)
         .title("v0.20 DX Shorthand Demo")
         .p(pad)
         .gap(gap)
@@ -122,7 +121,7 @@ fn body(ui: &mut Context, state: &mut DemoState) {
             ui.text("press ? for the centered help overlay, q / Esc / Ctrl-Q to quit.")
                 .dim();
 
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 render_actions_column(ui, panel_alpha);
                 render_status_column(ui, panel_alpha);
             });
@@ -135,15 +134,13 @@ fn body(ui: &mut Context, state: &mut DemoState) {
 
 fn render_actions_column(ui: &mut Context, panel_alpha: f64) {
     let gap = ui.theme().spacing.xs();
-    let _ = ui.container().w(ACTIONS_W).gap(gap).col(|ui| {
+    ui.container().w(ACTIONS_W).gap(gap).col(|ui| {
         ui.text("Actions").bold();
 
         // #209 — on_hover: tooltip chained directly onto the button response.
-        let _ = ui
-            .button("Save")
+        ui.button("Save")
             .on_hover(ui, "Saves the current document to disk.");
-        let _ = ui
-            .button("Open")
+        ui.button("Open")
             .on_hover(ui, "Open an existing file from your project.");
         let _ = ui.button("Toggle Panel");
 
@@ -155,8 +152,7 @@ fn render_status_column(ui: &mut Context, panel_alpha: f64) {
     let pad = ui.theme().spacing.xs();
     // #220 — fill(): the right-hand column claims all remaining width
     // without writing `grow(1)`. Reads as plain English at the call site.
-    let _ = ui
-        .container()
+    ui.container()
         .fill()
         .border(Border::Single)
         .p(pad)
@@ -167,7 +163,7 @@ fn render_status_column(ui: &mut Context, panel_alpha: f64) {
 
             if panel_alpha > 0.0 {
                 let pad = ui.theme().spacing.xs();
-                let _ = ui.container().mt(pad).p(pad).col(|ui| {
+                ui.container().mt(pad).p(pad).col(|ui| {
                     let alpha_color = if panel_alpha > PANEL_ALPHA_HIGH {
                         Color::Green
                     } else if panel_alpha > PANEL_ALPHA_MID {
@@ -194,7 +190,7 @@ fn render_centered_help(ui: &mut Context) {
     let dot_style = Style::new().fg(Color::DarkGray);
     let label_style = Style::new().fg(Color::Cyan);
 
-    let _ = ui.overlay(|ui| {
+    ui.overlay(|ui| {
         ui.container().w(area_w).h(area_h).draw(move |buf, area| {
             let dialog = Rect::new(0, 0, HELP_DIALOG_W, HELP_DIALOG_H);
             let positioned = dialog.center_in(area);

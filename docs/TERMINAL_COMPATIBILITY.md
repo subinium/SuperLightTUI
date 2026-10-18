@@ -249,9 +249,9 @@ fn main() -> std::io::Result<()> {
     slt::run_with(RunConfig::default().accessible(true), |ui| {
         ui.text("Create an account");
         ui.text("Username:");
-        let _ = ui.text_input(&mut username);
-        let _ = ui.a11y_label("Password").text_input(&mut password);
-        let _ = ui.a11y_label("Role").select(&mut role);
+        ui.text_input(&mut username);
+        ui.a11y_label("Password").text_input(&mut password);
+        ui.a11y_label("Role").select(&mut role);
         if ui.confirm("Create account?", &mut create).clicked {
             ui.quit();
         }

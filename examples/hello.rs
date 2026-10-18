@@ -9,8 +9,7 @@ fn main() -> std::io::Result<()> {
             ui.quit();
         }
 
-        let _ = ui
-            .bordered(Border::Rounded)
+        ui.bordered(Border::Rounded)
             .p(1)
             .title("SLT")
             .col(|ui: &mut Context| {

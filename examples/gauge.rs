@@ -45,8 +45,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
     let memory = ((t * 0.5).cos().abs() * 0.4 + 0.4).clamp(0.0, 1.0);
     let disk: f64 = 0.25;
 
-    let _ = ui
-        .bordered(Border::Rounded)
+    ui.bordered(Border::Rounded)
         .title("v0.20.0 #224: gauge / line_gauge")
         .p(sp.xs())
         .gap(sp.xs())
@@ -71,11 +70,11 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
             ui.text("Single-line gauge with custom characters:")
                 .fg(Color::Cyan);
 
-            let _ = ui.container().gap(sp.sm()).row(|ui| {
+            ui.container().gap(sp.sm()).row(|ui| {
                 ui.text("Default  ");
                 ui.line_gauge(0.6).label("60%").width(24);
             });
-            let _ = ui.container().gap(sp.sm()).row(|ui| {
+            ui.container().gap(sp.sm()).row(|ui| {
                 ui.text("Hash/dot ");
                 ui.line_gauge(0.45)
                     .filled('#')
@@ -83,7 +82,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                     .width(24)
                     .label("45%");
             });
-            let _ = ui.container().gap(sp.sm()).row(|ui| {
+            ui.container().gap(sp.sm()).row(|ui| {
                 ui.text("Block    ");
                 ui.line_gauge(0.85)
                     .filled('█')
@@ -99,7 +98,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 /// Render a single labelled `gauge` row with an auto-formatted percentage.
 fn metric_row(ui: &mut Context, label: &str, value: f64) {
     let sp = ui.spacing();
-    let _ = ui.container().gap(sp.sm()).row(|ui| {
+    ui.container().gap(sp.sm()).row(|ui| {
         ui.text(label);
         ui.gauge(value)
             .label(format!("{:.0}%", value * 100.0))

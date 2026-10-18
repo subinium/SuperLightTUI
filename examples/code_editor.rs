@@ -59,8 +59,7 @@ fn main() -> std::io::Result<()> {
             line_numbers = !line_numbers;
         }
 
-        let _ = ui
-            .bordered(Border::Rounded)
+        ui.bordered(Border::Rounded)
             .title("main.rs")
             .p(1)
             .grow(1)

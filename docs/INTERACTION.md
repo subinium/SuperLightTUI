@@ -78,7 +78,10 @@ first line never scrolls it.
 
 ## The `Response`
 
-Most widgets and every container return a `#[must_use]` `Response`:
+Most widgets and every container return a `Response`. It is not `#[must_use]`
+(since v0.26), so layout and display calls are plain statements; only
+`button`, `button_colored` and `button_with` warn when their result is
+dropped:
 
 | Field | Meaning | Needs mouse? |
 |-------|---------|--------------|
@@ -120,7 +123,7 @@ Callback-style chaining is available when it reads better:
 <!-- slt-check: {"name":"ix_response_chain","features":[],"context":"ui"} -->
 ```rust
 let mut saves = 0;
-let _ = ui
+ui
     .button("Save")
     .on_hover(ui, "Write the file to disk")
     .on_click(ui, |_| saves += 1);
@@ -161,7 +164,7 @@ too, opt in with `.bubble_clicks()`:
 ```rust
 let mut opened = 0;
 let card = ui.bordered(Border::Rounded).bubble_clicks().col(|ui| {
-    let _ = ui.row(|ui| {
+    ui.row(|ui| {
         ui.text("Title").bold();
     });
     ui.text("body");
@@ -197,7 +200,7 @@ mode only the focus half works without a button held.
 ```rust
 for i in 0..3 {
     // Each row needs its own group name; a shared name highlights every row.
-    let _ = ui
+    ui
         .group(&format!("file-row-{i}"))
         .px(1)
         .group_hover_bg(Color::Indexed(237))
@@ -216,7 +219,7 @@ For one-off logic, branch on `response.hovered` instead.
 <!-- slt-check: {"name":"ix_tooltips","features":[],"context":"ui"} -->
 ```rust
 // Bound to this response: safe to chain more widgets afterwards.
-let _ = ui.button("Deploy").on_hover(ui, "Push the current build to staging");
+ui.button("Deploy").on_hover(ui, "Push the current build to staging");
 
 // Or: tooltip for the previously rendered widget.
 let _ = ui.button("Rollback");
@@ -248,7 +251,7 @@ may print the payload:
 
 <!-- slt-check: {"name":"ix_pointer_shape","features":[],"context":"ui"} -->
 ```rust
-let _ = ui
+ui
     .bordered(Border::Rounded)
     .pointer_shape(PointerShape::Pointer)
     .col(|ui| {
@@ -358,13 +361,13 @@ state. Shift+wheel (or a horizontal wheel) scrolls horizontally inside
 ```rust
 let mut scroll = ScrollState::new();
 
-let _ = ui.row(|ui| {
-    let _ = ui.scrollable(&mut scroll).grow(1).col(|ui| {
+ui.row(|ui| {
+    ui.scrollable(&mut scroll).grow(1).col(|ui| {
         for i in 0..200 {
             ui.text(format!("line {i}"));
         }
     });
-    let _ = ui.scrollbar(&mut scroll);
+    ui.scrollbar(&mut scroll);
 });
 
 // Wheel over any widget, without a scroll container:
@@ -391,8 +394,8 @@ example a popup list over a scrolling page:
 ```rust
 let mut page = ScrollState::new();
 let mut picker = ScrollState::new();
-let _ = ui.scrollable(&mut page).grow(1).col(|ui| {
-    let _ = ui
+ui.scrollable(&mut page).grow(1).col(|ui| {
+    ui
         .scrollable(&mut picker)
         .max_h(5)
         .border(Border::Single)
@@ -420,7 +423,7 @@ scrolling back to the end re-engages it:
 ```rust
 let mut log = ScrollState::new().stick_to_bottom(true);
 let lines = ["build started", "compiling", "done"];
-let _ = ui.scrollable(&mut log).grow(1).col(|ui| {
+ui.scrollable(&mut log).grow(1).col(|ui| {
     for line in lines {
         ui.text(line);
     }
@@ -445,7 +448,7 @@ Three options, from least to most code:
 <!-- slt-check: {"name":"ix_accordion_tree","features":[],"context":"ui"} -->
 ```rust
 let mut open = false;
-let _ = ui.accordion("Advanced settings", &mut open, |ui| {
+ui.accordion("Advanced settings", &mut open, |ui| {
     ui.text("Only rendered while open");
 });
 
@@ -455,7 +458,7 @@ let mut tree = TreeState::new(vec![
         .children(vec![TreeNode::new("lib.rs"), TreeNode::new("main.rs")]),
     TreeNode::new("Cargo.toml"),
 ]);
-let _ = ui.tree(&mut tree);
+ui.tree(&mut tree);
 ```
 
 ### Example: an expandable tool-call log
@@ -499,7 +502,7 @@ fn tool_call(ui: &mut Context, call: &mut ToolCall) {
         call.open = !call.open;
     }
     if call.open {
-        let _ = ui.container().pl(4).col(|ui| {
+        ui.container().pl(4).col(|ui| {
             for line in &call.output {
                 ui.text(*line);
             }
@@ -508,13 +511,13 @@ fn tool_call(ui: &mut Context, call: &mut ToolCall) {
 }
 
 fn tool_log(ui: &mut Context, calls: &mut [ToolCall], scroll: &mut ScrollState) {
-    let _ = ui.bordered(Border::Rounded).title("Tool calls").grow(1).row(|ui| {
-        let _ = ui.scrollable(scroll).grow(1).col(|ui| {
+    ui.bordered(Border::Rounded).title("Tool calls").grow(1).row(|ui| {
+        ui.scrollable(scroll).grow(1).col(|ui| {
             for call in calls.iter_mut() {
                 tool_call(ui, call);
             }
         });
-        let _ = ui.scrollbar(scroll);
+        ui.scrollbar(scroll);
     });
 }
 
@@ -599,7 +602,7 @@ if ui.shortcut(KeyCode::Char('s'), KeyModifiers::CONTROL) {
     // save
 }
 
-let _ = ui.text_input(&mut search);
+ui.text_input(&mut search);
 ```
 
 Ownership is decided by the slot that holds focus as the frame starts (or a
@@ -654,10 +657,10 @@ if ui.button("Delete").clicked {
     confirm_open = true;
 }
 if confirm_open {
-    let _ = ui.modal_at(Anchor::Center, |ui| {
-        let _ = ui.bordered(Border::Rounded).p(1).gap(1).col(|ui| {
+    ui.modal_at(Anchor::Center, |ui| {
+        ui.bordered(Border::Rounded).p(1).gap(1).col(|ui| {
             ui.text("Delete 3 files?");
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 if ui.button("Delete").clicked {
                     deleted = true;
                     confirm_open = false;
@@ -681,10 +684,10 @@ layout exists, then send events at coordinates you look up with `find_text`:
 use slt::{EventBuilder, KeyCode, TestBackend};
 
 fn view(ui: &mut slt::Context, open: &mut [bool; 2]) {
-    let _ = ui.accordion("First", &mut open[0], |ui| {
+    ui.accordion("First", &mut open[0], |ui| {
         ui.text("first body");
     });
-    let _ = ui.accordion("Second", &mut open[1], |ui| {
+    ui.accordion("Second", &mut open[1], |ui| {
         ui.text("second body");
     });
 }
