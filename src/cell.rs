@@ -83,7 +83,6 @@ pub(crate) fn display_width(s: &str) -> usize {
 /// string measure counts as width 1; every other scalar agrees (verified
 /// exhaustively in the tests).
 #[inline]
-#[allow(dead_code)] // Adopted by the cell-write fast path (#484).
 pub(crate) fn char_display_width(ch: char) -> usize {
     if ch.is_ascii() {
         return 1;
@@ -192,6 +191,23 @@ impl Cell {
     /// cleared so direct symbol replacement cannot inherit stale link state.
     pub fn set_symbol(&mut self, s: &str) -> &mut Self {
         self.symbol = normalize_cell_symbol(s);
+        self.hyperlink = None;
+        self
+    }
+
+    /// Store a symbol that is already the output of [`normalize_cell_symbol`].
+    ///
+    /// Internal cell-write paths normalize each grapheme once and store it
+    /// through here instead of [`Cell::set_symbol`], which would segment and
+    /// sanitize it again. Clears the hyperlink like `set_symbol`.
+    #[inline]
+    pub(crate) fn set_symbol_normalized(&mut self, symbol: CompactString) -> &mut Self {
+        debug_assert_eq!(
+            normalize_cell_symbol(&symbol),
+            symbol,
+            "set_symbol_normalized requires a normalized symbol"
+        );
+        self.symbol = symbol;
         self.hyperlink = None;
         self
     }

@@ -8,11 +8,13 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use crate::cell::{Cell, normalize_cell_symbol};
+use crate::cell::{
+    Cell, char_display_width, display_width, is_printable_ascii, is_printable_ascii_byte,
+    normalize_cell_symbol, normalize_grapheme, sanitize_cell_char,
+};
 use crate::rect::Rect;
 use crate::style::Style;
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
 
 /// Maximum cells allocated by one [`Buffer`].
 ///
@@ -92,6 +94,11 @@ pub(crate) const MAX_IMAGE_PIXELS: u64 = 16_777_216;
 pub(crate) fn needs_bidi_reorder(s: &str) -> bool {
     use unicode_bidi::BidiClass::{AL, FSI, LRE, LRI, LRO, PDF, PDI, R, RLE, RLI, RLO};
 
+    // No ASCII code point has an R/AL class or is an explicit embedding,
+    // override or isolate control.
+    if s.is_ascii() {
+        return false;
+    }
     s.chars().any(|ch| {
         matches!(
             unicode_bidi::bidi_class(ch),
@@ -924,13 +931,20 @@ impl Buffer {
     /// (e.g., `MAX_CELL_SYMBOL_BYTES` checks, wide-char blanking).
     fn set_string_inner(
         &mut self,
-        mut x: u32,
+        x: u32,
         y: u32,
         s: &str,
         style: Style,
         link: Option<&compact_str::CompactString>,
     ) {
         if y < self.area.y || y >= self.area.bottom() {
+            return;
+        }
+        let clip = self.effective_clip().copied();
+        // Printable ASCII: every byte is one width-1 grapheme that needs no
+        // sanitization and no bidi reordering, so skip segmentation entirely.
+        if is_printable_ascii(s) {
+            self.set_printable_ascii(x, y, s, style, link, clip);
             return;
         }
         // Bidi (UAX #9) reorder: convert this logical-order line into visual
@@ -950,13 +964,100 @@ impl Buffer {
         } else {
             s
         };
-        let clip = self.effective_clip().copied();
+        let mut x = x;
         for grapheme in s.graphemes(true) {
             if x >= self.area.right() {
                 break;
             }
-            let width = self.set_grapheme_visual_inner(x, y, grapheme, style, link, clip);
+            if grapheme.len() == 1 && is_printable_ascii_byte(grapheme.as_bytes()[0]) {
+                if self.ascii_cell_writable(x, y, clip) {
+                    self.write_ascii_cell(x, y, grapheme, style, link, clip);
+                }
+                x = x.saturating_add(1);
+                continue;
+            }
+            let symbol = normalize_grapheme(grapheme);
+            let width = display_width(&symbol) as u32;
+            let width = self.set_grapheme_normalized(x, y, symbol, width, style, link, clip);
             x = x.saturating_add(width);
+        }
+    }
+
+    /// Write a printable-ASCII string: one width-1 cell per byte, clipped to
+    /// the buffer area and the active clip once for the whole run.
+    fn set_printable_ascii(
+        &mut self,
+        x: u32,
+        y: u32,
+        s: &str,
+        style: Style,
+        link: Option<&compact_str::CompactString>,
+        clip: Option<Rect>,
+    ) {
+        debug_assert!(is_printable_ascii(s));
+        let end = u64::from(x).saturating_add(s.len() as u64);
+        let mut lo = u64::from(x.max(self.area.x));
+        let mut hi = end.min(u64::from(self.area.right()));
+        if let Some(clip) = clip {
+            if y < clip.y || y >= clip.bottom() {
+                return;
+            }
+            lo = lo.max(u64::from(clip.x));
+            hi = hi.min(u64::from(clip.right()));
+        }
+        if lo >= hi {
+            return;
+        }
+        let (lo, hi) = (lo as u32, hi as u32);
+        for col in lo..hi {
+            let offset = (col - x) as usize;
+            self.write_ascii_cell(col, y, &s[offset..=offset], style, link, clip);
+        }
+    }
+
+    /// Whether a width-1 grapheme at `(x, y)` lies inside the area and clip.
+    #[inline]
+    fn ascii_cell_writable(&self, x: u32, y: u32, clip: Option<Rect>) -> bool {
+        x >= self.area.x
+            && x < self.area.right()
+            && y >= self.area.y
+            && y < self.area.bottom()
+            && clip.is_none_or(|clip| clip.contains(x, y))
+    }
+
+    /// Write one printable-ASCII byte at an in-area, in-clip `(x, y)`.
+    ///
+    /// A cell whose stored symbol is one byte is a width-1 grapheme with no
+    /// continuation, so it is overwritten directly. Anything else (a wide
+    /// leading cell, a continuation, a combined cluster) takes the general
+    /// path that clears the whole old grapheme.
+    #[inline]
+    fn write_ascii_cell(
+        &mut self,
+        x: u32,
+        y: u32,
+        symbol: &str,
+        style: Style,
+        link: Option<&compact_str::CompactString>,
+        clip: Option<Rect>,
+    ) {
+        let idx = self.index_of(x, y);
+        let cell = &mut self.content[idx];
+        if cell.symbol.len() == 1 {
+            cell.symbol = compact_str::CompactString::new(symbol);
+            cell.style = style;
+            cell.hyperlink = link.cloned();
+            self.mark_row_dirty(y);
+        } else {
+            self.set_grapheme_normalized(
+                x,
+                y,
+                compact_str::CompactString::new(symbol),
+                1,
+                style,
+                link,
+                clip,
+            );
         }
     }
 
@@ -972,20 +1073,26 @@ impl Buffer {
         link: Option<&compact_str::CompactString>,
     ) -> u32 {
         let clip = self.effective_clip().copied();
-        self.set_grapheme_visual_inner(x, y, grapheme, style, link, clip)
+        let symbol = normalize_cell_symbol(grapheme);
+        let width = display_width(&symbol) as u32;
+        self.set_grapheme_normalized(x, y, symbol, width, style, link, clip)
     }
 
-    fn set_grapheme_visual_inner(
+    /// Write a normalized symbol of display `width` and return the width.
+    ///
+    /// `symbol` must already be the output of [`normalize_cell_symbol`]; it
+    /// is stored without re-normalizing.
+    #[allow(clippy::too_many_arguments)]
+    fn set_grapheme_normalized(
         &mut self,
         x: u32,
         y: u32,
-        grapheme: &str,
+        symbol: compact_str::CompactString,
+        width: u32,
         style: Style,
         link: Option<&compact_str::CompactString>,
         clip: Option<Rect>,
     ) -> u32 {
-        let symbol = normalize_cell_symbol(grapheme);
-        let width = UnicodeWidthStr::width(symbol.as_str()) as u32;
         if width == 0 {
             self.append_zero_width(x, y, &symbol, clip);
             return 0;
@@ -1029,7 +1136,7 @@ impl Buffer {
 
         let leading_idx = self.index_of(x, y);
         let leading = &mut self.content[leading_idx];
-        leading.set_symbol(&symbol);
+        leading.set_symbol_normalized(symbol);
         leading.set_style(style);
         leading.hyperlink = link.cloned();
         for col in x.saturating_add(1)..target_right {
@@ -1047,8 +1154,7 @@ impl Buffer {
         while self.content[self.index_of(left, y)].is_continuation() && left > self.area.x {
             left -= 1;
         }
-        let symbol = self.content[self.index_of(left, y)].normalized_symbol();
-        let width = (UnicodeWidthStr::width(symbol.as_str()) as u32).max(1);
+        let width = stored_symbol_width(&self.content[self.index_of(left, y)].symbol).max(1);
         (left, left.saturating_add(width).min(self.area.right()))
     }
 
@@ -1088,8 +1194,21 @@ impl Buffer {
     /// A zero-width suffix may also be written at the exclusive right edge to
     /// extend the preceding grapheme, provided that entire grapheme is visible.
     pub fn set_char(&mut self, x: u32, y: u32, ch: char, style: Style) {
+        let ch = sanitize_cell_char(ch);
+        let clip = self.effective_clip().copied();
         let mut encoded = [0; 4];
-        self.set_grapheme_visual(x, y, ch.encode_utf8(&mut encoded), style, None);
+        let symbol = ch.encode_utf8(&mut encoded);
+        if ch.is_ascii() {
+            // `sanitize_cell_char` replaced every ASCII control, so this is a
+            // printable byte.
+            if self.ascii_cell_writable(x, y, clip) {
+                self.write_ascii_cell(x, y, symbol, style, None, clip);
+            }
+            return;
+        }
+        let width = char_display_width(ch) as u32;
+        let symbol = compact_str::CompactString::new(symbol);
+        self.set_grapheme_normalized(x, y, symbol, width, style, None, clip);
     }
 
     /// Mark row `y` as dirty so the next flush recomputes its line hash.
@@ -1564,6 +1683,23 @@ pub(crate) fn sanitize_osc8_url(url: &str) -> Option<String> {
     }
 }
 
+/// Display width of a stored cell symbol after defensive normalization.
+///
+/// Setter-written symbols are already normalized, so the common one-byte and
+/// one-scalar cases are measured directly. `Cell::symbol` is a public field,
+/// so anything longer is re-normalized before measuring.
+#[inline]
+fn stored_symbol_width(symbol: &str) -> u32 {
+    if symbol.len() == 1 {
+        return 1;
+    }
+    let mut chars = symbol.chars();
+    if let (Some(ch), None) = (chars.next(), chars.next()) {
+        return char_display_width(sanitize_cell_char(ch)) as u32;
+    }
+    display_width(&normalize_cell_symbol(symbol)) as u32
+}
+
 fn intersect_rects(a: Rect, b: Rect) -> Rect {
     let x = a.x.max(b.x);
     let y = a.y.max(b.y);
@@ -1578,6 +1714,7 @@ fn intersect_rects(a: Rect, b: Rect) -> Rect {
 mod tests {
     use super::*;
     use crate::cell::MAX_CELL_SYMBOL_BYTES;
+    use unicode_width::UnicodeWidthStr;
 
     #[test]
     fn clip_stack_intersects_nested_regions() {
@@ -2400,6 +2537,354 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    /// Reference copy of the cell-write path before the single-normalization
+    /// rewrite (#484): every grapheme is segmented and normalized, then
+    /// re-normalized by `Cell::set_symbol`, and neighbors are measured via
+    /// `normalized_symbol()`. The differential proptest below requires the
+    /// optimized path to leave byte-identical cells.
+    mod cell_write_oracle {
+        use super::*;
+        use compact_str::CompactString;
+
+        pub(super) fn set_string(
+            buf: &mut Buffer,
+            mut x: u32,
+            y: u32,
+            s: &str,
+            style: Style,
+            link: Option<&CompactString>,
+        ) {
+            if y < buf.area.y || y >= buf.area.bottom() {
+                return;
+            }
+            #[cfg(feature = "bidi")]
+            let reordered;
+            #[cfg(feature = "bidi")]
+            let s: &str = if needs_bidi_reorder(s) {
+                reordered = reorder_line_visual(s);
+                &reordered
+            } else {
+                s
+            };
+            let clip = buf.effective_clip().copied();
+            for grapheme in s.graphemes(true) {
+                if x >= buf.area.right() {
+                    break;
+                }
+                let width = set_grapheme_visual_inner(buf, x, y, grapheme, style, link, clip);
+                x = x.saturating_add(width);
+            }
+        }
+
+        pub(super) fn set_string_linked(
+            buf: &mut Buffer,
+            x: u32,
+            y: u32,
+            s: &str,
+            style: Style,
+            url: &str,
+        ) {
+            let link = sanitize_osc8_url(url).map(CompactString::new);
+            set_string(buf, x, y, s, style, link.as_ref());
+        }
+
+        pub(super) fn set_grapheme_visual(
+            buf: &mut Buffer,
+            x: u32,
+            y: u32,
+            grapheme: &str,
+            style: Style,
+        ) -> u32 {
+            let clip = buf.effective_clip().copied();
+            set_grapheme_visual_inner(buf, x, y, grapheme, style, None, clip)
+        }
+
+        pub(super) fn set_char(buf: &mut Buffer, x: u32, y: u32, ch: char, style: Style) {
+            let mut encoded = [0; 4];
+            set_grapheme_visual(buf, x, y, ch.encode_utf8(&mut encoded), style);
+        }
+
+        fn set_grapheme_visual_inner(
+            buf: &mut Buffer,
+            x: u32,
+            y: u32,
+            grapheme: &str,
+            style: Style,
+            link: Option<&CompactString>,
+            clip: Option<Rect>,
+        ) -> u32 {
+            let symbol = normalize_cell_symbol(grapheme);
+            let width = UnicodeWidthStr::width(symbol.as_str()) as u32;
+            if width == 0 {
+                append_zero_width(buf, x, y, &symbol, clip);
+                return 0;
+            }
+            let Some(target_right) = x.checked_add(width) else {
+                return width;
+            };
+            if y < buf.area.y
+                || y >= buf.area.bottom()
+                || x < buf.area.x
+                || target_right > buf.area.right()
+            {
+                return width;
+            }
+            let (mut affected_left, mut affected_right) = (x, target_right);
+            for col in x..target_right {
+                let (old_left, old_right) = existing_grapheme_range(buf, col, y);
+                affected_left = affected_left.min(old_left);
+                affected_right = affected_right.max(old_right);
+            }
+            if affected_left < buf.area.x || affected_right > buf.area.right() {
+                return width;
+            }
+            let fully_in_clip = clip.is_none_or(|clip| {
+                y >= clip.y
+                    && y < clip.bottom()
+                    && affected_left >= clip.x
+                    && affected_right <= clip.right()
+            });
+            if !fully_in_clip {
+                return width;
+            }
+            for col in affected_left..affected_right {
+                let idx = buf.index_of(col, y);
+                buf.content[idx].reset();
+            }
+            let leading_idx = buf.index_of(x, y);
+            let leading = &mut buf.content[leading_idx];
+            leading.set_symbol(&symbol);
+            leading.set_style(style);
+            leading.hyperlink = link.cloned();
+            for col in x.saturating_add(1)..target_right {
+                let idx = buf.index_of(col, y);
+                buf.content[idx].set_continuation(style);
+                buf.content[idx].hyperlink = link.cloned();
+            }
+            width
+        }
+
+        fn existing_grapheme_range(buf: &Buffer, x: u32, y: u32) -> (u32, u32) {
+            // Shared fix: walk back over every continuation (3+ column clusters).
+            let mut left = x;
+            while buf.content[buf.index_of(left, y)].is_continuation() && left > buf.area.x {
+                left -= 1;
+            }
+            let symbol = buf.content[buf.index_of(left, y)].normalized_symbol();
+            let width = (UnicodeWidthStr::width(symbol.as_str()) as u32).max(1);
+            (left, left.saturating_add(width).min(buf.area.right()))
+        }
+
+        fn append_zero_width(buf: &mut Buffer, x: u32, y: u32, suffix: &str, clip: Option<Rect>) {
+            if suffix.is_empty()
+                || buf.area.is_empty()
+                || y < buf.area.y
+                || y >= buf.area.bottom()
+                || x <= buf.area.x
+                || x > buf.area.right()
+            {
+                return;
+            }
+            let mut leading_x = x - 1;
+            while buf.content[buf.index_of(leading_x, y)].is_continuation()
+                && leading_x > buf.area.x
+            {
+                leading_x -= 1;
+            }
+            let (_, right) = existing_grapheme_range(buf, leading_x, y);
+            if clip.is_some_and(|clip| !clip.contains(leading_x, y) || right > clip.right()) {
+                return;
+            }
+            let idx = buf.index_of(leading_x, y);
+            let mut combined = buf.content[idx].normalized_symbol();
+            combined.push_str(suffix);
+            let normalized = normalize_cell_symbol(&combined);
+            if normalized != buf.content[idx].symbol {
+                buf.content[idx].symbol = normalized;
+            }
+        }
+    }
+
+    mod cell_write_differential {
+        use super::*;
+        use crate::cell::test_strategies::{cell_text, fragment};
+        use crate::style::Color;
+        use proptest::prelude::*;
+
+        #[derive(Debug, Clone)]
+        enum Op {
+            Text {
+                x: u32,
+                y: u32,
+                text: String,
+                style: u8,
+                linked: bool,
+            },
+            Char {
+                x: u32,
+                y: u32,
+                ch: char,
+                style: u8,
+            },
+            Grapheme {
+                x: u32,
+                y: u32,
+                text: String,
+                style: u8,
+            },
+            PushClip {
+                x: u32,
+                y: u32,
+                w: u32,
+                h: u32,
+            },
+            PopClip,
+            /// Direct write to the public `Cell::symbol` field.
+            Mutate {
+                x: u32,
+                y: u32,
+                symbol: String,
+            },
+        }
+
+        fn style_of(index: u8) -> Style {
+            match index % 4 {
+                0 => Style::new(),
+                1 => Style::new().fg(Color::Red),
+                2 => Style::new().bg(Color::Rgb(1, 2, 3)).bold(),
+                _ => Style::new().fg(Color::Indexed(7)).underline(),
+            }
+        }
+
+        fn op() -> impl Strategy<Value = Op> {
+            let x = 0u32..20;
+            let y = 0u32..6;
+            prop_oneof![
+                6 => (x.clone(), y.clone(), cell_text(), any::<u8>(), any::<bool>())
+                    .prop_map(|(x, y, text, style, linked)| Op::Text { x, y, text, style, linked }),
+                3 => (x.clone(), y.clone(), any::<char>(), any::<u8>())
+                    .prop_map(|(x, y, ch, style)| Op::Char { x, y, ch, style }),
+                3 => (x.clone(), y.clone(), prop_oneof![Just("世".to_string()), Just("a".to_string()), Just("\u{301}".to_string()), Just("\u{FE0F}".to_string())], any::<u8>())
+                    .prop_map(|(x, y, ch, style)| Op::Char { x, y, ch: ch.chars().next().unwrap_or('a'), style }),
+                2 => (x.clone(), y.clone(), fragment(), any::<u8>())
+                    .prop_map(|(x, y, text, style)| Op::Grapheme { x, y, text, style }),
+                1 => (x.clone(), y.clone(), 0u32..12, 0u32..5)
+                    .prop_map(|(x, y, w, h)| Op::PushClip { x, y, w, h }),
+                1 => Just(Op::PopClip),
+                1 => (x, y, prop_oneof![Just(String::new()), Just("ab".to_string()), Just("\u{1b}]52".to_string()), Just("世界".to_string()), fragment()])
+                    .prop_map(|(x, y, symbol)| Op::Mutate { x, y, symbol }),
+            ]
+        }
+
+        fn apply(buf: &mut Buffer, op: &Op, reference: bool) {
+            const URL: &str = "https://example.com/a-link-longer-than-inline";
+            match op {
+                Op::Text {
+                    x,
+                    y,
+                    text,
+                    style,
+                    linked,
+                } => match (reference, *linked) {
+                    (false, false) => buf.set_string(*x, *y, text, style_of(*style)),
+                    (false, true) => buf.set_string_linked(*x, *y, text, style_of(*style), URL),
+                    (true, false) => {
+                        cell_write_oracle::set_string(buf, *x, *y, text, style_of(*style), None)
+                    }
+                    (true, true) => cell_write_oracle::set_string_linked(
+                        buf,
+                        *x,
+                        *y,
+                        text,
+                        style_of(*style),
+                        URL,
+                    ),
+                },
+                Op::Char { x, y, ch, style } => {
+                    if reference {
+                        cell_write_oracle::set_char(buf, *x, *y, *ch, style_of(*style));
+                    } else {
+                        buf.set_char(*x, *y, *ch, style_of(*style));
+                    }
+                }
+                Op::Grapheme { x, y, text, style } => {
+                    let width = if reference {
+                        cell_write_oracle::set_grapheme_visual(buf, *x, *y, text, style_of(*style))
+                    } else {
+                        buf.set_grapheme_visual(*x, *y, text, style_of(*style), None)
+                    };
+                    let _ = width;
+                }
+                Op::PushClip { x, y, w, h } => buf.push_clip(Rect::new(*x, *y, *w, *h)),
+                Op::PopClip => buf.pop_clip(),
+                Op::Mutate { x, y, symbol } => {
+                    if let Some(cell) = buf.try_get_mut(*x, *y) {
+                        cell.symbol = compact_str::CompactString::new(symbol);
+                    }
+                }
+            }
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(2048))]
+
+            #[test]
+            fn optimized_cell_writes_match_reference(
+                origin in prop_oneof![Just((0u32, 0u32)), Just((2u32, 1u32))],
+                width in 1u32..16,
+                height in 1u32..5,
+                ops in prop::collection::vec(op(), 1..24),
+            ) {
+                let area = Rect::new(origin.0, origin.1, width, height);
+                let mut optimized = Buffer::empty(area);
+                let mut reference = Buffer::empty(area);
+                for (step, op) in ops.iter().enumerate() {
+                    apply(&mut optimized, op, false);
+                    apply(&mut reference, op, true);
+                    prop_assert!(
+                        optimized.content == reference.content,
+                        "step {} {:?} diverged", step, op
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn grapheme_widths_match_reference() {
+            let area = Rect::new(0, 0, 8, 1);
+            for text in [
+                "世",
+                "a",
+                "\u{301}",
+                "👩\u{200D}💻",
+                "\r\n",
+                "\x1b",
+                "❤\u{FE0F}",
+            ] {
+                let mut optimized = Buffer::empty(area);
+                let mut reference = Buffer::empty(area);
+                let a = optimized.set_grapheme_visual(1, 0, text, Style::new(), None);
+                let b = cell_write_oracle::set_grapheme_visual(
+                    &mut reference,
+                    1,
+                    0,
+                    text,
+                    Style::new(),
+                );
+                assert_eq!(a, b, "{text:?}");
+                assert_eq!(optimized.content, reference.content, "{text:?}");
+            }
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "set_symbol_normalized requires a normalized symbol")]
+    fn set_symbol_normalized_rejects_unnormalized_input_in_debug() {
+        let mut cell = Cell::default();
+        cell.set_symbol_normalized(compact_str::CompactString::new("\x1b[31m"));
     }
 
     mod normalization_proptest {
