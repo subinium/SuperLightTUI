@@ -131,6 +131,28 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
   `button_colored` / `button_with`) still warns; check `.clicked` or chain
   `.on_click(ui, ..)`. Crates with `#![deny(unused_must_use)]` only lose
   warnings.
+- **Scoped `Text` builder (#457).** `ui.text(..)`, `ui.styled(..)`,
+  `ui.link(..)` and `ui.timer_display(..)` return `slt::Text<'_>` instead of
+  `&mut Context`. Its chain options edit that one element, so
+  `ui.text("a").bold().fg(c);` compiles and renders as before, while a
+  modifier can no longer land on the wrong widget. `Text::show()` returns the
+  element's `Response` (hover / click; for `link`, `clicked` is the
+  activation). The `Context` "modify the last text" modifiers are deprecated
+  and keep their 0.25 behaviour for this release:
+
+  | 0.25 | 0.26 |
+  |---|---|
+  | `ui.text(s).bold().fg(c);` | unchanged |
+  | `ui.text(s); ui.bold();` | `ui.text(s).bold();` |
+  | `ui.text("a").text("b");` (chaining another Context call) | two statements: `ui.text("a"); ui.text("b");` |
+  | `ui.text(s).with_if(c, \|t\| { t.bold(); });` | unchanged; `t` is a `Text` |
+  | `fn dim(ui: &mut Context) { ui.dim(); }` used as `.with(dim)` | `fn dim(t: Text<'_>) { t.dim(); }` |
+  | `ui.text(s).gradient_stops(&[(0.0f32, c)])` | `.gradient_stops_f64(&[(0.0, c)])` (the `f32` forms stay only on `Context`, deprecated) |
+  | `ui.separator(); ui.fg(c);` | `ui.separator_colored(c);` |
+  | `ui.with_if(..)` / `ui.with(..)` / `ui.w(..)` / `ui.m(..)` / `ui.grow(..)` / `ui.align(..)` / `ui.wrap()` / `ui.truncate()` / `ui.text_center()` | same names on `Text` |
+
+  Code that kept the `&mut Context` returned by `text()` (for example
+  `let ui = ui.text("x");`) should keep using the original `ui`.
 
 ---
 

@@ -81,7 +81,8 @@ body. Hover-based callbacks need `MouseMode::Hover`.
 
 ## Text & Display
 
-All return `&mut Self` for style chaining unless noted.
+`text`, `styled`, `link` and `timer_display` return the scoped `Text` builder;
+its chain options style that element only, and `.show()` returns a `Response`.
 
 | Method | Description |
 |---|---|

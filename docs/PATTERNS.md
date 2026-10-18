@@ -344,9 +344,9 @@ The closure runs only when the condition is true. The modifier receives a mutabl
 For unconditional grouping — factoring shared modifier blocks out of multiple call sites — use `.with(modifier)`:
 
 ```rust
-// Text modifiers live on `Context` itself, so the helper takes `&mut Context`.
-fn dim_label(ui: &mut Context) {
-    ui.dim().italic();
+// The helper receives a `Text` builder for the same element.
+fn dim_label(t: Text<'_>) {
+    t.dim().italic();
 }
 
 ui.text("uptime: 3d 4h").with(dim_label);
@@ -357,7 +357,7 @@ Container builders (`bordered`, `container`, `row`/`col` builders) also have
 `.with_if`, but the closure shape differs. `ContainerBuilder` is a by-value
 builder, so its closure takes the builder and must **return** it
 (`FnOnce(ContainerBuilder) -> ContainerBuilder`), while the text version takes
-`&mut Context` and returns `()`:
+a `Text` for the same element and returns `()`:
 
 ```rust
 ui

@@ -59,15 +59,16 @@ These are non-negotiable since v0.20. When generating new code, every public wid
    if let Some(i) = ui.breadcrumb(&segs).show().clicked_segment { ... }          // BreadcrumbResponse
    ```
 
-6. **Return-type pattern.** Methods on `Context` return one of two types — picking the wrong one is the most common AI-generated compile error.
-   - `&mut Self` — *chainable mutators of the last rendered element.* Use for: `text`, `link`, `styled`, `timer_display`, and the style chain (`bold`, `dim`, `italic`, `fg`, `bg`, `wrap`, `truncate`, `align`, `text_center`, `m`, `mx`, `w`, `h`, `grow`, `spacer`, `with_if`, `with`).
+6. **Return-type pattern.** Methods on `Context` return one of three shapes — picking the wrong one is the most common AI-generated compile error.
+   - `Text<'_>` — *scoped builder for one text element* (v0.26). Returned by `text`, `link`, `styled`, `timer_display`. Chain: `bold`, `dim`, `italic`, `fg`, `bg`, `gradient`, `wrap`, `truncate`, `align`, `text_center`, `m`, `mx`, `w`, `h`, `grow`, `with_if`, `with`; `.show()` returns its `Response`. Only text options follow, so `ui.text("x").bold().button("y")` does not compile — start a new statement. The `Context`-level `ui.bold()` / `ui.fg(..)` "last text" modifiers are deprecated.
+   - `&mut Self` — `spacer`, `line`, `line_wrap`, `toast`, `form_field`.
    - `Response` — *interaction result of an independently-rendered widget.* Use for every stateful interactive widget (`button`, `checkbox`, `toggle`, `table`, `tabs`, `select`, `radio`, `multi_select`, `text_input`, `list`, `tree`, `file_picker`, `slider`, `calendar`, `command_palette`, `rich_log`), plus `separator()`.
    - Container helpers split: `col` / `row` / `modal` → `Response`. `line` / `line_wrap` → `&mut Self` (these continue an inline-text chain). `screen(name, &mut ScreenState, f)` returns `()`.
 
    ```rust
    ui.button("Save").bold();           // ❌ Response has no .bold() — compile error
    if ui.button("Save").clicked { … }  // ✅ Response field
-   ui.text("Saved").bold().fg(green);  // ✅ &mut Self chain on display element
+   ui.text("Saved").bold().fg(green);  // ✅ Text builder chain
    ```
 
 ## Naming categories (NAMING.md micro tier)
@@ -184,10 +185,10 @@ Reserve explicit parameters for **writes** (`&mut MyDocState`). Bound is `T: 'st
 
 ## Conditional styling (`with_if` / `with`)
 
-`with_if(cond, modifier)` and `with(modifier)` collapse conditional branches into a single chain. Available on text and `ContainerBuilder`. Beware: text uses `&mut self -> &mut Self`, ContainerBuilder uses consuming `Self -> Self`.
+`with_if(cond, modifier)` and `with(modifier)` collapse conditional branches into a single chain. Available on `Text` and `ContainerBuilder`. Beware: the `Text` closure receives a builder for the same element and returns `()`, ContainerBuilder's closure maps `Self -> Self`.
 
 ```rust
-// text — closure receives &mut Self
+// Text — closure receives a Text for the same element
 ui.text("Status").with_if(is_error, |t| { t.bold().fg(Color::Red); });
 
 // ContainerBuilder — closure receives Self by value

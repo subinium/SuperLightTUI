@@ -262,12 +262,15 @@ pub fn widget_name(&mut self, state: &mut WidgetState) -> Response
 #### Display widgets
 
 ```rust
-pub fn text(&mut self, s: impl Into<String>) -> &mut Self   // text chain
+pub fn text(&mut self, s: impl Into<String>) -> Text<'_>    // text builder
 pub fn badge(&mut self, label: &str) -> Response            // most widgets
 ```
 
-- Only the inline-text chain returns `&mut Self`: `text`, `link`, `styled`,
-  `line`, and the style mutators that follow them (`.bold().fg(Color::Cyan)`).
+- Text elements (`text`, `link`, `styled`, `timer_display`) return the
+  scoped `Text<'_>` builder (v0.26): its style, size and margin options
+  (`.bold().fg(Color::Cyan).w(10)`) edit that one element, and nothing but
+  text options can follow. `.show()` returns its `Response`. `line` and
+  `line_wrap` still return `&mut Self`.
 - Other display widgets (`badge`, `stat`, `alert`, `separator`, `markdown`,
   `big_text`, `empty_state`, …) return a `Response` (not `#[must_use]`, so
   no `let _ =` is needed) so hover,

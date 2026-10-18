@@ -186,7 +186,7 @@ the mouse off entirely. See [INTERACTION.md](INTERACTION.md) for every mode.
 
 <!-- slt-check: {"name":"qs_return_patterns","features":[],"context":"ui"} -->
 ```rust
-// Text and its style chain return &mut Context for chaining.
+// text() returns a Text builder: chained options style that text only.
 ui.text("hello").bold().fg(Color::Cyan);
 
 // Most widgets return a Response — interactive ones (button, text_input,

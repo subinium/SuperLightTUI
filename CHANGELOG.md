@@ -95,6 +95,15 @@
   `Response::{on_hover, on_hover_ui, on_click, ..}` can end a chain. Only
   `button`, `button_colored` and `button_with` keep a fn-level `#[must_use]`,
   because their `clicked` flag is their only output.
+- **Breaking:** `Context::text`, `styled`, `link` and `timer_display` return a
+  scoped `slt::Text<'_>` builder instead of `&mut Context` (#457). Its style,
+  size and margin options (`bold`, `fg`, `gradient`, `w`, `m`, `wrap`,
+  `truncate`, `align`, `with_if`, ...) edit that one element in place, so
+  `ui.text("x").bold().fg(c);` keeps working while
+  `ui.text("x").bold().button("Save")` no longer compiles. `Text::show()`
+  returns the element's `Response`. The builder adds no allocation per call.
+  `scripts/api_audit.sh` V1 now only counts non-deprecated `impl Context`
+  methods, shrinking its allowlist from 31 to 7 entries.
 - Hover tooltips wait for `RunConfig::tooltip_delay` (500 ms by default) while
   the pointer rests on the same target, instead of appearing on the first
   hovered frame (#452). `tooltip_delay(Duration::ZERO)` restores the old
@@ -318,6 +327,16 @@
   (#461). On `FormField`, `validate` attaches a validator; on
   `TextInputState` it ran immediately, so copied code silently changed
   meaning. The old name remains as a deprecated alias.
+
+- The `Context` "modify the last text" modifiers (`bold`, `dim`, `italic`,
+  `underline`, `reversed`, `strikethrough`, `fg`, `bg`, `gradient`,
+  `gradient_stops_f64`, `bg_gradient`, `bg_gradient_stops_f64`,
+  `group_hover_fg`, `group_hover_bg`, `wrap`, `truncate`, `grow`, `align`,
+  `text_center`, `text_right`, `w`, `h`, `min_w`, `max_w`, `min_h`, `max_h`,
+  `m`, `mx`, `my`, `mt`, `mr`, `mb`, `ml`, `with`, `with_if`) in favour of the
+  same methods on `Text` (#457). They keep their 0.25 behaviour, including
+  silently doing nothing after a non-text widget, and will be removed in the
+  next breaking release.
 
 - `Context::shortcut(code, modifiers)`: order-independent shortcut query with
   exact modifier matching (Shift ignored for characters) that follows the
