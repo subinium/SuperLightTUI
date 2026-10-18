@@ -6,6 +6,7 @@
 //! `pub(crate)`, and the ones the rest of the crate names through the crate
 //! root are re-exported from `lib.rs`.
 
+mod accessible;
 #[cfg(all(feature = "crossterm", feature = "async"))]
 mod async_run;
 mod config;
@@ -26,6 +27,7 @@ pub use frame_state::DebugLayer;
 #[cfg(feature = "crossterm")]
 pub use native::{run, run_inline, run_inline_with, run_static, run_static_with, run_with};
 
+pub(crate) use accessible::*;
 #[cfg(all(test, feature = "crossterm", feature = "async"))]
 use async_run::*;
 pub(crate) use frame_state::*;

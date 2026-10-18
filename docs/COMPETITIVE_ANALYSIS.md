@@ -24,8 +24,9 @@ competitor versions, star counts, and download figures go stale quickly.
   has 23.0K stars and 6,469 reverse dependencies; SLT has 193 and 5. SLT also
   lacks several features that competitors ship today: text selection inside
   inputs, an editable syntax-highlighted textarea, anchored popovers and
-  menus, a diff viewer, hover/focus state styles on containers, accessibility
-  mode, terminal title/progress/cursor-shape APIs, and SSH serving.
+  menus, a diff viewer, hover/focus state styles on containers, an ARIA-style
+  accessibility tree (v0.26 adds only a linear prompt mode), terminal
+  title/progress/cursor-shape APIs, and SSH serving.
 - **Performance is not an SLT advantage.** As of v0.25.0 SLT is slower per
   frame than ratatui 0.30 (2–3.5x on matched workloads); optimization is
   tracked. Its stripped hello-world binary is 1.92x larger and its cold release
@@ -112,7 +113,6 @@ base that SLT does not.
 | Diff viewer | OpenTUI `Diff` |
 | Hover/focus/active state styles on containers | Textual TCSS `:hover`, `:focus`, `:focus-within`. SLT has `Response.hovered` and `group_hover_*` only |
 | Mouse cursor shape | Textual `pointer` rule, Bubble Tea v2 `View` cursor shape |
-| Accessibility mode | Ink (screen reader / ARIA since 6.2), Huh v2 accessible mode |
 | Window title / progress (OSC 9;4) / status APIs | Bubble Tea v2 declarative `View` (title, progress) |
 | SSH serving | Bubble Tea via Wish, OpenTUI `@opentui/ssh` |
 | Live style reload of layout/styling code | Textual `--dev` live CSS. SLT only hot-reloads TOML themes (`theme-watch`) |
@@ -168,7 +168,7 @@ n/v not verified for this snapshot.
 | SSH serving | ❌ | n/v | ❌ (textual-serve is web) | 🧩 Wish | n/v | ✅ `@opentui/ssh` |
 | Devtools / inspector | ✅ F12 overlay | n/v | ✅ devtools + `--dev` live CSS | n/v | n/v | n/v |
 | Headless snapshot tests | ✅ `TestBackend` | ✅ `TestBackend` | ✅ Pilot + SVG snapshots | n/v | 🧩 ink-testing-library | ✅ snapshot renderer |
-| Accessibility mode | ❌ | n/v | n/v | 🧩 Huh accessible mode | ✅ ARIA / screen reader | n/v |
+| Accessibility mode | ◐ `RunConfig::accessible` linear prompts (v0.26; no ARIA tree) | n/v | n/v | 🧩 Huh accessible mode | ✅ ARIA / screen reader | n/v |
 | Background workers | ✅ `run_async` (tokio) | n/v (app-owned loop) | ✅ workers | ✅ commands | ✅ (JS async) | ✅ (JS async) |
 
 ### Terminal protocols
@@ -284,7 +284,10 @@ Derived from the gaps above. These are not commitments.
 4. **State styles**: hover/focus/active styling on containers without
    hand-written `Response.hovered` branches.
 5. **Terminal integration**: window title, OSC 9;4 progress, cursor shape.
-6. **Accessibility**: a screen-reader-friendly mode, following Ink and Huh.
+6. **Accessibility**: v0.26 ships a linear prompt mode modelled on Huh's
+   accessible forms (`RunConfig::accessible`, `SLT_ACCESSIBLE=1`). Next: an
+   ARIA-style role/label tree for arbitrary layouts (Ink-style), and recorded
+   VoiceOver / Orca walkthroughs.
 7. **SSH serving** through the `Backend` trait, as a companion crate.
 
 ---

@@ -270,6 +270,15 @@ impl Context {
             state.focus_key(),
         );
         let focus_slot = self.rollback.last_focusable_id;
+        // Issue #469: an accessible-mode answer replaces the whole text.
+        let mut a11y = self.a11y_begin(focused);
+        let a11y_changed = match crate::runtime::A11yBegin::take_text(a11y.as_mut()) {
+            Some(Some(text)) if text != state.lines.join("\n") => {
+                state.set_value(text);
+                true
+            }
+            _ => false,
+        };
         let wrap_w = state.wrap_width.unwrap_or(u32::MAX);
         let wrapping = state.wrap_width.is_some();
         // Issue #465: `begin_widget_interaction` below takes the next
@@ -768,7 +777,10 @@ impl Context {
         self.commands.push(Command::EndContainer);
         self.rollback.last_text_idx = None;
 
-        response.changed = pre_lines.is_some_and(|before| state.lines != before);
+        response.changed = pre_lines.is_some_and(|before| state.lines != before) || a11y_changed;
+        if let Some(begin) = a11y {
+            self.a11y_end_textarea(begin, state);
+        }
         response
     }
 }

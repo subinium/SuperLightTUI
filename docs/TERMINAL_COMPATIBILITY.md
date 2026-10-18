@@ -27,6 +27,7 @@ version, and the output of the diagnostics below is very welcome.
 | 24-bit color | Terminal truecolor support | `COLORTERM=truecolor` or `24bit`; a probe-confirmed XTGETTCAP `Tc` reply; terminal identity (`TERM` = `xterm-kitty`, `xterm-ghostty`, `wezterm`, or `TERM_PROGRAM` = `iTerm.app`, `WezTerm`, `ghostty`, `vscode`); a VT-enabled Windows console (Windows 10+, or `WT_SESSION`). `RunConfig::color_depth` overrides all of it | Colors are downsampled to 256 or 16 colors |
 | 256 colors | `TERM` containing `256color` | Environment, when none of the 24-bit signals above apply | Downsampled to the 16 ANSI colors |
 | No color | `NO_COLOR` set to any non-empty value, or `TERM=dumb` | Environment; wins over every detected signal. Only an explicit `RunConfig::color_depth` overrides it | n/a: no color codes are emitted |
+| Screen readers (accessible mode) | Nothing from the terminal; stdin / stdout may be pipes | Opt-in: `RunConfig::default().accessible(true)` or `SLT_ACCESSIBLE=1`. See [Accessibility](#accessibility) | n/a |
 | Mouse (click, hover, wheel, drag) | SGR mouse reporting | Opt-in: `RunConfig::default().mouse(true)`. Enables all-motion tracking | Keyboard focus (Tab) and activation (Enter/Space) still work |
 | Text selection + copy | Mouse on, OSC 52 | Built in while the mouse is on; copies on release | Native terminal selection (mouse off, or the terminal's bypass modifier) |
 | Clipboard write | OSC 52 | `ui.copy_to_clipboard(..)` (and Ctrl+C / Ctrl+X on a selection in a focused `text_input` / `textarea`) writes it after the frame. Inside tmux / screen it is wrapped for passthrough only with `RunConfig::clipboard_passthrough(true)`. Payloads over `RunConfig::clipboard_max_bytes` (default 74,994 bytes) are not sent. `ui.clipboard_status()` reports `Sent`, `TooLarge`, or `WriteFailed` for one frame | Ignored by the terminal; `Sent` only means "written", OSC 52 has no acknowledgement |
@@ -163,6 +164,7 @@ Practical consequences:
 | `TERM` | `dumb` disables color and all title / progress / status / cursor-shape sequences; contains `256color` selects 256 colors; also used for terminal identity |
 | `TERM_PROGRAM` / `TERM_PROGRAM_VERSION` | Terminal identity: truecolor (`iTerm.app`, `WezTerm`, `ghostty`, `vscode`), OSC 9;4 progress hosts (`ghostty`, `iTerm.app` 3.6+) |
 | `WT_SESSION` / `ConEmuANSI` | Windows Terminal / ConEmu identity: 24-bit color (Windows Terminal) and OSC 9;4 progress |
+| `SLT_ACCESSIBLE` | Accessible linear output mode (see [Accessibility](#accessibility)). Seeds `RunConfig::default()`; an explicit `RunConfig::accessible(..)` call wins |
 | `SLT_DISABLE_TERMINAL_QUERIES` / `SLT_FORCE_TERMINAL_QUERIES` | Turn all startup probes off / on |
 | `SLT_DISABLE_SYNC_OUTPUT` / `SLT_FORCE_SYNC_OUTPUT` | Synchronized output |
 | `SLT_DISABLE_KITTY` / `SLT_FORCE_KITTY` | Kitty graphics |
@@ -218,6 +220,128 @@ if let Some(ClipboardStatus::TooLarge { bytes, max }) = ui.clipboard_status() {
     ui.text(format!("copy skipped: {bytes} bytes > {max}"));
 }
 ```
+
+## Accessibility
+
+Screen readers (VoiceOver, Orca, NVDA through a terminal) read a repainted
+cell grid poorly or not at all. Accessible mode replaces the screen with plain
+sequential lines, following
+[Huh's accessible mode](https://github.com/charmbracelet/huh) (forms become
+standard prompts) and
+[Ink's screen-reader mode](https://github.com/vadimdemedes/ink#screen-reader-support)
+(the UI is linearized with roles and labels). App code does not change:
+
+<!-- slt-check: {"name":"tc_accessible_form","features":["crossterm"],"context":"module"} -->
+```rust
+use slt::{RunConfig, SelectState, TextInputState};
+
+fn main() -> std::io::Result<()> {
+    let mut username = TextInputState::new();
+    let mut password = TextInputState::password();
+    let mut role = SelectState::new(vec!["Viewer", "Editor", "Admin"]);
+    let mut create = false;
+    // `SLT_ACCESSIBLE=1 cargo run` turns this on for `RunConfig::default()`.
+    slt::run_with(RunConfig::default().accessible(true), |ui| {
+        ui.text("Create an account");
+        ui.text("Username:");
+        let _ = ui.text_input(&mut username);
+        let _ = ui.a11y_label("Password").text_input(&mut password);
+        let _ = ui.a11y_label("Role").select(&mut role);
+        if ui.confirm("Create account?", &mut create).clicked {
+            ui.quit();
+        }
+    })
+}
+```
+
+prints and reads (answers typed after each prompt):
+
+```text
+Create an account
+Focused: Username, text field
+Username: ada
+Focused: Password, password field
+Password (hidden):
+Focused: Role, select, 3 options
+1. Viewer (selected)
+2. Editor
+3. Admin
+Enter a number between 1 and 3 [1]: 2
+Selected: Editor
+Focused: Create account?, yes or no question
+Create account? [y/N]: y
+```
+
+What the runtime does:
+
+- **No screen takeover.** No alternate screen, no cursor movement or erase,
+  no colors, no mouse capture, no title or progress sequences. The terminal
+  stays in its normal line mode, so its own echo and line editing work; raw
+  mode is used only while a masked input is read, to turn echo off. stdin and
+  stdout do not need to be terminals, so answers can be piped.
+- **Text once.** Display text (`text`, rich text, links, container titles,
+  toasts, `static_log`) is printed when it first appears and again when it
+  changes. Texts in one `row` are joined into one line. Lines without a
+  letter or digit (rules, box drawing, spinners) are dropped.
+- **Focus is announced** as `Focused: <name>, <role>` with state where it
+  matters (`check box, checked`, `switch, off`, `select, 3 options`), followed
+  by any validation error.
+- **One prompt per widget**, in focus order:
+
+  | Widget | Prompt | Answer |
+  |---|---|---|
+  | `text_input`, `form_field` | `Name: ` or `Name [current]: ` | a line; empty keeps the value. Reports `submitted` |
+  | masked `text_input` | `Name (hidden): ` | a line read without echo, never printed |
+  | `textarea` | `Name (end with an empty line): ` | lines until an empty one |
+  | `select`, `radio` | numbered options, `Enter a number between 1 and N [k]: ` | a number; empty keeps the selection |
+  | `multi_select` | numbered options, `0. Done` | a number toggles, `0` or empty moves on |
+  | `checkbox`, `toggle`, `confirm` | `Name [y/N]: ` (capital letter = current value) | `y`/`yes`/`n`/`no`; empty keeps it |
+  | `button`, `form_submit` | `Press Enter to activate Name, or type s to skip: ` | Enter activates (`clicked`), `s` skips |
+
+  Invalid answers print `Invalid: ...` and ask again. After an answer the
+  widget reports `changed` / `submitted` / `clicked` exactly as a keyboard
+  edit would, then focus moves to the next answerable widget. A validation
+  error (from `FormField::validate`, `TextInputState` validators or
+  `validation_error`) is printed as `Error: ...` and the same field is asked
+  again; an empty answer keeps the value and moves on anyway. If the app
+  moves focus or changes screen in response, the runtime follows it.
+- **Names** come from `ui.a11y_label("...")` (set right before the widget),
+  then the widget's own label (checkbox, toggle, button, confirm question,
+  form field label), then the text line right before the widget (which is
+  then not printed separately), then the placeholder. Use
+  `ui.is_accessible()` to drop visual-only hints such as key legends.
+- **Other focusables** (lists, tables, tabs, trees, sliders, custom
+  `register_focusable` widgets) have no prompt and are skipped in the prompt
+  order; their text is still printed. When nothing answerable is on screen,
+  typed lines are sent as key presses (an empty line sends Enter, a Tab
+  character sends Tab), so `ui.key('q')` style shortcuts keep working.
+- **Ending.** `ui.quit()` or end of input (Ctrl+D; Ctrl+Z then Enter on
+  Windows) ends the run. Ctrl+C is the
+  terminal's normal interrupt in line mode and ends the process
+  (`handle_ctrl_c` has no effect); during a masked read it ends the run.
+
+Limits in this first version: `run_async` keeps the visual renderer; charts,
+canvas, images and raw draws produce no text; layouts are linearized in
+declaration order, not by screen position. `RunConfig::accessible(false)`
+always wins over `SLT_ACCESSIBLE`, so an app that passes it should offer its
+own opt-in.
+
+**Verification.** `tests/pty_accessible.rs` runs the form above in a real Unix
+PTY and checks that the stream holds no escape sequence, that answers come
+from stdin and that the masked answer never appears; unit tests in
+`src/runtime/accessible/tests.rs` cover each widget. A walkthrough with an
+actual screen reader has **not** been done yet. To check one, save the
+snippet above as an example and run it with `SLT_ACCESSIBLE=1`:
+
+1. macOS: open Terminal.app, start VoiceOver (Cmd+F5), run the program and
+   answer each prompt. Expected: every `Focused:` line and prompt is spoken
+   once, typed answers echo as normal, the password is not spoken, and
+   nothing is re-read after an answer.
+2. Linux: start Orca (Super+Alt+S) in GNOME Terminal and repeat. Orca reads
+   new terminal output automatically; check the same points.
+
+Please report results (screen reader, terminal and versions) in an issue so
+this section can move them to "verified manually".
 
 ## Windows
 
