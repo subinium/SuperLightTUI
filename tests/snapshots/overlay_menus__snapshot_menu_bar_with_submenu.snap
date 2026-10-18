@@ -1,0 +1,10 @@
+---
+source: tests/overlay_menus.rs
+expression: tb.to_string_trimmed()
+---
+ File  Edit  Help
+docume╭────────╮
+      │ Undo   │
+      │ Redo   │╭───────────╮
+      │ Find ▸ ││ Find next │
+      ╰────────╯╰───────────╯

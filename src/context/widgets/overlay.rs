@@ -1,13 +1,112 @@
-//! Overlay family — modals, overlays, anchored placement and tooltips.
+//! Overlay family — modals, overlays, anchored placement, popovers, menus
+//! and tooltips.
 //!
-//! These widgets draw above the normal layout flow and have no persistent
-//! state type.
+//! These widgets draw above the normal layout flow. The menu state types
+//! ([`crate::widgets::MenuState`], [`crate::widgets::MenuBarState`]) live in
+//! `src/widgets/overlay.rs`.
 
 use super::*;
 
+mod menu;
+mod popover;
 mod tooltip_wrap;
 
+pub use popover::Placement;
+pub(crate) use popover::place_popover;
+
 pub(in crate::context) use tooltip_wrap::wrap_tooltip_text;
+
+/// Options for [`Context::modal_with`].
+///
+/// Controls focus trapping and placement of a modal overlay.
+/// [`Context::modal`] is exactly `modal_with(ModalOpts::default(), f)`.
+/// Build options with the chainable setters; the struct is
+/// `#[non_exhaustive]`, so fields can be added without breaking callers.
+///
+/// | Field | Default | Meaning |
+/// |---|---|---|
+/// | [`tab_trap`](Self::tab_trap) | `true` | Tab / Shift+Tab and stale programmatic focus stay inside the modal |
+/// | [`anchor`](Self::anchor) | `None` | `None` centers the content; `Some(anchor)` pins it like [`Context::overlay_at`] |
+/// | [`offset`](Self::offset) | `(0, 0)` | Cell inset from the anchored edge, see [`Context::overlay_at_offset`] |
+///
+/// # Example
+///
+/// ```no_run
+/// use slt::{Anchor, ModalOpts};
+/// # let mut show = true;
+/// # slt::run(|ui: &mut slt::Context| {
+/// if show {
+///     // Pinned two cells in from the top-right corner, focus trapped.
+///     let opts = ModalOpts::new().anchor(Anchor::TopRight).offset(2, 1);
+///     let _ = ui.modal_with(opts, |ui| {
+///         ui.text("Are you sure?");
+///         if ui.button("OK").clicked { show = false; }
+///     });
+/// }
+/// # });
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ModalOpts {
+    /// When `true`, Tab/Shift+Tab navigation cannot leave the modal's focus
+    /// range, even if [`Context::set_focus_index`] or a mouse click moved
+    /// focus outside.
+    ///
+    /// Default: `true`, aligned with WCAG 2.1 SC 2.4.3 (Focus Order), which
+    /// recommends trapping focus inside modal dialogs. Set to `false` for the
+    /// pre-0.26 `modal()` behavior where stale programmatic focus could point
+    /// outside the modal.
+    pub tab_trap: bool,
+    /// Where the modal content sits. `None` (default) centers the content in
+    /// the terminal area; `Some(anchor)` pins it to one of the nine compass
+    /// positions.
+    pub anchor: Option<Anchor>,
+    /// Cell inset `(dx, dy)` from the anchored edge. Positive values move
+    /// toward the center. Only used when [`anchor`](Self::anchor) is set.
+    pub offset: (i32, i32),
+}
+
+impl Default for ModalOpts {
+    fn default() -> Self {
+        Self {
+            tab_trap: true,
+            anchor: None,
+            offset: (0, 0),
+        }
+    }
+}
+
+impl ModalOpts {
+    /// Default options: focus trapped, content centered.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Enable or disable focus trapping (default `true`).
+    pub fn tab_trap(mut self, on: bool) -> Self {
+        self.tab_trap = on;
+        self
+    }
+
+    /// Pin the modal to `anchor` instead of centering it.
+    pub fn anchor(mut self, anchor: Anchor) -> Self {
+        self.anchor = Some(anchor);
+        self
+    }
+
+    /// Inset the anchored modal by `(dx, dy)` cells toward the center.
+    pub fn offset(mut self, dx: i32, dy: i32) -> Self {
+        self.offset = (dx, dy);
+        self
+    }
+}
+
+/// Former name of [`ModalOpts`].
+#[deprecated(
+    since = "0.26.0",
+    note = "renamed to `ModalOpts`; build it with `ModalOpts::new()`"
+)]
+pub type ModalOptions = ModalOpts;
 
 /// Compass-rose anchor for [`Context::overlay_at`] / [`Context::modal_at`].
 ///
@@ -159,6 +258,15 @@ enum VSide {
 impl Context {
     /// Render content in a modal overlay with dimmed background.
     ///
+    /// Exactly [`modal_with(ModalOpts::default(), f)`](Self::modal_with):
+    /// focus is trapped inside the modal (WCAG 2.1 SC 2.4.3) and the content
+    /// is centered. Widgets outside the modal ignore the mouse and keyboard
+    /// while it is open, and focus returns to the widget that held it before
+    /// the modal opened once the modal stops rendering.
+    ///
+    /// Since 0.26.0 the focus trap is on by default; use
+    /// `modal_with(ModalOpts::new().tab_trap(false), f)` for the old behavior.
+    ///
     /// ```no_run
     /// # let mut show = true;
     /// # slt::run(|ui: &mut slt::Context| {
@@ -171,18 +279,13 @@ impl Context {
     /// # });
     /// ```
     pub fn modal(&mut self, f: impl FnOnce(&mut Context)) -> Response {
-        // Default `modal()` preserves legacy behavior (tab_trap = false).
-        // `modal_with(ModalOptions::default(), ...)` opts into the WCAG 2.1
-        // SC 2.4.3 focus-trap default. This split keeps existing callers
-        // bit-identical until they migrate.
-        self.modal_with(ModalOptions { tab_trap: false }, f)
+        self.modal_with(ModalOpts::default(), f)
     }
 
     /// Render content in a modal overlay with configurable options.
     ///
-    /// Like [`modal`](Self::modal), but accepts a [`ModalOptions`] struct.
-    /// Use this to opt into focus trapping (`tab_trap: true`) or future
-    /// modal flags without breaking the bare `modal()` API.
+    /// See [`ModalOpts`] for the options: focus trapping (`tab_trap`, on by
+    /// default) and placement (`anchor` / `offset`, centered by default).
     ///
     /// When `opts.tab_trap` is `true`, focus cannot escape the modal's
     /// focusable range — Tab/Shift+Tab keep cycling within the modal even
@@ -193,24 +296,59 @@ impl Context {
     /// # Example
     ///
     /// ```no_run
+    /// use slt::{Anchor, Border, ModalOpts};
     /// # let mut show = true;
     /// # slt::run(|ui: &mut slt::Context| {
     /// if show {
-    ///     ui.modal_with(slt::context::ModalOptions { tab_trap: true }, |ui| {
-    ///         ui.text("Are you sure?");
-    ///         if ui.button("OK").clicked { show = false; }
+    ///     let opts = ModalOpts::new().anchor(Anchor::TopRight).offset(2, 1);
+    ///     ui.modal_with(opts, |ui| {
+    ///         ui.bordered(Border::Rounded).p(1).col(|ui| {
+    ///             ui.text("Saved!");
+    ///             if ui.button("OK").clicked { show = false; }
+    ///         });
     ///     });
     /// }
     /// # });
     /// ```
-    pub fn modal_with(&mut self, opts: ModalOptions, f: impl FnOnce(&mut Context)) -> Response {
+    pub fn modal_with(&mut self, opts: ModalOpts, f: impl FnOnce(&mut Context)) -> Response {
+        match opts.anchor {
+            None => self.modal_layer(opts.tab_trap, true, f),
+            Some(anchor) => {
+                let (dx, dy) = opts.offset;
+                self.modal_layer(opts.tab_trap, true, |ui| {
+                    let (align, justify) = anchor_to_align_justify(anchor);
+                    let margin = anchor_offset_to_margin(anchor, dx, dy);
+                    // See `overlay_at_offset` for why margin lives on the
+                    // outer grow-1 column rather than a wrapper around `f`.
+                    let _ = ui
+                        .container()
+                        .grow(1)
+                        .align(align)
+                        .justify(justify)
+                        .margin(margin)
+                        .hit_passthrough()
+                        .col(f);
+                })
+            }
+        }
+    }
+
+    /// Shared modal machinery: focus range bookkeeping, the focus trap, and
+    /// background interaction blocking. `dim` selects whether the layer
+    /// dims the content behind it (dialogs) or not (menus, #459).
+    pub(crate) fn modal_layer(
+        &mut self,
+        tab_trap: bool,
+        dim: bool,
+        f: impl FnOnce(&mut Context),
+    ) -> Response {
         let interaction_id = self.next_interaction_id();
         // #439: the full-screen modal root never wins hit-testing itself.
         self.mark_hit_flags(interaction_id, HIT_PASSTHROUGH);
         // Modal ownership must not shift when unrelated widgets reserve hit IDs.
         let modal_id = self.rollback.modal_count;
         self.rollback.modal_count += 1;
-        self.commands.push(Command::BeginOverlay { modal: true });
+        self.commands.push(Command::BeginOverlay { modal: dim });
         self.rollback.overlay_depth += 1;
         if !self.prev_modal_active && !self.rollback.modal_active {
             self.rollback.modal_restore_index = Some(self.focus_index);
@@ -258,7 +396,7 @@ impl Context {
         //
         // WCAG 2.1 SC 2.4.3 (Focus Order) requirement: the user must not be
         // able to navigate to content outside an active modal dialog.
-        if opts.tab_trap && modal_focus_count > 0 && self.rollback.modal_id == Some(modal_id) {
+        if tab_trap && modal_focus_count > 0 && self.rollback.modal_id == Some(modal_id) {
             let lo = modal_focus_start;
             let hi = lo.saturating_add(modal_focus_count);
             if self.focus_index < lo || self.focus_index >= hi {
@@ -273,7 +411,7 @@ impl Context {
             } else {
                 self.focus_index
             };
-            if !opts.tab_trap && !requested_in_body {
+            if !tab_trap && !requested_in_body {
                 // Keep the legacy callback-visible request untouched. The
                 // frame boundary translates it into the new modal slot range.
                 self.focus_index = requested_focus;
@@ -337,19 +475,15 @@ impl Context {
 
     /// Render a modal overlay anchored to one of the 9 compass positions.
     ///
-    /// Like [`modal`](Self::modal) but pinned to a corner / edge / center via
-    /// the same anchor wrapping as [`overlay_at`](Self::overlay_at).
+    /// Thin wrapper over
+    /// [`modal_with(ModalOpts::new().anchor(anchor), f)`](Self::modal_with),
+    /// so it traps focus like [`modal`](Self::modal).
+    #[deprecated(
+        since = "0.26.0",
+        note = "use `modal_with(ModalOpts::new().anchor(anchor), f)`"
+    )]
     pub fn modal_at(&mut self, anchor: Anchor, f: impl FnOnce(&mut Context)) -> Response {
-        self.modal(|ui| {
-            let (align, justify) = anchor_to_align_justify(anchor);
-            let _ = ui
-                .container()
-                .grow(1)
-                .align(align)
-                .justify(justify)
-                .hit_passthrough()
-                .col(f);
-        })
+        self.modal_with(ModalOpts::new().anchor(anchor), f)
     }
 
     /// Render `f` at `anchor` with cell offset `(dx, dy)` from the anchored edge.
@@ -415,23 +549,15 @@ impl Context {
 
     /// Modal variant of [`overlay_at_offset`](Self::overlay_at_offset).
     ///
-    /// Like [`modal_at`](Self::modal_at) but with a `(dx, dy)` cell inset
-    /// from the anchored edge. Positive values inset toward the center —
-    /// see [`overlay_at_offset`](Self::overlay_at_offset) for the full sign
-    /// convention.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use slt::{Anchor, Border};
-    /// # slt::run(|ui: &mut slt::Context| {
-    /// ui.modal_at_offset(Anchor::TopRight, 2, 1, |ui| {
-    ///     ui.bordered(Border::Rounded).p(1).col(|ui| {
-    ///         ui.text("Saved!");
-    ///     });
-    /// });
-    /// # });
-    /// ```
+    /// Thin wrapper over
+    /// [`modal_with(ModalOpts::new().anchor(anchor).offset(dx, dy), f)`](Self::modal_with),
+    /// so it traps focus like [`modal`](Self::modal). Positive offsets inset
+    /// toward the center — see [`overlay_at_offset`](Self::overlay_at_offset)
+    /// for the full sign convention.
+    #[deprecated(
+        since = "0.26.0",
+        note = "use `modal_with(ModalOpts::new().anchor(anchor).offset(dx, dy), f)`"
+    )]
     pub fn modal_at_offset(
         &mut self,
         anchor: Anchor,
@@ -439,20 +565,7 @@ impl Context {
         dy: i32,
         f: impl FnOnce(&mut Context),
     ) -> Response {
-        self.modal(|ui| {
-            let (align, justify) = anchor_to_align_justify(anchor);
-            let margin = anchor_offset_to_margin(anchor, dx, dy);
-            // See `overlay_at_offset` for why margin lives on the outer
-            // grow-1 column rather than a wrapper around `f`.
-            let _ = ui
-                .container()
-                .grow(1)
-                .align(align)
-                .justify(justify)
-                .margin(margin)
-                .hit_passthrough()
-                .col(f);
-        })
+        self.modal_with(ModalOpts::new().anchor(anchor).offset(dx, dy), f)
     }
 
     /// Render a hover tooltip for the previously rendered interactive widget.

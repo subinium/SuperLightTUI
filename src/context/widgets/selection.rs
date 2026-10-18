@@ -9,6 +9,9 @@
 use super::*;
 use crate::runtime::{A11yBegin, A11yRole};
 
+/// Placeholder row of an open select whose filter matches nothing.
+const NO_MATCHES: &str = "  (no matches)";
+
 impl Context {
     /// Render a horizontal tab bar. Handles Left/Right navigation when focused.
     ///
@@ -517,11 +520,16 @@ impl Context {
         }
 
         let focused = self.register_focusable();
+        let focus_slot = self.rollback.last_focusable_id;
         let mut a11y = self.a11y_begin(focused);
         let (interaction_id, mut response) = self.begin_widget_interaction(focused);
         let old_selected = state.selected;
 
-        self.select_handle_events(state, focused, interaction_id);
+        if self.is_disabled() {
+            state.open = false;
+            state.filter.clear();
+        }
+        self.select_handle_events(state, focused, focus_slot, interaction_id);
         if let Some(choice) = A11yBegin::take_choice(a11y.as_mut())
             && choice < state.len()
         {
@@ -539,7 +547,7 @@ impl Context {
                 state.set_cursor(flen - 1);
             }
         }
-        self.select_render(state, focused, colors);
+        self.select_render(state, focused, colors, interaction_id);
         if let Some(begin) = a11y {
             let selected = vec![state.selected];
             self.a11y_end_choice(
@@ -558,39 +566,61 @@ impl Context {
         &mut self,
         state: &mut SelectState,
         focused: bool,
+        focus_slot: Option<usize>,
         interaction_id: usize,
     ) {
-        if let Some((rect, clicks)) = self.left_clicks_for_interaction(interaction_id) {
-            let mut consumed = Vec::new();
-            for (event_index, mouse) in clicks {
-                let relative_y = mouse.y.saturating_sub(rect.y) as usize;
-                if relative_y < 3 {
-                    if !state.is_empty() {
-                        state.open = !state.open;
-                        if state.open {
-                            state.filter.clear();
-                            state.set_cursor(state.selected);
-                        }
-                    }
-                    consumed.push(event_index);
+        // #459: an open dropdown floats in an overlay with a light-dismiss
+        // backdrop, so presses resolve to the overlay, not to this widget.
+        // Hit-test them against the rect the dropdown was drawn at: a press on
+        // a row selects it, any other press (the trigger included) closes.
+        let trigger = self.prev_hit_map.get(interaction_id).copied();
+        if state.open
+            && state.dropdown_drawn
+            && let Some(trigger) = trigger
+            && self.interaction_allowed()
+            && !self.is_disabled()
+        {
+            let dropdown = self.select_dropdown_rect(state, trigger);
+            let presses = self.open_presses();
+            for (event_index, (x, y), button) in presses {
+                self.consumed[event_index] = true;
+                if !dropdown.contains(x, y) {
+                    state.open = false;
+                    state.filter.clear();
+                    break;
+                }
+                // A press on the floating list keeps focus on the select,
+                // even when click-to-focus picked a widget drawn under it.
+                if let Some(slot) = focus_slot
+                    && !focused
+                {
+                    self.set_focus_index(slot);
+                }
+                let query_rows = u32::from(!state.filter.is_empty());
+                let row_start = dropdown.y + 1 + query_rows;
+                if button != MouseButton::Left || y < row_start {
                     continue;
                 }
-
-                if state.open {
-                    let query_rows = usize::from(!state.filter.is_empty());
-                    let row_start = 3 + query_rows;
-                    if relative_y >= row_start {
-                        let filtered = state.filtered_indices();
-                        let row = relative_y - row_start;
-                        if let Some(&data_index) = filtered.get(row) {
-                            state.selected = data_index;
-                            state.set_cursor(row);
-                            state.open = false;
-                            state.filter.clear();
-                            consumed.push(event_index);
-                        }
+                let row = (y - row_start) as usize;
+                if let Some(&data_index) = state.filtered_indices().get(row) {
+                    state.selected = data_index;
+                    state.set_cursor(row);
+                    state.open = false;
+                    state.filter.clear();
+                    break;
+                }
+            }
+        } else if let Some((_, clicks)) = self.left_clicks_for_interaction(interaction_id) {
+            let mut consumed = Vec::new();
+            for (event_index, _) in clicks {
+                if !state.is_empty() {
+                    state.open = !state.open;
+                    if state.open {
+                        state.filter.clear();
+                        state.set_cursor(state.selected);
                     }
                 }
+                consumed.push(event_index);
             }
             self.consume_indices(consumed);
         }
@@ -680,7 +710,13 @@ impl Context {
         self.consume_indices(consumed_indices);
     }
 
-    fn select_render(&mut self, state: &SelectState, focused: bool, colors: &WidgetColors) {
+    fn select_render(
+        &mut self,
+        state: &mut SelectState,
+        focused: bool,
+        colors: &WidgetColors,
+        interaction_id: usize,
+    ) {
         let border_color = if focused {
             colors.accent.unwrap_or(self.theme.primary)
         } else {
@@ -714,8 +750,12 @@ impl Context {
 
         self.render_select_trigger(&display_text, arrow, border_color, colors);
 
-        if state.open {
-            self.render_select_dropdown(state, colors);
+        // The dropdown hangs off last frame's trigger rect; on the very first
+        // frame there is none yet, so it appears from the next frame on.
+        let trigger_known = self.prev_hit_map.get(interaction_id).is_some();
+        state.dropdown_drawn = state.open && trigger_known;
+        if state.dropdown_drawn {
+            self.render_select_dropdown(state, colors, interaction_id);
         }
 
         self.commands.push(Command::EndContainer);
@@ -767,41 +807,80 @@ impl Context {
         self.rollback.last_text_idx = None;
     }
 
-    fn render_select_dropdown(&mut self, state: &SelectState, colors: &WidgetColors) {
+    /// Where the open dropdown of a select whose trigger was at `trigger`
+    /// last frame floats (#459): below the trigger (flipping above at the
+    /// bottom edge), at least as wide as the trigger, one row per filtered
+    /// item plus the query row and the border.
+    pub(crate) fn select_dropdown_rect(&self, state: &SelectState, trigger: Rect) -> Rect {
         let filtered = state.filtered_indices();
-
-        // Show the active query so typing has visible feedback.
+        let mut inner_width = trigger.width.saturating_sub(2);
+        let mut rows = 0u32;
         if !state.filter.is_empty() {
-            let dim = self.theme.text_dim;
-            let mut q = String::with_capacity(state.filter.len() + 1);
-            q.push('/');
-            q.push_str(&state.filter);
-            self.styled(q, Style::new().fg(dim).italic());
+            inner_width = inner_width.max(1 + UnicodeWidthStr::width(state.filter.as_str()) as u32);
+            rows += 1;
         }
-
         if filtered.is_empty() {
-            let dim = self.theme.text_dim;
-            self.styled("  (no matches)".to_string(), Style::new().fg(dim).dim());
-            return;
+            inner_width = inner_width.max(UnicodeWidthStr::width(NO_MATCHES) as u32);
+            rows += 1;
         }
+        for &index in &filtered {
+            let width = UnicodeWidthStr::width(state.items()[index].as_str()) as u32 + 2;
+            inner_width = inner_width.max(width);
+        }
+        rows += filtered.len() as u32;
+        super::overlay::place_popover(
+            trigger,
+            (inner_width.saturating_add(2), rows.saturating_add(2)),
+            Placement::Below,
+            self.screen_area(),
+        )
+        .0
+    }
 
+    fn render_select_dropdown(
+        &mut self,
+        state: &SelectState,
+        colors: &WidgetColors,
+        interaction_id: usize,
+    ) {
+        let trigger = self
+            .prev_hit_map
+            .get(interaction_id)
+            .copied()
+            .unwrap_or_default();
+        let rect = self.select_dropdown_rect(state, trigger);
+        let filtered = state.filtered_indices();
+        let dim = self.theme.text_dim;
+        let accent = colors.accent.unwrap_or(self.theme.primary);
+        let text = colors.fg.unwrap_or(self.theme.surface_text);
         let cursor = state.cursor();
-        for (pos, &idx) in filtered.iter().enumerate() {
-            let item = &state.items()[idx];
-            let is_cursor = pos == cursor;
-            let style = if is_cursor {
-                Style::new()
-                    .bold()
-                    .fg(colors.accent.unwrap_or(self.theme.primary))
-            } else {
-                Style::new().fg(colors.fg.unwrap_or(self.theme.text))
-            };
-            let prefix = if is_cursor { "▸ " } else { "  " };
-            let mut row = String::with_capacity(prefix.len() + item.len());
-            row.push_str(prefix);
-            row.push_str(item);
-            self.styled(row, style);
-        }
+        let _ = self.floating_panel(rect, true, |ui| {
+            // Show the active query so typing has visible feedback.
+            if !state.filter.is_empty() {
+                let mut q = String::with_capacity(state.filter.len() + 1);
+                q.push('/');
+                q.push_str(&state.filter);
+                ui.styled(q, Style::new().fg(dim).italic());
+            }
+            if filtered.is_empty() {
+                ui.styled(NO_MATCHES, Style::new().fg(dim).dim());
+                return;
+            }
+            for (pos, &idx) in filtered.iter().enumerate() {
+                let item = &state.items()[idx];
+                let is_cursor = pos == cursor;
+                let style = if is_cursor {
+                    Style::new().bold().fg(accent)
+                } else {
+                    Style::new().fg(text)
+                };
+                let prefix = if is_cursor { "▸ " } else { "  " };
+                let mut row = String::with_capacity(prefix.len() + item.len());
+                row.push_str(prefix);
+                row.push_str(item);
+                ui.styled(row, style);
+            }
+        });
     }
 
     // ── radio ────────────────────────────────────────────────────────

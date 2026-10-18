@@ -1140,6 +1140,28 @@ pub struct ContainerStyle {
     ///
     /// Use [`ContainerStyle::extending`] to create a style that inherits.
     pub extends: Option<&'static ContainerStyle>,
+    /// Background while hovered (CSS `:hover`).
+    pub hover_bg: Option<Color>,
+    /// Default child text color while hovered.
+    pub hover_fg: Option<Color>,
+    /// Border color while hovered.
+    pub hover_border_fg: Option<Color>,
+    /// Background while the container is the focused slot (CSS `:focus`).
+    pub focus_bg: Option<Color>,
+    /// Default child text color while focused.
+    pub focus_fg: Option<Color>,
+    /// Border color while focused.
+    pub focus_border_fg: Option<Color>,
+    /// Background while focus is inside the container (CSS `:focus-within`).
+    pub focus_within_bg: Option<Color>,
+    /// Border color while focus is inside the container.
+    pub focus_within_border_fg: Option<Color>,
+    /// Background while pressed (CSS `:active`).
+    pub active_bg: Option<Color>,
+    /// Default child text color while pressed.
+    pub active_fg: Option<Color>,
+    /// Border color while pressed.
+    pub active_border_fg: Option<Color>,
 }
 
 impl ContainerStyle {
@@ -1174,6 +1196,17 @@ impl ContainerStyle {
             theme_text_color: None,
             theme_border_fg: None,
             extends: None,
+            hover_bg: None,
+            hover_fg: None,
+            hover_border_fg: None,
+            focus_bg: None,
+            focus_fg: None,
+            focus_border_fg: None,
+            focus_within_bg: None,
+            focus_within_border_fg: None,
+            active_bg: None,
+            active_fg: None,
+            active_border_fg: None,
         }
     }
 
@@ -1450,6 +1483,73 @@ impl ContainerStyle {
     /// Takes precedence over [`Self::border_style`]'s foreground when set.
     pub const fn theme_border_fg(mut self, color: ThemeColor) -> Self {
         self.theme_border_fg = Some(color);
+        self
+    }
+
+    /// Background while hovered (CSS `:hover`). See
+    /// [`ContainerBuilder::hover_bg`](crate::ContainerBuilder::hover_bg).
+    pub const fn hover_bg(mut self, color: Color) -> Self {
+        self.hover_bg = Some(color);
+        self
+    }
+
+    /// Default child text color while hovered.
+    pub const fn hover_fg(mut self, color: Color) -> Self {
+        self.hover_fg = Some(color);
+        self
+    }
+
+    /// Border color while hovered.
+    pub const fn hover_border_fg(mut self, color: Color) -> Self {
+        self.hover_border_fg = Some(color);
+        self
+    }
+
+    /// Background while the container is the focused slot (CSS `:focus`).
+    pub const fn focus_bg(mut self, color: Color) -> Self {
+        self.focus_bg = Some(color);
+        self
+    }
+
+    /// Default child text color while focused.
+    pub const fn focus_fg(mut self, color: Color) -> Self {
+        self.focus_fg = Some(color);
+        self
+    }
+
+    /// Border color while focused.
+    pub const fn focus_border_fg(mut self, color: Color) -> Self {
+        self.focus_border_fg = Some(color);
+        self
+    }
+
+    /// Background while focus is inside the container (CSS `:focus-within`).
+    pub const fn focus_within_bg(mut self, color: Color) -> Self {
+        self.focus_within_bg = Some(color);
+        self
+    }
+
+    /// Border color while focus is inside the container.
+    pub const fn focus_within_border_fg(mut self, color: Color) -> Self {
+        self.focus_within_border_fg = Some(color);
+        self
+    }
+
+    /// Background while pressed (CSS `:active`).
+    pub const fn active_bg(mut self, color: Color) -> Self {
+        self.active_bg = Some(color);
+        self
+    }
+
+    /// Default child text color while pressed.
+    pub const fn active_fg(mut self, color: Color) -> Self {
+        self.active_fg = Some(color);
+        self
+    }
+
+    /// Border color while pressed.
+    pub const fn active_border_fg(mut self, color: Color) -> Self {
+        self.active_border_fg = Some(color);
         self
     }
 }

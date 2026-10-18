@@ -138,8 +138,35 @@ impl Context {
             .find(|press| press.button == MouseButton::Left)
             .map(|press| press.pos);
         if let Some((mx, my)) = last_left_press {
+            // #459: a press on overlay content (a select dropdown, a popover,
+            // a modal) only focuses widgets inside the overlay panel it hit,
+            // never the base widget drawn underneath.
+            let overlay_cover = super::pointer::overlay_panel_at(
+                &layout_feedback.prev_hit_map,
+                &pointer.hit_meta,
+                &pointer.hit_flags_prev,
+                (mx, my),
+                (width, height),
+            );
             let mut best: Option<(usize, u64)> = None;
             for &(fid, rect) in &layout_feedback.prev_focus_rects {
+                // Issue #458: clicking a disabled widget never focuses it.
+                if focus
+                    .identity
+                    .slots
+                    .get(fid)
+                    .is_some_and(|slot| slot.disabled)
+                {
+                    continue;
+                }
+                if overlay_cover.is_some_and(|cover| {
+                    rect.x < cover.x
+                        || rect.y < cover.y
+                        || rect.right() > cover.right()
+                        || rect.bottom() > cover.bottom()
+                }) {
+                    continue;
+                }
                 if mx >= rect.x && mx < rect.right() && my >= rect.y && my < rect.bottom() {
                     let area = rect.width as u64 * rect.height as u64;
                     if best.is_none_or(|(_, ba)| area < ba) {
@@ -300,6 +327,8 @@ impl Context {
                 scroll_count: 0,
                 group_count: 0,
                 group_stack,
+                group_hover_stack: smallvec::SmallVec::new(),
+                disabled_depth: 0,
                 overlay_depth: 0,
                 modal_active: false,
                 modal_focus_start: 0,
@@ -415,6 +444,34 @@ impl Context {
     /// [`focus_next`](Self::focus_next) / [`focus_prev`](Self::focus_prev) and
     /// the `Tab`/`Shift+Tab` handler in `process_focus_keys` (v0.21.1).
     pub(crate) fn advance_focus(&mut self, forward: bool) {
+        self.advance_focus_over(forward, false);
+    }
+
+    /// [`advance_focus`](Self::advance_focus), skipping slots registered as
+    /// disabled (#458). `this_frame` selects the slot table: the frame's own
+    /// (end-of-frame Tab handling) or the previous frame's (mid-frame calls).
+    fn advance_focus_over(&mut self, forward: bool, this_frame: bool) {
+        let start = self.focus_index;
+        let limit = self.prev_focus_count.max(1);
+        for _ in 0..limit {
+            self.advance_focus_step(forward);
+            let slots = if this_frame {
+                &self.focus_identity.slots
+            } else {
+                &self.focus_identity.prev_slots
+            };
+            if !slots
+                .get(self.focus_index)
+                .is_some_and(|slot| slot.disabled)
+            {
+                return;
+            }
+        }
+        // Every candidate is disabled: leave focus where it was.
+        self.focus_index = start;
+    }
+
+    fn advance_focus_step(&mut self, forward: bool) {
         self.rollback.focus_origin = None;
         self.rollback.focus_generation = self.rollback.focus_generation.wrapping_add(1);
         if self.prev_modal_active && self.prev_modal_focus_count > 0 {
@@ -586,7 +643,7 @@ impl Context {
         self.prev_modal_focus_start = self.rollback.modal_focus_start;
         self.prev_modal_focus_count = self.rollback.modal_focus_count;
         for forward in actions {
-            self.advance_focus(forward);
+            self.advance_focus_over(forward, true);
         }
         (
             self.prev_focus_count,
@@ -822,6 +879,25 @@ impl Context {
         self.response_for(id)
     }
 
+    /// Issue #458: the response of a slot rendered inside a disabled scope:
+    /// geometry only, no pointer, focus or value signals.
+    pub(crate) fn disabled_response(&self, interaction_id: usize) -> Response {
+        Response {
+            rect: self
+                .prev_hit_map
+                .get(interaction_id)
+                .copied()
+                .unwrap_or_default(),
+            disabled: true,
+            ..Response::default()
+        }
+    }
+
+    /// Issue #458: held-button ("`:active`") state of interaction slot `id`.
+    pub(crate) fn slot_active(&self, id: usize) -> bool {
+        self.rollback.disabled_depth == 0 && self.interaction_allowed() && self.slot_held(id)
+    }
+
     /// Compute and consume the `(gained_focus, lost_focus)` edge flags for the
     /// widget most recently registered via [`register_focusable`].
     ///
@@ -927,7 +1003,7 @@ impl Context {
             .iter()
             .enumerate()
             .filter_map(move |(i, event)| {
-                if !self.interaction_allowed() || self.consumed[i] {
+                if !self.interaction_allowed() || self.is_disabled() || self.consumed[i] {
                     return None;
                 }
 
@@ -1044,6 +1120,7 @@ impl Context {
             key: Some(crate::runtime::hashed_focus_key(key)),
             text_entry: None,
             chords: 0,
+            disabled: false,
         })
     }
 
@@ -1091,10 +1168,14 @@ impl Context {
             key: Some(key),
             text_entry: Some(kind),
             chords: 0,
+            disabled: false,
         })
     }
 
-    fn register_focusable_slot(&mut self, meta: crate::runtime::FocusSlotMeta) -> bool {
+    fn register_focusable_slot(&mut self, mut meta: crate::runtime::FocusSlotMeta) -> bool {
+        // Issue #458: a disabled widget keeps its slot (later indices do not
+        // shift when it toggles) but never takes focus.
+        meta.disabled = self.rollback.disabled_depth > 0;
         if !self.interaction_allowed() {
             self.rollback.last_focusable_id = None;
             // Drop any pending reservation: the suppressed widget never
@@ -1127,6 +1208,9 @@ impl Context {
         // Pointer capture identity: the widget's next interaction slot
         // carries its focus key (or the name a reserved slot was bound to).
         self.pointer.pending_key = self.focus_identity.slots.get(id).and_then(|slot| slot.key);
+        if meta.disabled {
+            return false;
+        }
         self.focus_slot_is_current(id)
     }
 
@@ -1145,6 +1229,7 @@ impl Context {
             let slot = &mut slots[id];
             slot.key = slot.key.or(meta.key);
             slot.text_entry = meta.text_entry.or(slot.text_entry);
+            slot.disabled |= meta.disabled;
         }
     }
 
@@ -1445,6 +1530,70 @@ impl Context {
             .downcast_mut::<crate::anim::AnimState>()
             .unwrap_or_else(|| {
                 panic!("animate_value: id {id:?} is already used for a different state type")
+            });
+        state.sample(target, duration_ticks, tick)
+    }
+
+    /// [`animate_bool`](Self::animate_bool) keyed by a runtime string, for one
+    /// transition per row, item or element (#458).
+    ///
+    /// The key lives in the same namespace as
+    /// [`use_state_keyed`](Self::use_state_keyed) (so
+    /// [`remove_state_keyed`](Self::remove_state_keyed) and
+    /// [`retain_state_keyed`](Self::retain_state_keyed) compact it); do not
+    /// reuse a key for a different state type.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `id` already holds keyed state of another type.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # slt::TestBackend::new(20, 4).render(|ui| {
+    /// for id in ["a", "b"] {
+    ///     let row = ui.row(|ui| {
+    ///         ui.text(id);
+    ///     });
+    ///     let glow = ui.animate_bool_keyed(format!("row-hover-{id}"), row.hovered);
+    ///     assert!((0.0..=1.0).contains(&glow));
+    /// }
+    /// # });
+    /// ```
+    pub fn animate_bool_keyed(&mut self, id: impl Into<String>, value: bool) -> f64 {
+        let target = if value { 1.0 } else { 0.0 };
+        self.animate_value_keyed(id, target, crate::anim::DEFAULT_ANIMATE_TICKS)
+    }
+
+    /// [`animate_value`](Self::animate_value) keyed by a runtime string (#458).
+    /// See [`animate_bool_keyed`](Self::animate_bool_keyed) for the key rules.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `id` already holds keyed state of another type.
+    pub fn animate_value_keyed(
+        &mut self,
+        id: impl Into<String>,
+        target: f64,
+        duration_ticks: u64,
+    ) -> f64 {
+        let tick = self.tick;
+        let key: String = id.into();
+        if !self.keyed_states.contains_key(key.as_str()) {
+            self.keyed_states.insert(
+                key.clone(),
+                Box::new(crate::anim::AnimState::new(target, tick)),
+            );
+        }
+        let Some(entry) = self.keyed_states.get_mut(key.as_str()) else {
+            return target;
+        };
+        let state = entry
+            .downcast_mut::<crate::anim::AnimState>()
+            .unwrap_or_else(|| {
+                panic!(
+                    "animate_value_keyed: key {key:?} is already used for a different state type"
+                )
             });
         state.sample(target, duration_ticks, tick)
     }
@@ -2369,6 +2518,7 @@ impl Context {
                 key: Some(crate::runtime::hashed_focus_key(name)),
                 text_entry: None,
                 chords: 0,
+                disabled: self.rollback.disabled_depth > 0,
             },
             true,
         );
@@ -2388,6 +2538,9 @@ impl Context {
         // its name in `focus_name_map`, just without a widget attached).
         self.rollback.pending_focusable_id = Some(id);
         // Same focus-index prediction as `register_focusable`.
+        if self.rollback.disabled_depth > 0 {
+            return false;
+        }
         self.focus_slot_is_current(id)
     }
 

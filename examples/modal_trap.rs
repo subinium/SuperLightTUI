@@ -19,9 +19,7 @@
 //!   │ Last answer: …                      │      │ [Yes][No] │
 //!   └─────────────────────────────────────┘      └───────────┘
 
-use slt::{
-    Border, ButtonVariant, Context, KeyCode, KeyModifiers, RunConfig, context::ModalOptions,
-};
+use slt::{Border, ButtonVariant, Context, KeyCode, KeyModifiers, ModalOpts, RunConfig};
 
 /// Mutable demo state. Bundling these into a struct keeps `main()` minimal
 /// and lets `render` synthesise a deterministic snapshot frame without
@@ -88,7 +86,7 @@ fn body(ui: &mut Context, state: &mut State) {
     if state.show_modal {
         // tab_trap = true is the load-bearing line: focus cannot leave the
         // modal even if a stray click hits a background widget rect.
-        ui.modal_with(ModalOptions { tab_trap: true }, |ui| {
+        ui.modal_with(ModalOpts::new(), |ui| {
             ui.bordered(Border::Rounded)
                 .title("Confirm")
                 .p(sp.sm())

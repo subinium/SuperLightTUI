@@ -25,7 +25,7 @@ Load this when the user asks about feature flags, version-specific APIs, or doc 
 
 - **Mouse is on by default, hover is opt-in.** `RunConfig::default()` resolves to `MouseMode::Drag` locally and `MouseMode::Click` over SSH/mosh, so `clicked` / `right_clicked` / `double_clicked` / `scroll_delta` and (locally) scrollbar and split-pane drags fire with plain `slt::run`. `hovered`, group hover and tooltips need `slt::run_with(RunConfig::default().mouse_mode(MouseMode::Hover), ...)`. `MouseMode::Off` keeps native terminal selection.
 - **Focused inputs own their keys.** `ui.key('q')` / `ui.shortcut(..)` skip the keys a focused `text_input` / `textarea` edits with, in any call order; use `ui.raw_key(c)` to see every press.
-- **`ui.modal` does not trap focus.** It keeps `tab_trap: false`; `modal_with(ModalOptions::default(), ..)` traps.
+- **`ui.modal` traps focus (since 0.26).** It equals `modal_with(ModalOpts::default(), ..)`; `ModalOpts::new().tab_trap(false)` opts out.
 - **`RunConfig::handle_ctrl_c(true)`** is the default; pass `false` to receive Ctrl-C yourself.
 
 ## v0.24 / v0.25 additions
@@ -88,7 +88,9 @@ These shipped in v0.20 and are NOT in older docs. Every entry verified against `
 ### Layout / DX (v0.20)
 - `ContainerBuilder::fill()` — equivalent to `.grow(1)`, more readable
 - `Rect::center_in(outer)`, `center_horizontally_in`, `center_vertically_in` — `src/rect.rs`
-- `Context::modal_with(slt::context::ModalOptions { tab_trap: true }, \|ui\| ...)` — focus-trapped modal (plain `modal` does not trap)
+- `Context::modal_with(slt::ModalOpts::new().anchor(Anchor::TopRight).offset(2, 1), \|ui\| ...)` — anchored, focus-trapped modal (plain `modal` traps too)
+- `Context::popover(rect, Placement::Below, \|ui\| ...)`, `context_menu(&mut MenuState, &resp)`, `menu_bar(&mut MenuBarState)` — anchored popovers and menus
+- `Context::disabled(cond, \|ui\| ...)` and `ContainerBuilder::{hover_bg, focus_bg, focus_within_border_fg, active_bg}` — disabled widgets and CSS-like state styles
 - `Context::static_log(...)` / `take_static_log()` — for `slt::run_static` scrollback
 
 ### Keymap (v0.20)
@@ -151,7 +153,7 @@ These docs are maintained for the current release, but source and compile-tested
 
 **Authoritative when docs disagree**: source code (`src/lib.rs` re-exports, `src/context/widgets/` signatures), compile-checked `examples/*.rs` demos, `tests/*.rs` regression tests.
 
-## Examples (`examples/` — 66 Rust files, 32 Cargo-listed targets)
+## Examples (`examples/` — 67 Rust files, 33 Cargo-listed targets)
 
 The skill's `SKILL.md` lists the canonical reference example for each domain. Highlights:
 - **Feature demos**: `widgets_tour.rs` (target `widgets_tour`, tabbed over every single-feature demo such as `gauge.rs`, `modal_trap.rs`, `named_focus.rs`), `dx_shortcuts.rs` (on_hover/animate_bool/fill), `feature_showcase.rs` (target `feature_showcase`, the same features on one screen).

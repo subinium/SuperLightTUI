@@ -203,7 +203,7 @@ this rule. Do not use them as precedent for new APIs:
 | `heatmap(data, width, height, low_color, high_color)` | 5 |
 | `heatmap_halfblock(data, width, height, low_color, high_color)` | 5 |
 | `overlay_at_offset(anchor, dx, dy, f)` | 4 |
-| `modal_at_offset(anchor, dx, dy, f)` | 4 |
+| `modal_at_offset(anchor, dx, dy, f)` (deprecated: `modal_with(ModalOpts)`) | 4 |
 | `line_chart_colored(data, width, height, color)` | 4 |
 | `area_chart_colored(data, width, height, color)` | 4 |
 | `kitty_image_fit(rgba, src_width, src_height, cols)` | 4 |
@@ -334,7 +334,7 @@ Copy-paste this checklist into any PR that adds or changes a public widget:
 - [ ] Doctest shows idiomatic one-line happy path
 - [ ] Naming matches existing widgets (`fn gauge` returns `Gauge<'_>`, not `GaugeBuilder`; opts struct is
       `GaugeOpts`, not `GaugeConfig` or `GaugeParams`). Known exceptions that predate this rule and are
-      tracked for cleanup: `ModalOptions`, `RunConfig`, `ChartConfig`, `BarChartConfig` — do not copy them
+      tracked for cleanup: `RunConfig`, `ChartConfig`, `BarChartConfig` — do not copy them
 - [ ] No `_w` / `_with_label` / `_numbered` combinatoric suffix variants — fold into builder methods instead
 - [ ] Color customization uses the blessed `_colored` suffix (see [NAMING.md](NAMING.md) suffix table) — the canonical color-override variant for immediate widgets that take a `Color` or `&WidgetColors`; do **not** invent `_w`/`_with_label` cross-products on top of it
 ```

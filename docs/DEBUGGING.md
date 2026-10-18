@@ -38,7 +38,7 @@ with depth so nested containers stay visually separable.
 |--------------|-------|--------------|
 | Green | **Base** | `ui.col`, `ui.row`, `ui.container().*`, every non-overlay widget |
 | Red | **Overlay** | `ui.overlay`, `ui.overlay_at`, `ui.overlay_at_offset`, `ui.tooltip` |
-| Blue | **Modal** | `ui.modal`, `ui.modal_at`, `ui.modal_at_offset` |
+| Blue | **Modal** | `ui.modal`, `ui.modal_with`, open menus (no dim) |
 
 Tooltips currently share the Overlay (red) family because they ride the same
 non-modal overlay plumbing — the layout tree does not yet carry a separate

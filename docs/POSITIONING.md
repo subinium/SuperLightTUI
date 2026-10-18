@@ -15,9 +15,11 @@ model is identical to `position: absolute` + `place-self`.
 | Bottom-right corner | `place-self: end end` | `Align(alignment: Alignment.bottomRight)` | `position: absolute; bottom: 0; right: 0` | `ui.overlay_at(Anchor::BottomRight, \|ui\| ...)` |
 | Bottom-right with inset | `position: absolute; bottom: 16px; right: 16px` | `Positioned(bottom: 16, right: 16)` | `position: absolute; bottom: 16; right: 16` | `ui.overlay_at_offset(Anchor::BottomRight, 2, 1, \|ui\| ...)` |
 | Top notification banner | `position: fixed; top: 0; left: 0; right: 0` | `Align(alignment: Alignment.topCenter)` | `position: absolute; top: 0; left: 0; right: 0` | `ui.overlay_at(Anchor::TopCenter, \|ui\| ...)` |
-| Modal centered with backdrop | `<Modal />` w/ backdrop | `showDialog()` | `<Modal visible={true}>` | `ui.modal_at(Anchor::Center, \|ui\| ...)` |
-| Modal pinned near a corner | `position: fixed; top: 16px; right: 16px` + backdrop | `showDialog` + `Align` + `Padding` | `<Modal>` + absolute child | `ui.modal_at_offset(Anchor::TopRight, 2, 1, \|ui\| ...)` |
+| Modal centered with backdrop | `<Modal />` w/ backdrop | `showDialog()` | `<Modal visible={true}>` | `ui.modal(\|ui\| ...)` |
+| Modal pinned near a corner | `position: fixed; top: 16px; right: 16px` + backdrop | `showDialog` + `Align` + `Padding` | `<Modal>` + absolute child | `ui.modal_with(ModalOpts::new().anchor(Anchor::TopRight).offset(2, 1), \|ui\| ...)` |
 | Tooltip near hovered widget | `position: absolute; top: cursorY; left: cursorX` | computed via offset | computed via offset | `ui.tooltip("...")` (uses previous-frame `Response.rect`) |
+| Popover / dropdown next to an element | anchor positioning + `position-try: flip-block` | `OverlayPortal` / `CompositedTransformFollower` | `<Popover>` | `ui.popover(resp.rect, Placement::Below, \|ui\| ...)` (flips and clamps at screen edges) |
+| Context menu at the pointer | `contextmenu` + absolutely positioned menu | `showMenu(position:)` | `<Menu anchorPosition>` | `ui.context_menu(&mut menu, &resp)` |
 
 > **Units note**: SLT offsets are in **terminal cells**, not pixels.
 > 1 cell ≈ 8 px wide × 16 px tall (font dependent). Use small numbers (1–3 cells).
@@ -56,15 +58,18 @@ it's the same flexbox you know.
 
 ## 3. Offsets — the SLT analog of `inset` / `top` / `right`
 
-`overlay_at` / `modal_at` pin to an anchor with **zero inset**. To inset the
-content (e.g. "16 px from the right edge"), use the offset variants:
+`overlay_at` pins to an anchor with **zero inset**. To inset the content
+(e.g. "16 px from the right edge"), use the offset variant; modals take the
+same anchor and offset through `ModalOpts`:
 
 ```rust
 pub fn overlay_at_offset(&mut self, anchor: Anchor, dx: i32, dy: i32, f: impl FnOnce(&mut Context)) -> Response
-pub fn modal_at_offset(&mut self, anchor: Anchor, dx: i32, dy: i32, f: impl FnOnce(&mut Context)) -> Response
+pub fn modal_with(&mut self, opts: ModalOpts, f: impl FnOnce(&mut Context)) -> Response
+// ModalOpts::new().anchor(anchor).offset(dx, dy)
 ```
 
 `dx` / `dy` are in terminal cells. Both return the overlay's `Response`.
+(`modal_at` / `modal_at_offset` still exist as deprecated wrappers.)
 
 ```
 overlay_at(BottomRight)                overlay_at_offset(BottomRight, 2, 1)
@@ -140,7 +145,8 @@ exist for content that floats independently of the document flow.
 | Toolbar at top of app | `ui.col(\|ui\| { toolbar(ui); main(ui); })` | Part of layout flow |
 | Sidebar on the left | `ui.row(\|ui\| { sidebar(ui); main(ui); })` | Part of layout flow |
 | Floating "Save" badge that doesn't push content | `ui.overlay_at_offset(Anchor::BottomRight, 2, 1, ...)` | Floats above flow |
-| Modal that dims background | `ui.modal_at(Anchor::Center, ...)` | Floats + dims |
+| Modal that dims background | `ui.modal(...)` | Floats + dims |
+| Popover next to a widget | `ui.popover(resp.rect, Placement::Below, ...)` | Floats, flips at edges |
 | Tooltip near a hovered widget | `ui.tooltip("...")` | Anchored to widget rect |
 | Toast notifications | `ui.overlay_at(Anchor::TopRight, ...)` | Floats above flow |
 
@@ -223,8 +229,8 @@ showDialog(context: context, builder: (_) => AlertDialog(...));
 ```
 
 ```rust
-// SLT — modal_at adds the dimmed backdrop automatically
-ui.modal_at(Anchor::Center, |ui| {
+// SLT — modal adds the dimmed backdrop automatically
+ui.modal(|ui| {
     ui.text("Are you sure?");
     if ui.button("OK").clicked { confirm = true; }
 });
@@ -235,8 +241,8 @@ ui.modal_at(Anchor::Center, |ui| {
 ## 6. Common Pitfalls
 
 - **"My overlay collapses to top-left even though content has `align(End)`."**
-  Use the typed entry points: `overlay_at` / `modal_at` (and their `_offset`
-  variants). They internally apply
+  Use the typed entry points: `overlay_at` / `overlay_at_offset`, or
+  `modal_with(ModalOpts::new().anchor(..).offset(..))`. They internally apply
   `grow(1)` to the wrapper so flexbox has slack to push against. Hand-rolling
   with `align`/`justify` on a non-growing container will collapse.
 
@@ -269,11 +275,12 @@ ui.modal_at(Anchor::Center, |ui| {
 ## 7. Cross-References
 
 - **API reference**: `Anchor` is re-exported from the crate root (`src/lib.rs`);
-  `overlay_at`, `overlay_at_offset`, `modal_at`, `modal_at_offset` are
-  `Context` methods
+  `overlay_at`, `overlay_at_offset`, `modal_with` (with `ModalOpts`) and
+  `popover` (with `Placement`) are `Context` methods
 - **Implementation**: `src/context/widgets/overlay.rs` (`Anchor` enum,
   `anchor_to_align_justify`, `anchor_offset_to_margin`, `overlay_at`,
-  `modal_at`, `overlay_at_offset`, `modal_at_offset`)
+  `overlay_at_offset`, `modal_with`) and `src/context/widgets/overlay/popover.rs`
+  (`Placement`, edge flipping, `popover`)
 - **Container margin helpers**: `ml`, `mt`, `mr`, `mb`, `mx`, `my`, `margin` in
   `src/context/container.rs`
 - **Runnable demo**: `cargo run --example system_tour --features async` —
@@ -287,7 +294,7 @@ ui.modal_at(Anchor::Center, |ui| {
 ## 8. TL;DR
 
 ```rust
-use slt::{Anchor, Context};
+use slt::{Anchor, Context, ModalOpts};
 
 let mut show_dialog = true;
 slt::run(|ui: &mut Context| {
@@ -301,9 +308,9 @@ slt::run(|ui: &mut Context| {
         ui.text("Saved").dim();
     });
 
-    // Centered modal with backdrop
+    // Modal with backdrop, pinned near the top-right corner
     if show_dialog {
-        ui.modal_at(Anchor::Center, |ui| {
+        ui.modal_with(ModalOpts::new().anchor(Anchor::TopRight).offset(2, 1), |ui| {
             ui.text("Confirm?");
             if ui.button("OK").clicked { show_dialog = false; }
         });
@@ -311,7 +318,7 @@ slt::run(|ui: &mut Context| {
 });
 ```
 
-That's the whole positioning system. Nine anchors, four entry points
-(`overlay_at` / `modal_at` for zero inset, `overlay_at_offset` /
-`modal_at_offset` for a `(dx, dy)` cell inset), and standard margin helpers
-when the wrapper also needs padding or a border.
+That's the whole positioning system. Nine anchors, `overlay_at` /
+`overlay_at_offset` for floating content, `modal_with(ModalOpts)` for modals,
+`popover(rect, Placement)` for content next to an element, and standard margin
+helpers when the wrapper also needs padding or a border.

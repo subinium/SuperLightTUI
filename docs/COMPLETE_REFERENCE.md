@@ -294,10 +294,15 @@ Legend: `Response = { clicked, hovered, changed, focused, rect }`. `&mut Self` m
 | `ui.scroll_col(&mut scroll, |ui|{...})` | `Response` | Vertically scrollable column — shortcut for `scrollable(state).grow(1).col(f)`. |
 | `ui.scroll_row(&mut scroll, |ui|{...})` | `Response` | Horizontally scrollable row — shortcut for `scrollable(state).grow(1).row(f)`. |
 | `ui.scrollbar(&mut scroll)` | `Response` | Draw and interact with the scrollbar track. |
-| `ui.modal(|ui| {...})` | `Response` | Dimmed overlay, focus trapped. |
+| `ui.modal(|ui| {...})` | `Response` | Dimmed overlay, focus trapped; equals `modal_with(ModalOpts::default(), ..)`. |
+| `ui.modal_with(ModalOpts::new().anchor(Anchor::TopRight).offset(2, 1), |ui| {...})` | `Response` | Modal options: `tab_trap(bool)` (default `true`), `anchor`, `offset`. `modal_at` / `modal_at_offset` are deprecated wrappers. |
 | `ui.overlay(|ui| {...})` | `Response` | Float without dimming. |
+| `ui.popover(resp.rect, Placement::Below, |ui| {...})` | `PopoverResponse` | Panel anchored to an element; flips at screen edges, clamped inside; `.dismissed` on Esc / outside press. |
+| `ui.context_menu(&mut MenuState, &resp)` | `Option<String>` | Right-click / `Shift+F10` / `Menu` key menu; returns the activated item id. |
+| `ui.menu_bar(&mut MenuBarState)` | `Option<String>` | Menu bar: click, `F10`, `Alt+letter`, arrows, submenus. |
+| `ui.disabled(cond, |ui| {...})` | `R` | Disable the widgets inside: no focus, clicks or keys, dim, `Response::disabled`. |
 | `ui.tooltip(text)` | `()` | Shown near cursor on hover. |
-| `ui.group(name)` | `ContainerBuilder` | Named group for shared hover/focus styling. |
+| `ui.group(name)` | `ContainerBuilder` | Named group; `group_hover_*` follow that instance's hover. Per-element states: `.hover_bg`, `.focus_bg`, `.focus_within_border_fg`, `.active_bg` (and `_fg` / `_border_fg`). |
 | `ui.screen(name, &mut screens, |ui|{...})` | `()` | Render only when `screens.current() == name`. Isolates hook state and focus per screen. |
 | `ui.push_screen(name)` / `ui.pop_screen()` / `ui.reset_screen()` | `()` | Navigate from **inside** a `screen(...)` closure. State updates when the closure returns; the destination renders next frame (issue #279). |
 | `ui.form(&mut form_state, |ui|{...})` | `&mut Self` | Form container. |
@@ -351,7 +356,7 @@ Finalization:
 | `ui.text_input(&mut state)` / `text_input_colored` | `TextInputState` | Single-line input. |
 | `ui.textarea(&mut state, visible_rows)` | `TextareaState` | Multi-line editor. |
 | `ui.code_editor(&mut state)` | `CodeEditorState` | Builder; `.show()` returns `Response` (`changed` when the text changed). Syntax-highlighted editor on a `TextareaState` (same keys, selection, clipboard, undo / redo). `.line_numbers(bool)` (right-aligned gutter, on by default), `.h(rows)`, `.w(cols)`, `.wrap(bool)` (soft wrap; default horizontal scroll), `.current_line(bool)`, `.bracket_match(bool)`. Highlighting follows `CodeEditorState::lang` and needs the `syntax-*` feature (plain fallback edits identically). Tab inserts spaces to the next tab stop (`.tab_width(n)` / `.hard_tabs(true)` on the state), Tab / Shift+Tab indent / dedent a multi-line selection, Enter keeps the indentation (+1 level after `{` `(` `[`), PageUp / PageDown page. Owns Tab while focused unless `CodeEditorState::tab_indents(false)`. Only visible rows render; an edit re-highlights only its chunk. |
-| `ui.select(&mut state)` / `select_colored` | `SelectState` | Dropdown. |
+| `ui.select(&mut state)` / `select_colored` | `SelectState` | Dropdown; the open list floats over the content below. |
 | `ui.radio(&mut state)` / `radio_colored` | `RadioState` | Radio group. |
 | `ui.multi_select(&mut state)` | `MultiSelectState` | Multi-select with Space. |
 | `ui.tabs(&mut state)` / `tabs_colored` | `TabsState` | Tab bar. |

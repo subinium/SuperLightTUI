@@ -311,7 +311,7 @@ impl Deref for BreadcrumbResponse {
 
 `<Widget>Opts`. Used when ≥ 4 positional parameters would otherwise inflate
 the function signature (`GutterOpts` replaces three positional arguments plus a closure).
-Known naming exceptions: `ModalOptions`, `RunConfig`, `ChartConfig`, `BarChartConfig`
+Known naming exceptions: `RunConfig`, `ChartConfig`, `BarChartConfig`
 (see [API_DESIGN.md](API_DESIGN.md)).
 
 ```rust
