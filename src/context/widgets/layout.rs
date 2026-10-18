@@ -510,9 +510,12 @@ impl Context {
     ///
     /// Pass a [`ScrollState`] to persist scroll position across frames. The state
     /// is updated in-place with the current scroll offset and bounds.
-    /// Wheel events target the last-painted containing region with overflow
-    /// on the requested axis. That region owns the event even at its offset
-    /// limit; events do not bubble to an ancestor at a scroll boundary.
+    /// Wheel events go to the innermost region under the pointer that can
+    /// still move on the requested axis. When a nested scrollable reaches its
+    /// end, further wheel motion chains to the enclosing scrollable (the
+    /// browser default). Call [`ContainerBuilder::overscroll_contain`] on a
+    /// region that should keep the wheel at its limit instead, such as a popup
+    /// list.
     ///
     /// # Example
     ///
@@ -899,44 +902,102 @@ impl Context {
         changed
     }
 
+    /// Assign every unconsumed wheel event of this frame to one scroll region
+    /// (#440): the innermost region under the pointer, on the event's axis,
+    /// that can still move in the event's direction.
+    ///
+    /// `scrollable()` binds before its children run, so the chain is resolved
+    /// up front from the previous frame's rendered offsets and limits. A
+    /// simulated offset per region advances with each event, so a burst fills
+    /// the inner region to its end and spills the rest to the enclosing one,
+    /// like the browser default `overscroll-behavior: auto`. A region marked
+    /// with [`ContainerBuilder::overscroll_contain`] stops the chain even at
+    /// its limit. An event no region can absorb stays unconsumed.
+    fn resolve_wheel_chain(&self) -> Vec<Option<usize>> {
+        let delta = self.scroll_lines_per_event.max(1);
+        let contained = |region: usize| {
+            self.prev_geometry
+                .scrolls
+                .get(region)
+                .is_some_and(|scroll| self.overscroll_contained(scroll.state_id))
+        };
+        // Simulated `(offset, max_offset)` per region; `None` when the
+        // previous frame recorded no geometry for it (it then always absorbs,
+        // the pre-chaining behavior).
+        let mut simulated: Vec<Option<(u32, u32)>> = (0..self.prev_scroll_rects.len())
+            .map(|region| {
+                self.prev_geometry.scrolls.get(region).map(|scroll| {
+                    let max = scroll.max_offset();
+                    (scroll.offset.min(max), max)
+                })
+            })
+            .collect();
+        self.events
+            .iter()
+            .enumerate()
+            .map(|(i, event)| {
+                let Event::Mouse(mouse) = event else {
+                    return None;
+                };
+                if self.consumed[i] {
+                    return None;
+                }
+                let (horizontal, backwards) = match mouse.kind {
+                    MouseKind::ScrollLeft => (true, true),
+                    MouseKind::ScrollRight => (true, false),
+                    MouseKind::ScrollUp => (mouse.modifiers.contains(KeyModifiers::SHIFT), true),
+                    MouseKind::ScrollDown => (mouse.modifiers.contains(KeyModifiers::SHIFT), false),
+                    _ => return None,
+                };
+                // Innermost first: later-collected regions are nested inside
+                // or painted above earlier ones.
+                for (region, (rect, &(content, viewport, axis))) in self
+                    .prev_scroll_rects
+                    .iter()
+                    .zip(&self.prev_scroll_infos)
+                    .enumerate()
+                    .rev()
+                {
+                    if axis != horizontal || content <= viewport || !rect.contains(mouse.x, mouse.y)
+                    {
+                        continue;
+                    }
+                    match simulated.get_mut(region).and_then(Option::as_mut) {
+                        None => return Some(region),
+                        Some((offset, max)) => {
+                            let can_move = if backwards {
+                                *offset > 0
+                            } else {
+                                *offset < *max
+                            };
+                            if can_move {
+                                *offset = if backwards {
+                                    offset.saturating_sub(delta)
+                                } else {
+                                    offset.saturating_add(delta).min(*max)
+                                };
+                                return Some(region);
+                            }
+                            if contained(region) {
+                                // `overscroll-behavior: contain`: swallow the
+                                // event at the limit instead of chaining.
+                                return Some(region);
+                            }
+                        }
+                    }
+                }
+                None
+            })
+            .collect()
+    }
+
     fn auto_scroll_nested(&mut self, index: usize, state: &mut ScrollState, is_horizontal: bool) {
         if !self.interaction_allowed() || self.events.is_empty() {
             return;
         }
         if self.scroll_wheel_targets.is_none() {
             // One O(events * regions) pass, never a region discovery on idle frames.
-            self.scroll_wheel_targets = Some(
-                self.events
-                    .iter()
-                    .enumerate()
-                    .map(|(i, event)| {
-                        let Event::Mouse(mouse) = event else {
-                            return None;
-                        };
-                        if self.consumed[i] {
-                            return None;
-                        }
-                        let horizontal = match mouse.kind {
-                            MouseKind::ScrollLeft | MouseKind::ScrollRight => true,
-                            MouseKind::ScrollUp | MouseKind::ScrollDown => {
-                                mouse.modifiers.contains(KeyModifiers::SHIFT)
-                            }
-                            _ => return None,
-                        };
-                        self.prev_scroll_rects
-                            .iter()
-                            .zip(&self.prev_scroll_infos)
-                            .enumerate()
-                            .rev()
-                            .find_map(|(candidate, (rect, &(content, viewport, axis)))| {
-                                (axis == horizontal
-                                    && content > viewport
-                                    && rect.contains(mouse.x, mouse.y))
-                                .then_some(candidate)
-                            })
-                    })
-                    .collect(),
-            );
+            self.scroll_wheel_targets = Some(self.resolve_wheel_chain());
         }
         let targets = self
             .scroll_wheel_targets

@@ -212,6 +212,8 @@ Two rules do not exist on the web:
 | CSS | SLT | Notes |
 |-----|-----|-------|
 | `overflow: auto` / `scroll` | `ui.scrollable(&mut ScrollState).col(..)` | Wheel, keyboard focus, and `ui.scrollbar(&mut state)`. `scroll_col` / `scroll_row` are shorthands. |
+| `overscroll-behavior: auto` (scroll chaining) | the default: an inner scrollable at its end hands the wheel to the enclosing one | |
+| `overscroll-behavior: contain` | `ui.scrollable(&mut s).overscroll_contain()` | Keeps the wheel inside the region at its limit. |
 | `scrollIntoView()` on focus | automatic: `ScrollState::follow_focus` (on by default) | Set `follow_focus = false` for app-controlled scrolling. |
 | `overflow: hidden` | the default: children clip to their container | |
 | `position: fixed` / `absolute` | `ui.overlay_at(Anchor::TopRight, \|ui\| ..)`, `ui.overlay_at_offset(anchor, dx, dy, ..)` | Positioned against the whole screen, not a parent element. |

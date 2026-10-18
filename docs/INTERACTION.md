@@ -289,6 +289,33 @@ if chart.scroll_delta > 0 {
 // ui.scroll_left(), ui.scroll_right().
 ```
 
+Nested scrollables chain the wheel like a browser: wheel motion over an inner
+scrollable moves it until it reaches its end, and further motion scrolls the
+enclosing one, with no dead zones over expanded blocks. A burst that crosses
+the limit splits, so the inner region takes what it can absorb and the outer
+region takes the rest. Call `.overscroll_contain()` on a region that should
+keep the wheel at its limit instead (CSS `overscroll-behavior: contain`), for
+example a popup list over a scrolling page:
+
+<!-- slt-check: {"name":"ix_overscroll_contain","features":[],"context":"ui"} -->
+```rust
+let mut page = ScrollState::new();
+let mut picker = ScrollState::new();
+let _ = ui.scrollable(&mut page).grow(1).col(|ui| {
+    let _ = ui
+        .scrollable(&mut picker)
+        .max_h(5)
+        .border(Border::Single)
+        .overscroll_contain()
+        .col(|ui| {
+            for i in 0..30 {
+                ui.text(format!("option {i}"));
+            }
+        });
+    ui.text("page content");
+});
+```
+
 `ScrollState::follow_focus` (on by default) scrolls a newly focused child into
 view, so Tab through a long form keeps the focused field visible. Set it to
 `false` when your app controls the offset (`set_offset`, `scroll_down`).
@@ -556,20 +583,16 @@ Notes:
 
 These are current behaviors, not misuse. Design around them for now.
 
-1. **Nested scrollables do not hand off the wheel.** When an inner scrollable
-   reaches its end, further wheel motion over it does not scroll the outer
-   one. Avoid nesting vertical scrollables, or give the inner one a fixed
-   height and keep it short.
-2. **Text selection can start during handle drags.** Dragging a scrollbar
+1. **Text selection can start during handle drags.** Dragging a scrollbar
    thumb or a split handle may also activate the built-in selection overlay
    and copy text on release.
-3. **No scroll anchoring.** Collapsing or inserting content above the
+2. **No scroll anchoring.** Collapsing or inserting content above the
    viewport shifts the visible content, and there is no stick-to-bottom mode
    for logs. Adjust `ScrollState::offset` yourself when you need either.
-4. **Emoji width disagreements.** Some multiplexers and terminals measure ZWJ
+3. **Emoji width disagreements.** Some multiplexers and terminals measure ZWJ
    sequences, skin-tone modifiers, and VS16 emoji differently from SLT, which
    can leave artifacts on that row.
-5. **Missing primitives.** No disabled or active (pressed) widget states, no
+4. **Missing primitives.** No disabled or active (pressed) widget states, no
    context-menu widget (use `right_clicked` plus your own overlay), and no
    cursor-shape API.
 

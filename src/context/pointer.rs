@@ -27,6 +27,8 @@ use std::cell::OnceCell;
 pub(crate) const HIT_PASSTHROUGH: u8 = 1 << 0;
 /// Slot flag: the slot also receives clicks whose winner is a descendant.
 pub(crate) const HIT_BUBBLE: u8 = 1 << 1;
+/// Builder flag: a scroll region keeps wheel events at its limit (#440).
+pub(crate) const SCROLL_CONTAIN: u8 = 1 << 2;
 
 /// One mouse button press (or release) observed this frame.
 #[derive(Clone, Copy, Debug)]
@@ -65,6 +67,10 @@ pub(crate) struct PointerState {
     pub hit_flags_buf: Vec<u8>,
     /// Active pointer capture carried across frames (#442).
     pub capture: Option<PointerCapture>,
+    /// `ScrollState` ids marked `overscroll_contain` last frame (#440).
+    pub contain_prev: Vec<u64>,
+    /// Recycled buffer for this frame's contained scroll ids.
+    pub contain_buf: Vec<u64>,
     /// `RunConfig::click_on_release`, refreshed by the frame kernel.
     pub click_on_release: bool,
 }
@@ -136,6 +142,10 @@ pub(crate) struct PointerFrame {
     pub passthrough_depth: u32,
     /// Capture carried in from the previous frame (#442).
     pub capture_in: Option<PointerCapture>,
+    /// `ScrollState` ids marked `overscroll_contain` last frame (#440).
+    pub contain_prev: Vec<u64>,
+    /// `ScrollState` ids marked `overscroll_contain` this frame.
+    pub contain: Vec<u64>,
     /// `RunConfig::click_on_release` for this frame.
     pub click_on_release: bool,
     /// Lazily computed gestures for this frame.
@@ -151,6 +161,8 @@ impl PointerFrame {
     pub(crate) fn begin(state: &mut FrameState) -> Self {
         let mut hit_flags = std::mem::take(&mut state.pointer.hit_flags_buf);
         hit_flags.clear();
+        let mut contain = std::mem::take(&mut state.pointer.contain_buf);
+        contain.clear();
         Self {
             presses: SmallVec::new(),
             hit_meta: std::mem::take(&mut state.layout_feedback.prev_hit_meta),
@@ -158,6 +170,8 @@ impl PointerFrame {
             hit_flags,
             passthrough_depth: 0,
             capture_in: state.pointer.capture,
+            contain_prev: std::mem::take(&mut state.pointer.contain_prev),
+            contain,
             click_on_release: state.pointer.click_on_release,
             gestures: OnceCell::new(),
             targets: OnceCell::new(),
@@ -191,6 +205,10 @@ impl Context {
         previous.clear();
         state.pointer.hit_flags_buf = previous;
         state.pointer.hit_flags_prev = std::mem::take(&mut pointer.hit_flags);
+        let mut previous = std::mem::take(&mut pointer.contain_prev);
+        previous.clear();
+        state.pointer.contain_buf = previous;
+        state.pointer.contain_prev = std::mem::take(&mut pointer.contain);
         pointer.gestures = OnceCell::new();
         pointer.targets = OnceCell::new();
     }
@@ -482,6 +500,21 @@ impl Context {
         }
     }
 
+    /// Record a finished container's pointer flags: hit-test flags for its
+    /// interaction slot and, for a scrollable, its overscroll containment.
+    pub(crate) fn mark_pointer_flags(&mut self, id: usize, flags: u8, scroll_state_id: u64) {
+        if flags & SCROLL_CONTAIN != 0 && scroll_state_id != 0 {
+            self.pointer.contain.push(scroll_state_id);
+        }
+        self.mark_hit_flags(id, flags & (HIT_PASSTHROUGH | HIT_BUBBLE));
+    }
+
+    /// Whether the scroll region bound to `state_id` was marked
+    /// `overscroll_contain` on the previous frame.
+    pub(crate) fn overscroll_contained(&self, state_id: u64) -> bool {
+        state_id != 0 && self.pointer.contain_prev.contains(&state_id)
+    }
+
     /// Record pointer flags for interaction slot `id` this frame. Slots
     /// created inside a hit-transparent scope are marked transparent too.
     pub(crate) fn mark_hit_flags(&mut self, id: usize, mut flags: u8) {
@@ -559,6 +592,37 @@ impl ContainerBuilder<'_> {
     /// ```
     pub fn bubble_clicks(mut self) -> Self {
         self.pointer_flags |= HIT_BUBBLE;
+        self
+    }
+
+    /// Keep wheel events inside this scroll region at its scroll limit.
+    ///
+    /// By default a nested [`scrollable`](Context::scrollable) that reaches
+    /// its end hands further wheel motion to the enclosing scrollable (the
+    /// browser default, `overscroll-behavior: auto`). `overscroll_contain()`
+    /// stops that chain for this region, like CSS
+    /// `overscroll-behavior: contain`: useful for popups, pickers and modals
+    /// whose list should not scroll the page behind them. Has no effect on a
+    /// container that is not a `scrollable`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use slt::ScrollState;
+    /// # let mut page = ScrollState::new();
+    /// # let mut popup = ScrollState::new();
+    /// # slt::TestBackend::new(30, 10).render(|ui| {
+    /// let _ = ui.scrollable(&mut page).grow(1).col(|ui| {
+    ///     let _ = ui.scrollable(&mut popup).max_h(4).overscroll_contain().col(|ui| {
+    ///         for i in 0..20 {
+    ///             ui.text(format!("item {i}"));
+    ///         }
+    ///     });
+    /// });
+    /// # });
+    /// ```
+    pub fn overscroll_contain(mut self) -> Self {
+        self.pointer_flags |= SCROLL_CONTAIN;
         self
     }
 

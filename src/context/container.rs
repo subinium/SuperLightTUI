@@ -2055,7 +2055,8 @@ impl<'a> ContainerBuilder<'a> {
 
     fn finish(mut self, direction: Direction, f: impl FnOnce(&mut Context)) -> Response {
         let interaction_id = self.ctx.next_interaction_id();
-        self.ctx.mark_hit_flags(interaction_id, self.pointer_flags);
+        self.ctx
+            .mark_pointer_flags(interaction_id, self.pointer_flags, self.scroll_state_id);
         // `row_gap` / `col_gap` are `Option<u32>` (positive override); fall back
         // to the signed builder `gap`, which alone can carry an overlap (#222).
         let resolved_gap: i32 = match direction {

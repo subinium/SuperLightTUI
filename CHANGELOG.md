@@ -16,6 +16,8 @@
   on a release inside the pressed widget, so dragging off cancels.
   `TestBackend::with_run_config` renders headless frames with a custom
   `RunConfig`.
+- `ContainerBuilder::overscroll_contain()` keeps wheel events inside a
+  scrollable at its limit, like CSS `overscroll-behavior: contain` (#440).
 
 ### Changed
 
@@ -45,6 +47,12 @@
 
 ### Fixed
 
+- Nested scrollables chain the wheel (#440): once an inner scrollable reaches
+  its end, further wheel events over it scroll the enclosing scrollable
+  instead of being swallowed. Each event goes to the innermost region on its
+  axis that can still move, so a burst fills the inner region and spills the
+  rest outward. Events no region can absorb stay unconsumed for frame-global
+  wheel helpers.
 - Split-pane and scrollbar drags no longer stick to the pointer when the
   release is lost: they end on terminal focus loss, on resize, on a press
   elsewhere and on motion reported without a held button (#442).

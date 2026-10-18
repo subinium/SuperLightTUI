@@ -27,6 +27,11 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
   `modifiers`): code that builds a `Response { .. }` literal must add
   `..Response::default()`. Several presses in one frame are now all
   delivered instead of only the last one.
+- **Wheel chaining (#440).** A nested scrollable at its end now passes the
+  wheel to the enclosing scrollable. Add `.overscroll_contain()` to an inner
+  region (popups, pickers) that must keep the wheel. A wheel event that no
+  region can move is left unconsumed, so `ui.scroll_up()` / `ui.scroll_down()`
+  may now see it where the innermost region used to swallow it.
 
 ---
 
