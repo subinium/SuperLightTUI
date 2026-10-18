@@ -610,15 +610,12 @@ impl Context {
             } else {
                 LevelRects::new()
             };
-            // Hovering another title while a dropdown is open switches menus.
-            if state.cursor.is_open()
-                && self.pointer_moved()
-                && let Some(title) = self.mouse_pos.and_then(title_at)
-                && title != selected
-            {
-                open_menu(state, title);
-            }
-            if state.cursor.is_open() && state.selected == selected {
+            // Presses are hit-tested against the dropdown drawn last frame
+            // before hover may switch menus: a click on the title that hover
+            // switches to in this same frame then opens it like any click on
+            // another title, instead of being skipped (and left unconsumed)
+            // because the open menu no longer matches the drawn rects.
+            if state.cursor.is_open() {
                 let MenuBarState { menus, cursor, .. } = &mut *state;
                 match self.menu_pointer(&menus[selected].1, cursor, &rects) {
                     MenuPointer::Activated(id) => activated = Some(id),
@@ -637,6 +634,15 @@ impl Context {
                     Some(title) => open_menu(state, title),
                     None => state.close(),
                 }
+            }
+            // Hovering another title while a dropdown is open switches menus.
+            if activated.is_none()
+                && state.cursor.is_open()
+                && self.pointer_moved()
+                && let Some(title) = self.mouse_pos.and_then(title_at)
+                && title != state.selected
+            {
+                open_menu(state, title);
             }
             if state.active && activated.is_none() {
                 let keys: SmallVec<[(usize, KeyCode, KeyModifiers); 4]> = self

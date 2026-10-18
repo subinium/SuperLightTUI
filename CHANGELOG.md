@@ -365,6 +365,15 @@
 - `list` and unpaged `table` showed a selection below the viewport off
   screen, and clicks mapped to the wrong row once scrolled; clicks now map
   to `offset + row` (below the header for tables) (#487).
+- `menu_bar`: a click on another title in the same frame in which hover
+  switches the open dropdown to it is now handled like any click on that
+  title (it opens and stays open) instead of being skipped and left
+  unconsumed for widgets and `raw_events` (#459).
+- The modal focus trap no longer leaves focus on a disabled slot: when the
+  modal opens (or focus was clamped into it) on a disabled widget, focus moves
+  to the next enabled slot inside the modal, and Tab / Shift+Tab keep skipping
+  disabled slots. A modal whose slots are all disabled focuses nothing and
+  Tab stays a no-op inside it (#458).
 
 ### Perf
 

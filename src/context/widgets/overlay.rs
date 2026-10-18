@@ -402,6 +402,24 @@ impl Context {
             if self.focus_index < lo || self.focus_index >= hi {
                 self.focus_index = lo;
             }
+            // #458: never park the trap on a disabled slot (for example a
+            // disabled first button when the modal opens). Move forward,
+            // wrapping inside the modal, to the first enabled slot. When
+            // every slot is disabled focus stays put: no modal widget reports
+            // `focused`, and Tab / Shift+Tab remain no-ops inside the trap.
+            let disabled = |index: usize| {
+                self.focus_identity
+                    .slots
+                    .get(index)
+                    .is_some_and(|slot| slot.disabled)
+            };
+            if disabled(self.focus_index)
+                && let Some(enabled) = (self.focus_index..hi)
+                    .chain(lo..self.focus_index)
+                    .find(|&index| !disabled(index))
+            {
+                self.focus_index = enabled;
+            }
         }
 
         if self.rollback.modal_id == Some(modal_id) {
