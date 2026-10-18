@@ -195,7 +195,17 @@ as `keymap_help_overlay`, and hook/side-effect methods.
 
 ```
 src/
-├── lib.rs                      # Crate root, public re-exports, run()/frame() entry points
+├── lib.rs                      # Crate root: docs, mod decls, public re-exports, Backend / AppState / frame()
+├── runtime.rs                  # Private run-loop facade; entry points re-exported from lib.rs
+├── runtime/
+│   ├── config.rs               # RunConfig + builder methods
+│   ├── frame_state.rs          # FrameState, FocusState, LayoutFeedbackState, DiagnosticsState, DebugLayer
+│   ├── kernel.rs               # run_frame_kernel, run_frame, input_frame, run-loop event handling
+│   ├── native.rs               # run / run_with / run_inline* / run_static*, event polling (`crossterm`)
+│   ├── async_run.rs            # run_async*, AsyncSender, AsyncRunHandle (`async`)
+│   ├── panic.rs                # Panic hook + recoverable-panic scopes
+│   ├── suspend.rs              # Ctrl+Z suspend / resume (`crossterm`, unix)
+│   └── tests.rs                # Run-loop tests
 ├── context.rs                  # Facade for core context types + widget impl modules
 ├── context/
 │   ├── state.rs                # State<T>, Response
@@ -351,7 +361,7 @@ Every frame follows this exact sequence. The engine performs **four top-level DF
    └── See "The collect_all consolidation" below for what this replaced
    └── Follow-focus check: if a focus transition or fresh bounds require a
        scroll correction, apply_scroll_adjustments() rewrites the scroll
-       offsets in place and collect_all() runs once more (src/lib.rs)
+       offsets in place and collect_all() runs once more (src/runtime/kernel.rs)
 
 7. RENDER + DEFERRED DRAW — layout::render()         [DFS pass 4 of 4]
    └── render() → render_inner() → render_container_border()
@@ -406,7 +416,7 @@ Interactive widgets depend on `prev_*` data for hit testing, scroll bounds, and 
 ## Module Dependency Flow
 
 ```
-lib.rs (entry point)
+lib.rs (entry point) ←── runtime.rs ←── runtime/*.rs (run loops, frame kernel)
   ├── context.rs ←── context/widgets_*.rs (impl blocks on Context)
   │     ↑
   │     ├── widgets.rs (state types)

@@ -166,7 +166,17 @@ gh run list --commit $(git rev-parse HEAD) --limit 5
 ## Architecture
 ```
 src/
-├── lib.rs                      # Crate root, public re-exports, run()/frame() entry points
+├── lib.rs                      # Crate root: docs, mod decls, public re-exports, Backend / AppState / frame()
+├── runtime.rs                  # Private run-loop facade; entry points re-exported from lib.rs
+├── runtime/
+│   ├── config.rs               # RunConfig + builder methods
+│   ├── frame_state.rs          # FrameState, FocusState, LayoutFeedbackState, DiagnosticsState, DebugLayer
+│   ├── kernel.rs               # run_frame_kernel, run_frame, input_frame, run-loop event handling
+│   ├── native.rs               # run / run_with / run_inline* / run_static*, event polling (`crossterm`)
+│   ├── async_run.rs            # run_async*, AsyncSender, AsyncRunHandle (`async`)
+│   ├── panic.rs                # Panic hook + recoverable-panic scopes
+│   ├── suspend.rs              # Ctrl+Z suspend / resume (`crossterm`, unix)
+│   └── tests.rs                # Run-loop tests
 ├── context.rs                  # Facade for core context types + widget impl modules
 ├── context/
 │   ├── state.rs                # State<T>, Response
