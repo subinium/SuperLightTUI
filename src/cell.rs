@@ -168,7 +168,7 @@ const _: () = assert!(
 /// inline storage of short strings — no heap allocation for ≤24 bytes).
 /// Wide graphemes occupy adjacent cells. The leading cell stores the
 /// grapheme and every continuation cell has an empty `symbol`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Eq)]
 pub struct Cell {
     /// The grapheme cluster displayed in this cell. Defaults to a single space.
     pub symbol: CompactString,
@@ -177,6 +177,33 @@ pub struct Cell {
     /// Optional OSC 8 hyperlink URL. When set, the terminal renders this cell
     /// as a clickable link.
     pub hyperlink: Option<CompactString>,
+}
+
+/// Field-wise equality, as `#[derive(PartialEq)]` would compare, with an
+/// inline byte compare for short symbols: the flush and `Buffer::diff`
+/// compare every candidate cell, and a `memcmp` call per one-to-four-byte
+/// symbol dominated that loop (#486).
+impl PartialEq for Cell {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        symbol_eq(&self.symbol, &other.symbol)
+            && self.style == other.style
+            && self.hyperlink == other.hyperlink
+    }
+}
+
+#[inline]
+fn symbol_eq(a: &CompactString, b: &CompactString) -> bool {
+    const INLINE_COMPARE_BYTES: usize = 8;
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    if a.len() <= INLINE_COMPARE_BYTES {
+        a.iter().zip(b).all(|(x, y)| x == y)
+    } else {
+        a == b
+    }
 }
 
 impl Default for Cell {
@@ -353,6 +380,27 @@ mod tests {
             let cell = Cell { symbol: CompactString::new(&s), ..Cell::default() };
             let (emitted, normalized) = (cell.emit_symbol().into_owned(), cell.normalized_symbol());
             prop_assert_eq!(emitted.as_str(), normalized.as_str());
+        }
+
+        #[test]
+        fn cell_eq_matches_field_wise_equality(
+            a in prop_oneof![Just(String::new()), test_strategies::fragment(), ".{0,12}"],
+            b in prop_oneof![Just(String::new()), test_strategies::fragment(), ".{0,12}"],
+            same_symbol in any::<bool>(),
+            bold in any::<(bool, bool)>(),
+            link in any::<(bool, bool)>(),
+        ) {
+            let b = if same_symbol { a.clone() } else { b };
+            let make = |symbol: &str, bold: bool, link: bool| Cell {
+                symbol: CompactString::new(symbol),
+                style: if bold { Style::new().bold() } else { Style::new() },
+                hyperlink: link.then(|| CompactString::new("https://example.com")),
+            };
+            let (x, y) = (make(&a, bold.0, link.0), make(&b, bold.1, link.1));
+            let field_wise = x.symbol.as_str() == y.symbol.as_str()
+                && x.style == y.style
+                && x.hyperlink == y.hyperlink;
+            prop_assert_eq!(x == y, field_wise);
         }
 
         #[test]
