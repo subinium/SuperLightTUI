@@ -1514,6 +1514,94 @@ impl Buffer {
         self.set_grapheme_normalized(x, y, symbol, width, style, None, clip);
     }
 
+    /// Write `ch` with `style` to `count` cells of row `y` from column `x`:
+    /// the cells of calling [`Buffer::set_char`] for `x..x + count` in order,
+    /// with the sanitize, width and clip work done once (border edges).
+    pub(crate) fn set_char_row(&mut self, x: u32, y: u32, count: u32, ch: char, style: Style) {
+        let ch = sanitize_cell_char(ch);
+        let end = x.saturating_add(count);
+        if ch.is_ascii() || char_display_width(ch) != 1 {
+            for col in x..end {
+                self.set_char(col, y, ch, style);
+            }
+            return;
+        }
+        let clip = self.effective_clip().copied();
+        let mut encoded = [0; 4];
+        let symbol = compact_str::CompactString::new(ch.encode_utf8(&mut encoded));
+        // Outside the area or clip a narrow write is a no-op, so only the
+        // visible columns are visited.
+        let mut lo = x.max(self.area.x);
+        let mut hi = end.min(self.area.right());
+        if y < self.area.y || y >= self.area.bottom() {
+            return;
+        }
+        if let Some(clip) = clip {
+            if y < clip.y || y >= clip.bottom() {
+                return;
+            }
+            lo = lo.max(clip.x);
+            hi = hi.min(clip.right());
+        }
+        for col in lo..hi {
+            self.set_narrow_symbol(col, y, &symbol, style, clip);
+        }
+    }
+
+    /// Column counterpart of [`Buffer::set_char_row`]: `ch` at `x` on rows
+    /// `y..y + count`, as [`Buffer::set_char`] would write them.
+    pub(crate) fn set_char_column(&mut self, x: u32, y: u32, count: u32, ch: char, style: Style) {
+        let ch = sanitize_cell_char(ch);
+        let end = y.saturating_add(count);
+        if ch.is_ascii() || char_display_width(ch) != 1 {
+            for row in y..end {
+                self.set_char(x, row, ch, style);
+            }
+            return;
+        }
+        let clip = self.effective_clip().copied();
+        let mut encoded = [0; 4];
+        let symbol = compact_str::CompactString::new(ch.encode_utf8(&mut encoded));
+        if x < self.area.x || x >= self.area.right() {
+            return;
+        }
+        let mut lo = y.max(self.area.y);
+        let mut hi = end.min(self.area.bottom());
+        if let Some(clip) = clip {
+            if x < clip.x || x >= clip.right() {
+                return;
+            }
+            lo = lo.max(clip.y);
+            hi = hi.min(clip.bottom());
+        }
+        for row in lo..hi {
+            self.set_narrow_symbol(x, row, &symbol, style, clip);
+        }
+    }
+
+    /// The width-1, non-ASCII arm of [`Buffer::set_char`] for an in-area,
+    /// in-clip cell: overwrite a narrow cell in place, otherwise take the
+    /// general grapheme path.
+    #[inline]
+    fn set_narrow_symbol(
+        &mut self,
+        x: u32,
+        y: u32,
+        symbol: &compact_str::CompactString,
+        style: Style,
+        clip: Option<Rect>,
+    ) {
+        if let Some(idx) = self.narrow_cell_index(x, y, clip) {
+            self.touch_cols(y, x, x + 1);
+            let cell = &mut self.content[idx];
+            cell.symbol.clone_from(symbol);
+            cell.style = style;
+            cell.hyperlink = None;
+        } else {
+            self.set_grapheme_normalized(x, y, symbol.clone(), 1, style, None, clip);
+        }
+    }
+
     /// Compute the diff between `self` (current) and `other` (previous).
     ///
     /// Returns `(x, y, cell)` tuples for every cell that changed. Useful for
@@ -3030,6 +3118,15 @@ mod tests {
                 y: u32,
                 symbol: String,
             },
+            /// Border edge runs (`set_char_row` / `set_char_column`).
+            CharRun {
+                x: u32,
+                y: u32,
+                count: u32,
+                ch: char,
+                style: u8,
+                vertical: bool,
+            },
             /// Container background fill (#493).
             Fill {
                 x: u32,
@@ -3066,6 +3163,22 @@ mod tests {
                 1 => Just(Op::PopClip),
                 2 => (x.clone(), y.clone(), 0u32..14, 0u32..5, any::<u8>())
                     .prop_map(|(x, y, w, h, style)| Op::Fill { x, y, w, h, style }),
+                2 => (
+                    x.clone(),
+                    y.clone(),
+                    0u32..24,
+                    prop::sample::select(vec!['─', '│', '╭', '世', 'a', '\u{301}', '\u{1b}', '═']),
+                    any::<u8>(),
+                    any::<bool>(),
+                )
+                    .prop_map(|(x, y, count, ch, style, vertical)| Op::CharRun {
+                        x,
+                        y,
+                        count,
+                        ch,
+                        style,
+                        vertical,
+                    }),
                 1 => (x, y, prop_oneof![Just(String::new()), Just("ab".to_string()), Just("\u{1b}]52".to_string()), Just("世界".to_string()), fragment()])
                     .prop_map(|(x, y, symbol)| Op::Mutate { x, y, symbol }),
             ]
@@ -3109,6 +3222,30 @@ mod tests {
                         buf.set_grapheme_visual(*x, *y, text, style_of(*style), None)
                     };
                     let _ = width;
+                }
+                Op::CharRun {
+                    x,
+                    y,
+                    count,
+                    ch,
+                    style,
+                    vertical,
+                } => {
+                    let style = style_of(*style);
+                    match (reference, *vertical) {
+                        (false, false) => buf.set_char_row(*x, *y, *count, *ch, style),
+                        (false, true) => buf.set_char_column(*x, *y, *count, *ch, style),
+                        (true, vertical) => {
+                            for step in 0..*count {
+                                let (cx, cy) = if vertical {
+                                    (*x, y + step)
+                                } else {
+                                    (x + step, *y)
+                                };
+                                cell_write_oracle::set_char(buf, cx, cy, *ch, style);
+                            }
+                        }
+                    }
                 }
                 Op::PushClip { x, y, w, h } => buf.push_clip(Rect::new(*x, *y, *w, *h)),
                 Op::PopClip => buf.pop_clip(),
