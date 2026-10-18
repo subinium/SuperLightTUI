@@ -332,7 +332,10 @@ Drags a widget handles never start a text selection: a press consumed by a
 split handle, a scrollbar thumb, or any other widget keeps SLT's selection
 overlay idle until the release, so dragging a control never highlights text
 or overwrites the clipboard. For your own drags built on `Response::dragging`
-and `drag_delta`, mark the handle `.draggable()` (HTML `draggable`, CSS
+and `drag_delta`, give the handle a stable identity
+(`ui.register_focusable_keyed(id)` just before it, or `ui.group("name")`) so
+UI that appears before it mid-drag (a "Dragging..." status line) cannot move
+the capture to a neighbour, and mark the handle `.draggable()` (HTML `draggable`, CSS
 `user-select: none`) so pressing it does not also select text. Drags inside
 a `text_input` / `textarea` select text in the field instead and never start
 the overlay. Apps with their own drag or selection model can

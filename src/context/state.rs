@@ -377,7 +377,11 @@ pub struct Response {
     /// Whether a left press landed on this widget (as the topmost, innermost
     /// target) this frame. Unlike `clicked`, this never waits for the release
     /// and never comes from the keyboard. The press also *captures* the
-    /// pointer for this widget until the release. For a custom drag, mark the
+    /// pointer for this widget until the release. Capture follows the
+    /// widget's stable identity when it has one (a keyed or named focusable,
+    /// a `text_input` / `textarea`, or a [`group`](crate::Context::group)
+    /// container), so UI that appears before it mid-drag does not move the
+    /// capture; an anonymous container is captured by its slot position. For a custom drag, mark the
     /// container [`draggable`](crate::ContainerBuilder::draggable) so the
     /// gesture does not also start the built-in text selection. Available
     /// since v0.26.0.

@@ -304,6 +304,8 @@ pub(super) struct ContextCheckpoint {
     pointer_policies_len: usize,
     pointer_shapes_len: usize,
     pointer_passthrough_depth: u32,
+    pointer_slot_keys_len: usize,
+    pointer_pending_key: Option<u64>,
     rollback: ContextRollbackState,
 }
 
@@ -326,6 +328,8 @@ impl ContextCheckpoint {
             pointer_policies_len: ctx.pointer.scroll_policies.len(),
             pointer_shapes_len: ctx.pointer.shapes.len(),
             pointer_passthrough_depth: ctx.pointer.passthrough_depth,
+            pointer_slot_keys_len: ctx.pointer.slot_keys.len(),
+            pointer_pending_key: ctx.pointer.pending_key,
             screen_focus_scopes_len: ctx.screen_focus_scopes.len(),
             region_versions_cur_len: ctx.region_versions_cur.len(),
             rollback: ctx.rollback.clone(),
@@ -370,5 +374,7 @@ impl ContextCheckpoint {
             .truncate(self.pointer_policies_len);
         ctx.pointer.shapes.truncate(self.pointer_shapes_len);
         ctx.pointer.passthrough_depth = self.pointer_passthrough_depth;
+        ctx.pointer.slot_keys.truncate(self.pointer_slot_keys_len);
+        ctx.pointer.pending_key = self.pointer_pending_key;
     }
 }

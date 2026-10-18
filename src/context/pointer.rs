@@ -16,10 +16,10 @@
 //! `released` even when the pointer leaves its rect. Capture ends on release,
 //! on terminal focus loss, on resize, and on motion reported without a held
 //! button (a release the terminal never delivered; only reported in
-//! `MouseMode::Hover`). Capture follows the slot's position in the frame, so
-//! a container that appears *before* the pressed widget while it is held
-//! shifts the capture to a neighbour; render such conditional UI after the
-//! drag handle, or key it with `ui.group`.
+//! `MouseMode::Hover`). Capture follows the widget's stable key when it has
+//! one (a keyed or named focusable such as `text_input`, or a `ui.group`
+//! container), so slots inserted before it mid-drag do not move the capture;
+//! anonymous containers are captured by slot position.
 
 use super::*;
 use crate::layout::{HitMeta, NO_HIT_PARENT};
@@ -56,8 +56,14 @@ pub(crate) struct Press {
 /// The slot holding the pointer between a press and its release (#442).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PointerCapture {
-    /// Winner of the capturing press, if any slot was hit.
+    /// Winner of the capturing press, if any slot was hit, as an id of the
+    /// frame the press was resolved against. Keyed captures are re-resolved
+    /// to the current id of `key` every frame.
     pub target: Option<usize>,
+    /// Stable identity of the captured widget (focus key, focus name or
+    /// group name), so capture survives slots inserted before it. `None` for
+    /// anonymous containers, which are captured by slot position.
+    pub key: Option<u64>,
     /// Button that started the gesture.
     pub button: MouseButton,
     /// Last pointer position seen during the gesture.
@@ -100,6 +106,10 @@ pub(crate) struct PointerState {
     pub shapes_buf: Vec<(usize, crate::PointerShape)>,
     /// Pointer shape under the hover winner after the last frame.
     pub pointer_wanted: Option<crate::PointerShape>,
+    /// Stable widget keys of the previous frame's slots: `(slot id, key)`.
+    pub slot_keys_prev: Vec<(usize, u64)>,
+    /// Recycled buffer for this frame's slot keys.
+    pub slot_keys_buf: Vec<(usize, u64)>,
 }
 
 impl PointerState {
@@ -120,6 +130,9 @@ impl PointerState {
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct GestureRecord {
     pub target: usize,
+    /// Widget key of the captured slot; records with a key are matched by
+    /// key, anonymous ones by slot id.
+    pub key: Option<u64>,
     pub pressed: bool,
     pub released: bool,
     pub drag_started: bool,
@@ -133,20 +146,24 @@ pub(crate) struct Gestures {
     /// One record per slot that was pressed, dragged or released this frame.
     pub records: SmallVec<[GestureRecord; 2]>,
     /// Slots activated by a press and release inside the same slot
-    /// (`click_on_release` mode).
-    pub release_activations: SmallVec<[usize; 2]>,
+    /// (`click_on_release` mode): previous-frame slot id and widget key.
+    pub release_activations: SmallVec<[(usize, Option<u64>); 2]>,
     /// Capture still active at the end of the frame.
     pub capture_out: Option<PointerCapture>,
 }
 
 impl Gestures {
-    fn record(&mut self, target: Option<usize>) -> Option<&mut GestureRecord> {
+    fn record(&mut self, target: Option<usize>, key: Option<u64>) -> Option<&mut GestureRecord> {
         let target = target?;
-        let index = match self.records.iter().position(|r| r.target == target) {
+        let index = match self.records.iter().position(|r| match key {
+            Some(key) => r.key == Some(key),
+            None => r.key.is_none() && r.target == target,
+        }) {
             Some(index) => index,
             None => {
                 self.records.push(GestureRecord {
                     target,
+                    key,
                     ..GestureRecord::default()
                 });
                 self.records.len() - 1
@@ -194,6 +211,13 @@ pub(crate) struct PointerFrame {
     pub shapes_prev: Vec<(usize, crate::PointerShape)>,
     /// This frame's pointer shapes by interaction id.
     pub shapes: Vec<(usize, crate::PointerShape)>,
+    /// Previous-frame widget keys by slot id (capture identity).
+    pub slot_keys_prev: Vec<(usize, u64)>,
+    /// This frame's widget keys by slot id.
+    pub slot_keys: Vec<(usize, u64)>,
+    /// Key of the widget that registered last; the next interaction slot
+    /// belongs to it.
+    pub pending_key: Option<u64>,
     /// Lazily computed gestures for this frame.
     gestures: OnceCell<Gestures>,
     /// Lazily resolved winner per entry of `presses`.
@@ -213,6 +237,8 @@ impl PointerFrame {
         scroll_policies.clear();
         let mut shapes = std::mem::take(&mut state.pointer.shapes_buf);
         shapes.clear();
+        let mut slot_keys = std::mem::take(&mut state.pointer.slot_keys_buf);
+        slot_keys.clear();
         Self {
             presses: SmallVec::new(),
             hit_meta: std::mem::take(&mut state.layout_feedback.prev_hit_meta),
@@ -231,6 +257,9 @@ impl PointerFrame {
             last_motion: state.pointer.last_motion,
             shapes_prev: std::mem::take(&mut state.pointer.shapes_prev),
             shapes,
+            slot_keys_prev: std::mem::take(&mut state.pointer.slot_keys_prev),
+            slot_keys,
+            pending_key: None,
             gestures: OnceCell::new(),
             targets: OnceCell::new(),
             hover_target: OnceCell::new(),
@@ -298,6 +327,10 @@ impl Context {
         previous.clear();
         state.pointer.shapes_buf = previous;
         state.pointer.shapes_prev = std::mem::take(&mut pointer.shapes);
+        let mut previous = std::mem::take(&mut pointer.slot_keys_prev);
+        previous.clear();
+        state.pointer.slot_keys_buf = previous;
+        state.pointer.slot_keys_prev = std::mem::take(&mut pointer.slot_keys);
         pointer.gestures = OnceCell::new();
         pointer.targets = OnceCell::new();
     }
@@ -311,6 +344,13 @@ impl Context {
             let targets = self.press_targets();
             let mut out = Gestures::default();
             let mut capture = self.pointer.capture_in;
+            // A keyed capture follows its widget to wherever it rendered last
+            // frame, even when slots were inserted or removed before it.
+            if let Some(active) = capture.as_mut()
+                && let Some(key) = active.key
+            {
+                active.target = self.prev_slot_for_key(key);
+            }
             let mut press_index = 0usize;
             for (event_index, event) in self.events.iter().enumerate() {
                 let mouse = match event {
@@ -336,13 +376,15 @@ impl Context {
                         let target = targets[press_index];
                         let modifiers = self.pointer.presses[press_index].modifiers;
                         press_index += 1;
+                        let key = target.and_then(|id| self.prev_slot_key(id));
                         capture = Some(PointerCapture {
                             target,
+                            key,
                             button,
                             last: pos,
                             moved: false,
                         });
-                        if let Some(record) = out.record(target) {
+                        if let Some(record) = out.record(target, key) {
                             record.modifiers = modifiers;
                             record.pressed |= button == MouseButton::Left;
                         }
@@ -358,8 +400,8 @@ impl Context {
                         active.last = pos;
                         let started = !active.moved;
                         active.moved = true;
-                        let target = active.target;
-                        if let Some(record) = out.record(target) {
+                        let (target, key) = (active.target, active.key);
+                        if let Some(record) = out.record(target, key) {
                             record.drag_started |= started;
                             record.drag_delta.0 = record.drag_delta.0.saturating_add(
                                 i32::try_from(delta.0).unwrap_or(if delta.0 < 0 {
@@ -387,7 +429,7 @@ impl Context {
                             continue;
                         };
                         capture = None;
-                        if let Some(record) = out.record(active.target) {
+                        if let Some(record) = out.record(active.target, active.key) {
                             record.released = true;
                         }
                         if button == MouseButton::Left
@@ -397,7 +439,7 @@ impl Context {
                                 .get(target)
                                 .is_some_and(|rect| rect_contains(rect, pos))
                         {
-                            out.release_activations.push(target);
+                            out.release_activations.push((target, active.key));
                         }
                     }
                     _ => {}
@@ -527,10 +569,18 @@ impl Context {
         if !self.pointer.click_on_release {
             return self.slot_pressed(id, MouseButton::Left, false);
         }
+        let key_now = self.slot_key(id);
         self.gestures()
             .release_activations
             .iter()
-            .any(|&target| self.slot_receives(id, Some(target)))
+            .any(|&(target, key)| match key {
+                // Keyed: the widget itself, wherever it renders now, or an
+                // ancestor that bubbles.
+                Some(key) => {
+                    key_now == Some(key) || (id != target && self.slot_receives(id, Some(target)))
+                }
+                None => self.slot_receives(id, Some(target)),
+            })
     }
 
     /// Whether any left press this frame lands inside `rect`, ignoring the
@@ -606,6 +656,43 @@ impl Context {
             self.pointer.shapes.push((id, shape));
         }
         self.mark_hit_flags(id, flags & (HIT_PASSTHROUGH | HIT_BUBBLE | HIT_DRAGGABLE));
+    }
+
+    /// Bind the interaction slot `id` to the widget key registered just before
+    /// it (a keyed or named focusable, or a group container).
+    pub(crate) fn bind_slot_key(&mut self, id: usize) {
+        if let Some(key) = self.pointer.pending_key.take() {
+            self.pointer.slot_keys.push((id, key));
+        }
+    }
+
+    /// Widget key of this frame's slot `id`.
+    fn slot_key(&self, id: usize) -> Option<u64> {
+        self.pointer
+            .slot_keys
+            .iter()
+            .rev()
+            .find(|(slot, _)| *slot == id)
+            .map(|(_, key)| *key)
+    }
+
+    /// Widget key of the previous frame's slot `id`.
+    fn prev_slot_key(&self, id: usize) -> Option<u64> {
+        self.pointer
+            .slot_keys_prev
+            .iter()
+            .rev()
+            .find(|(slot, _)| *slot == id)
+            .map(|(_, key)| *key)
+    }
+
+    /// Previous-frame slot rendered by the widget with `key`, if it rendered.
+    fn prev_slot_for_key(&self, key: u64) -> Option<usize> {
+        self.pointer
+            .slot_keys_prev
+            .iter()
+            .find(|(_, owner)| *owner == key)
+            .map(|(slot, _)| *slot)
     }
 
     /// Mark presses that land on a [`ContainerBuilder::draggable`] slot (or a
@@ -734,10 +821,19 @@ impl Context {
             .filter(|&pos| rect_contains(&rect, pos))
             .map_or(0, |_| self.scroll_delta_frame);
         let gestures = self.gestures();
-        let record = gestures.records.iter().find(|record| record.target == id);
+        let key = self.slot_key(id);
+        let owns = |target: Option<usize>, owner: Option<u64>| match (key, owner) {
+            (Some(key), Some(owner)) => key == owner,
+            (_, Some(_)) => false,
+            (_, None) => target == Some(id),
+        };
+        let record = gestures
+            .records
+            .iter()
+            .find(|record| owns(Some(record.target), record.key));
         let dragging = gestures
             .capture_out
-            .is_some_and(|capture| capture.target == Some(id) && capture.moved);
+            .is_some_and(|capture| capture.moved && owns(capture.target, capture.key));
         Response {
             clicked: self.slot_clicked(id),
             clicked_any: self.any_left_press_in(&rect),

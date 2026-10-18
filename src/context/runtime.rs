@@ -790,6 +790,7 @@ impl Context {
     pub(crate) fn next_interaction_id(&mut self) -> usize {
         let id = self.reserve_interaction_slot();
         self.commands.push(Command::InteractionMarker(id));
+        self.bind_slot_key(id);
         id
     }
 
@@ -1122,6 +1123,9 @@ impl Context {
             self.commands.push(Command::FocusMarker(id));
         }
         self.record_focus_slot(id, meta, freshly_allocated);
+        // Pointer capture identity: the widget's next interaction slot
+        // carries its focus key (or the name a reserved slot was bound to).
+        self.pointer.pending_key = self.focus_identity.slots.get(id).and_then(|slot| slot.key);
         self.focus_slot_is_current(id)
     }
 
@@ -2371,6 +2375,9 @@ impl Context {
         // a second `register_focusable_named("dup")` keeps the first
         // slot bound to the name and orphans its own slot's name binding.
         self.focus_name_map.entry(name.to_string()).or_insert(id);
+        // Pointer capture identity follows the name too (custom widgets that
+        // render a container right after naming their focus slot).
+        self.pointer.pending_key = Some(crate::runtime::hashed_focus_key(name));
         // Reserve `id` for the very next `register_focusable()` call to
         // reuse, so widgets like `text_input` placed immediately after
         // share the named slot rather than allocating a fresh one.

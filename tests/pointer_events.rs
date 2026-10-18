@@ -347,3 +347,83 @@ fn middle_click_and_modifiers_follow_the_target() {
     assert!(log[0].middle_clicked && !log[0].clicked);
     assert!(log[1].clicked && log[1].modifiers.contains(KeyModifiers::SHIFT));
 }
+
+// ── Capture identity (owner decision on #442) ───────────────────────────
+
+#[derive(Default)]
+struct DragApp {
+    banner: bool,
+    dx: i32,
+    released: bool,
+    other_drag: i32,
+}
+
+/// A status bar appears *before* the handle once the drag starts, shifting
+/// every positional slot after it.
+fn drag_view(ui: &mut Context, app: &mut DragApp, grouped: bool) {
+    if app.banner {
+        let _ = ui.container().row(|ui| {
+            ui.text("Dragging...");
+        });
+    }
+    let handle = if grouped {
+        ui.group("handle").draggable().col(|ui| {
+            ui.text("HANDLE");
+        })
+    } else {
+        let _ = ui.register_focusable_keyed("handle");
+        ui.bordered(slt::Border::Single).draggable().col(|ui| {
+            ui.text("HANDLE");
+        })
+    };
+    if handle.drag_started {
+        app.banner = true;
+    }
+    app.dx += handle.drag_delta.0;
+    if handle.released {
+        app.released = true;
+        app.banner = false;
+    }
+    let other = ui.container().col(|ui| {
+        ui.text("OTHER");
+    });
+    app.other_drag += other.drag_delta.0.abs();
+}
+
+fn conditional_container_keeps_capture(grouped: bool) {
+    let mut tb = TestBackend::new(30, 10);
+    let mut app = DragApp::default();
+    tb.render(|ui| drag_view(ui, &mut app, grouped));
+    tb.render(|ui| drag_view(ui, &mut app, grouped));
+    let (x, y) = tb.find_text("HANDLE").expect("handle rendered");
+    tb.run_with_events(
+        EventBuilder::new().click(x, y).drag(x + 2, y).build(),
+        |ui| drag_view(ui, &mut app, grouped),
+    );
+    assert!(app.banner, "drag started");
+    assert_eq!(app.dx, 2);
+    // The banner now renders before the handle: positional ids shift by one.
+    tb.run_with_events(EventBuilder::new().drag(x + 5, y).build(), |ui| {
+        drag_view(ui, &mut app, grouped)
+    });
+    tb.run_with_events(EventBuilder::new().drag(x + 6, y + 1).build(), |ui| {
+        drag_view(ui, &mut app, grouped)
+    });
+    assert_eq!(app.dx, 6, "the handle keeps receiving its drag deltas");
+    assert_eq!(app.other_drag, 0, "no other slot inherits the capture");
+    tb.run_with_events(EventBuilder::new().mouse_up(x + 6, y + 1).build(), |ui| {
+        drag_view(ui, &mut app, grouped)
+    });
+    assert!(app.released, "the release reaches the original widget");
+    assert!(!app.banner);
+}
+
+#[test]
+fn keyed_focusable_keeps_capture_when_a_container_appears_before_it() {
+    conditional_container_keeps_capture(false);
+}
+
+#[test]
+fn group_container_keeps_capture_when_a_container_appears_before_it() {
+    conditional_container_keeps_capture(true);
+}

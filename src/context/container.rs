@@ -2056,6 +2056,14 @@ impl<'a> ContainerBuilder<'a> {
     }
 
     fn finish(mut self, direction: Direction, f: impl FnOnce(&mut Context)) -> Response {
+        // A group container is identified by its name for pointer capture,
+        // unless a keyed focusable registered right before claims the slot.
+        if self.ctx.pointer.pending_key.is_none()
+            && let Some(name) = self.group_name.as_deref()
+        {
+            self.ctx.pointer.pending_key =
+                Some(crate::runtime::hashed_focus_key(("slt-group", name)));
+        }
         let interaction_id = self.ctx.next_interaction_id();
         self.ctx.mark_pointer_flags(
             interaction_id,

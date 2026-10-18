@@ -14,7 +14,10 @@
   produced (two clicks in one batch activate two widgets). `Response` gains
   `pressed`, `released`,
   `drag_started`, `dragging`, `drag_delta`, `middle_clicked` and `modifiers`.
-  A press captures the pointer for its target until the release.
+  A press captures the pointer for its target until the release. Capture
+  follows the widget's stable key (keyed or named focusable, text widgets,
+  `ui.group`) through slots inserted or removed before it; anonymous
+  containers are captured by slot position.
   `RunConfig::click_on_release(bool)` (default `false`) makes `clicked` fire
   on a release inside the pressed widget, so dragging off cancels.
   `TestBackend::with_run_config` renders headless frames with a custom
