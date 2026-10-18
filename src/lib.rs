@@ -62,11 +62,11 @@
 //! # Learn More
 //!
 //! - Guides index: <https://github.com/subinium/SuperLightTUI/blob/main/docs/README.md>
-//! - Quick start: <https://github.com/subinium/SuperLightTUI/blob/main/docs/QUICK_START.md>
-//! - Design principles: <https://github.com/subinium/SuperLightTUI/blob/main/docs/DESIGN_PRINCIPLES.md>
-//! - Backends and run loops: <https://github.com/subinium/SuperLightTUI/blob/main/docs/BACKENDS.md>
-//! - Testing: <https://github.com/subinium/SuperLightTUI/blob/main/docs/TESTING.md>
-//! - Debugging: <https://github.com/subinium/SuperLightTUI/blob/main/docs/DEBUGGING.md>
+//! - Quick start: <https://github.com/subinium/SuperLightTUI/blob/main/docs/guide/01-quick-start.md>
+//! - Design principles: <https://github.com/subinium/SuperLightTUI/blob/main/docs/internals/design-principles.md>
+//! - Backends and run loops: <https://github.com/subinium/SuperLightTUI/blob/main/docs/guide/09-runtime-modes.md>
+//! - Testing: <https://github.com/subinium/SuperLightTUI/blob/main/docs/guide/08-testing.md>
+//! - Debugging: <https://github.com/subinium/SuperLightTUI/blob/main/docs/reference/debugging.md>
 
 // Safety: the shipping library is 100% safe. Unit tests are excused only
 // because edition 2024 made `std::env::set_var`/`remove_var` `unsafe`, and a

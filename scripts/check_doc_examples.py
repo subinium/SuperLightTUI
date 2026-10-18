@@ -14,18 +14,18 @@ import tempfile
 
 # Docs whose Rust fences are all classified and compiled by default (CI).
 MAINTAINED_DOCS = (
-    "COMPLETE_REFERENCE",
-    "WEB_DEVELOPERS",
-    "INTERACTION",
-    "TERMINAL_COMPATIBILITY",
-    "QUICK_START",
-    "TESTING",
+    "reference/complete-reference",
+    "coming-from/web",
+    "guide/04-interaction",
+    "guide/11-terminal-compatibility",
+    "guide/01-quick-start",
+    "guide/08-testing",
 )
 
 # Docs whose recipes must also compile warning-free (issue #456: the Quick
 # Start is pasted verbatim into new projects, so it must not need `let _ =`).
 # Fragment-only lints (unused imports, an unused `main`) stay allowed.
-STRICT_DOCS = ("QUICK_START",)
+STRICT_DOCS = ("01-quick-start",)
 STRICT_PRELUDE = "#![deny(warnings, unused)]\n#![allow(unused_imports, dead_code)]\n"
 
 

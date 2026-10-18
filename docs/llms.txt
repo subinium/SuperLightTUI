@@ -4,24 +4,24 @@
 
 ## Reading order for coding agents
 
-- [Complete reference (single-file)](COMPLETE_REFERENCE.md): condensed full API. Start here for most tasks.
-- [Quick start](QUICK_START.md): install, first app, closure mental model, mouse opt-in, shortcut ordering
-- [AI guide](AI_GUIDE.md): common questions agents get wrong, implementation rules
-- [Widgets](WIDGETS.md): categorized API catalog (50+ widgets, state types, runtime methods)
-- [Patterns](PATTERNS.md): composition patterns, state ownership, screens, forms
-- [Examples guide](EXAMPLES.md): the 29 runnable `cargo run --example` targets (8 tours + entry, feature, tool, and report binaries) and which source files each tour uses
-- [Architecture](ARCHITECTURE.md): module map, frame lifecycle, layout pipeline
-- [Design principles](DESIGN_PRINCIPLES.md): API philosophy, immediate-mode rationale
+- [Complete reference (single-file)](reference/complete-reference.md): condensed full API. Start here for most tasks.
+- [Quick start](guide/01-quick-start.md): install, first app, closure mental model, mouse opt-in, shortcut ordering
+- [AI guide](reference/ai-guide.md): common questions agents get wrong, implementation rules
+- [Widgets](reference/widgets.md): categorized API catalog (50+ widgets, state types, runtime methods)
+- [Patterns](guide/03-patterns.md): composition patterns, state ownership, screens, forms
+- [Examples guide](reference/examples.md): the 29 runnable `cargo run --example` targets (8 tours + entry, feature, tool, and report binaries) and which source files each tour uses
+- [Architecture](internals/architecture.md): module map, frame lifecycle, layout pipeline
+- [Design principles](internals/design-principles.md): API philosophy, immediate-mode rationale
 
 ## Core concepts
 
 - The mouse is on by default in fullscreen runs: `MouseMode::Drag` locally (clicks, wheel, drags), `MouseMode::Click` over SSH/mosh; inline/static runs default to `MouseMode::Off`. Hover, tooltips and `group_hover_*` need `slt::run_with(slt::RunConfig::default().mouse_mode(slt::MouseMode::Hover), |ui| { ... })`. Focused buttons also activate with Enter / Space.
 - Check global shortcuts (`ui.key('q')`) after rendering widgets: `key*` sees events not consumed so far, so a check placed before a focused `text_input` fires while the user types into it.
 
-- [Run loop](ARCHITECTURE.md#frame-lifecycle): 8-stage per-frame pipeline
-- [Immediate mode](DESIGN_PRINCIPLES.md): no App trait, no Model/Update/View
-- [Previous-frame feedback](ARCHITECTURE.md#one-frame-delay-feedback): why Response.rect is valid from frame 2
-- [State ownership](PATTERNS.md): app state vs hooks vs widget state
+- [Run loop](internals/architecture.md#frame-lifecycle): 8-stage per-frame pipeline
+- [Immediate mode](internals/design-principles.md): no App trait, no Model/Update/View
+- [Previous-frame feedback](guide/02-state.md#the-previous-frame-rule): why Response.rect is valid from frame 2
+- [State ownership](guide/03-patterns.md): app state vs hooks vs widget state
 
 ## API surface
 
@@ -40,9 +40,9 @@
 ### Current (v0.25) highlights
 
 - Scroll containers follow keyboard focus (nested axes, modal forms, resize); opt out per container with the public `ScrollState::follow_focus` field (default `true`)
-- `ui.form_field_response(&mut field)` returns `FormFieldResponse`; `ui.focused_layout_rect()` / `ui.measured_layout_rect(name)` expose full previous-frame geometry
+- `ui.form_field_response(&mut field)` returns `FormFieldResponse`; `ui.focused_layout_rect()` / `ui.measured_layout_rect(name)` expose full [previous-frame](guide/02-state.md#the-previous-frame-rule) geometry
 - Input typed after a Tab in the same batch is queued for the next frame; custom loops can check `AppState::has_pending_input()` / `TestBackend::has_pending_input()`
-- Quick transitions: `ui.animate_bool(id, on)` / `ui.animate_value(id, target, ticks)` — see [Animation](ANIMATION.md)
+- Quick transitions: `ui.animate_bool(id, on)` / `ui.animate_value(id, target, ticks)` — see [Animation](guide/07-animation.md)
 
 ### Longer-standing helpers
 
@@ -61,12 +61,12 @@
 
 ## Specialized topics
 
-- [Theming](THEMING.md): 10 preset themes, ThemeColor semantic tokens, WidgetColors overrides, Tailwind palette
-- [Animation](ANIMATION.md): animate_bool / animate_value quick transitions; Tween, Spring, Keyframes, Sequence, Stagger
-- [Backends](BACKENDS.md): custom backends, Backend trait, AppState, frame()
-- [Testing](TESTING.md): TestBackend, EventBuilder
-- [Debugging](DEBUGGING.md): F12 overlay, clipping issues, focus surprises
-- [Features](FEATURES.md): feature flags (crossterm, async, serde, image, qrcode, syntax)
+- [Theming](guide/06-theming.md): 10 preset themes, ThemeColor semantic tokens, WidgetColors overrides, Tailwind palette
+- [Animation](guide/07-animation.md): animate_bool / animate_value quick transitions; Tween, Spring, Keyframes, Sequence, Stagger
+- [Backends](guide/09-runtime-modes.md): custom backends, Backend trait, AppState, frame()
+- [Testing](guide/08-testing.md): TestBackend, EventBuilder
+- [Debugging](reference/debugging.md): F12 overlay, clipping issues, focus surprises
+- [Features](reference/features.md): feature flags (crossterm, async, serde, image, qrcode, syntax)
 
 ## Examples
 

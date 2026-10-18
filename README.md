@@ -13,7 +13,7 @@
 [![Downloads Badge]][Crate]
 [![License Badge]][License]
 
-[Docs Index] · [Quick Start] · [Widget Guide] · [Patterns Guide] · [Examples Guide] · [Backends Guide] · [Architecture Guide]
+[Docs Index] · [Quick Start] · [Widget Guide] · [Patterns Guide] · [Examples Guide] · [Runtime Modes Guide] · [Architecture Guide]
 
 **English** · [中文](docs/README.zh-CN.md) · [Español](docs/README.es.md) · [日本語](docs/README.ja.md) · [한국어](docs/README.ko.md)
 
@@ -167,9 +167,9 @@ for application-controlled positioning. Keep one `ScrollState` per container.
 
 Use `ui.form_field_response(...)` for field/input interaction feedback without
 changing existing `ui.form_field(...)` callers. `ui.focused_layout_rect()` and
-`ui.measured_layout_rect(name)` expose previous-frame geometry before scrolling
+`ui.measured_layout_rect(name)` expose [previous-frame](docs/guide/02-state.md#the-previous-frame-rule) geometry before scrolling
 and clipping; `Response.rect` remains the visible mouse-hit rectangle.
-See [the migration guide](docs/MIGRATION.md) for the coordinate and timing rules.
+See [the migration guide](docs/reference/migration.md) for the coordinate and timing rules.
 
 ## Feature Flags
 
@@ -222,15 +222,15 @@ graph LR
 ```
 
 Every `ui.*()` call records a command to a flat list — no tree construction, no layout math.
-The engine replays those commands through a **four-stage DFS pipeline** — each stage specializes: build the layout tree, compute flexbox, collect interaction and feedback data, render cells to a back buffer — then diffs against the previous frame and flushes only what changed.
+The engine replays those commands through a **four-stage DFS pipeline** — each stage specializes: build the layout tree, compute flexbox, collect interaction and feedback data, render cells to a back buffer — then diffs against the last rendered buffer and flushes only what changed.
 
 This architecture is what makes the simple grammar possible:
 
 - **No ceremony.** Immediate-mode means no `App` trait, no `Model`/`Message`/`Update`/`View`. Your closure is the entire UI. State is normal Rust variables. Control flow is `if`/`for`.
 - **Invisible layout.** `ui.col(|ui| { ... })` records an "open column" command. The engine builds the tree and runs flexbox — you never see `LayoutNode`.
-- **Automatic diffing.** The double-buffer diffs cells between frames and only emits changed ANSI attributes. You redraw everything; the engine decides what to write. No manual dirty tracking. Per-frame cost is currently higher than ratatui's on matched workloads; see the [Performance Guide](docs/PERFORMANCE.md) for measurements.
+- **Automatic diffing.** The double-buffer diffs cells between frames and only emits changed ANSI attributes. You redraw everything; the engine decides what to write. No manual dirty tracking. On the matched ratatui comparison harness SLT renders faster per frame; see the [Performance Guide] for measurements.
 - **Auto-wired interaction.** `ui.button("Save")` gets keyboard focus and Enter/Space activation for free, reports mouse clicks out of the box, and reports hover under `MouseMode::Hover`. No hit-testing code on your side.
-- **Synchronous feedback.** Interaction uses the previous frame's layout positions (imperceptible at 60 FPS). No callbacks, no async layout queries — your code stays linear.
+- **Synchronous feedback.** Interaction uses the [previous frame's layout](docs/guide/02-state.md#the-previous-frame-rule) (imperceptible at 60 FPS). No callbacks, no async layout queries — your code stays linear.
 
 For the full eight-stage lifecycle, see [Architecture Guide].
 
@@ -286,30 +286,39 @@ For composition advice, see [Patterns Guide].
 
 ## Learn The Library
 
-| Document | What it covers |
-|----------|----------------|
-| [Quick Start] | Install, first app, closure mental model, layout, widget state |
-| [Widget Guide] | Complete API catalog of widgets, runtime methods, and state types |
+Read the learning path in order; each guide assumes the ones before it.
+The [Docs Index] lists every page.
+
+| Step | Guide | What it covers |
+|------|-------|----------------|
+| 1 | [Quick Start] | Install, first app, closure mental model, layout, widget state |
+| 2 | [State Guide] | App state vs hooks vs widget state, and the [previous-frame rule](docs/guide/02-state.md#the-previous-frame-rule) |
+| 3 | [Patterns Guide] | Components, forms, screens, modals, async messages, large-app structure |
+| 4 | [Interaction Guide] | Mouse, keyboard, focus, shortcuts, hover, drag, wheel and scrolling |
+| 5 | [Overlays Guide] | `Anchor` and overlay positioning mapped to CSS/Flutter/React Native |
+| 6 | [Theming Guide] | Theme struct, presets, ThemeBuilder, custom themes |
+| 7 | [Animation Guide] | Tween, spring, keyframes, sequence, stagger |
+| 8 | [Testing Guide] | `TestBackend`, `EventBuilder`, multi-frame tests, snapshots |
+| 9 | [Runtime Modes Guide] | `run` vs `run_inline` vs `run_static`, `RunConfig`, driving `frame()` |
+| 10 | [Browser Guide] | The `slt-wasm` browser runtime |
+| 11 | [Terminal Compatibility] | Terminal/multiplexer/SSH support matrix, env vars, fallbacks |
+
+Coming from another stack: [Web Developers Guide] (HTML/CSS/React → SLT) and
+[Ratatui Guide] (widgets, layout and the incremental `ratatui` bridge).
+
+| Reference | What it covers |
+|-----------|----------------|
+| [Widget Guide] | Categorized catalog of widgets, runtime methods and state types |
+| [State API Guide] | Public fields, accessors and mutation methods for widget state |
 | [Cookbook] | Copy-paste recipes for common apps, each backed by a runnable example |
-| [Web Developers Guide] | Coming from web: CSS/React → SLT mapping |
-| [Interaction Guide] | Mouse, click, hover, drag, wheel, expand/collapse, hit-testing |
-| [Positioning Guide] | `Anchor` and overlay APIs mapped to CSS/Flutter/React Native positioning |
-| [State API Guide] | Public fields, accessors, and mutation methods for widget state |
-| [Migration Guide] | Version-by-version breaking changes and upgrade paths |
-| [Patterns Guide] | State placement, screen composition, helper extraction, large-app structure |
 | [Examples Guide] | Runnable examples grouped by product shape and feature area |
-| [Backends Guide] | `Backend`, `AppState`, `frame()`, inline mode, static output |
-| [Testing Guide] | `TestBackend`, `EventBuilder`, multi-frame tests, backend contract tests |
-| [Debugging Guide] | F12 overlay, clipping, focus surprises, previous-frame behavior |
-| [Previous Frame Guide] | Why interaction uses last-frame layout, when `Response.rect` is zero, frame-1 correctness |
-| [Terminal Compatibility] | Terminal/multiplexer/SSH support matrix, env vars, fallbacks |
-| [AI Guide] | Fastest path for AI-assisted builders and coding agents |
-| [Architecture Guide] | Module map, frame lifecycle, layout/render pipeline |
 | [Features Guide] | Feature flags, optional dependencies, recommended combos |
-| [Animation Guide] | Tween, spring, keyframes, sequence, stagger |
-| [Theming Guide] | Theme struct, presets, ThemeBuilder, custom themes |
-| [Design Principles] | API constraints and design philosophy |
-| [API Design] | Five consistency rules for new widgets and PR review checklist |
+| [Migration Guide] | Version-by-version breaking changes and upgrade paths |
+| [Debugging Guide] | F12 overlay, clipping, focus surprises |
+| [AI Guide] | Fastest path for AI-assisted builders and coding agents |
+
+Contributors: [Design Principles] (API rules and naming), [Architecture Guide]
+(module map, frame lifecycle) and [Performance Guide] (budgets and benchmarks).
 
 ## Representative Examples
 
@@ -370,27 +379,29 @@ The release process expects format, check, clippy, tests, examples, and backend 
 [Crate]: https://crates.io/crates/superlighttui
 [Docs Index]: docs/README.md
 [Docs]: https://docs.rs/superlighttui
-[Backends Guide]: docs/BACKENDS.md
-[Testing Guide]: docs/TESTING.md
-[Debugging Guide]: docs/DEBUGGING.md
-[AI Guide]: docs/AI_GUIDE.md
-[Quick Start]: docs/QUICK_START.md
-[Widget Guide]: docs/WIDGETS.md
-[State API Guide]: docs/STATE_APIS.md
-[Migration Guide]: docs/MIGRATION.md
-[Examples Guide]: docs/EXAMPLES.md
-[Patterns Guide]: docs/PATTERNS.md
-[Architecture Guide]: docs/ARCHITECTURE.md
-[Design Principles]: docs/DESIGN_PRINCIPLES.md
-[API Design]: docs/API_DESIGN.md
-[Animation Guide]: docs/ANIMATION.md
-[Theming Guide]: docs/THEMING.md
-[Features Guide]: docs/FEATURES.md
-[Cookbook]: docs/COOKBOOK.md
-[Previous Frame Guide]: docs/PREVIOUS_FRAME_GUIDE.md
-[Positioning Guide]: docs/POSITIONING.md
-[Web Developers Guide]: docs/WEB_DEVELOPERS.md
-[Interaction Guide]: docs/INTERACTION.md
-[Terminal Compatibility]: docs/TERMINAL_COMPATIBILITY.md
+[Quick Start]: docs/guide/01-quick-start.md
+[State Guide]: docs/guide/02-state.md
+[Patterns Guide]: docs/guide/03-patterns.md
+[Interaction Guide]: docs/guide/04-interaction.md
+[Overlays Guide]: docs/guide/05-overlays.md
+[Theming Guide]: docs/guide/06-theming.md
+[Animation Guide]: docs/guide/07-animation.md
+[Testing Guide]: docs/guide/08-testing.md
+[Runtime Modes Guide]: docs/guide/09-runtime-modes.md
+[Browser Guide]: docs/guide/10-browser.md
+[Terminal Compatibility]: docs/guide/11-terminal-compatibility.md
+[Web Developers Guide]: docs/coming-from/web.md
+[Ratatui Guide]: docs/coming-from/ratatui.md
+[Widget Guide]: docs/reference/widgets.md
+[State API Guide]: docs/reference/state.md
+[Cookbook]: docs/reference/cookbook.md
+[Examples Guide]: docs/reference/examples.md
+[Features Guide]: docs/reference/features.md
+[Migration Guide]: docs/reference/migration.md
+[Debugging Guide]: docs/reference/debugging.md
+[AI Guide]: docs/reference/ai-guide.md
+[Design Principles]: docs/internals/design-principles.md
+[Architecture Guide]: docs/internals/architecture.md
+[Performance Guide]: docs/internals/performance.md
 [Contributing]: CONTRIBUTING.md
 [License]: ./LICENSE

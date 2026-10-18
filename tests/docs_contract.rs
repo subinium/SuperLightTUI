@@ -259,38 +259,378 @@ fn release_smoke_uses_an_exact_registry_version() {
     assert!(!script.contains("path ="));
 }
 
+/// Pre-0.26 flat `docs/*.md` pages. Each one is now a one-line redirect stub
+/// so links from published rustdoc, READMEs and external posts keep working.
+const MOVED_DOCS: &[&str] = &[
+    "AI_GUIDE",
+    "ANIMATION",
+    "API_DESIGN",
+    "ARCHITECTURE",
+    "BACKENDS",
+    "COMPETITIVE_ANALYSIS",
+    "COMPLETE_REFERENCE",
+    "COOKBOOK",
+    "DEBUGGING",
+    "DEMO_GUIDE",
+    "DESIGN_PRINCIPLES",
+    "EXAMPLES",
+    "FEATURES",
+    "INTERACTION",
+    "MIGRATION",
+    "NAMING",
+    "PATTERNS",
+    "PERFORMANCE",
+    "POSITIONING",
+    "PREVIOUS_FRAME_GUIDE",
+    "QUICK_START",
+    "RUSTDOC_GUIDE",
+    "STATE_APIS",
+    "TERMINAL_COMPATIBILITY",
+    "TESTING",
+    "THEMING",
+    "WASM",
+    "WEB_DEVELOPERS",
+    "WIDGETS",
+];
+
+/// The one page that explains the previous-frame rule; every other mention
+/// links here (#480).
+const PREVIOUS_FRAME_ANCHOR: &str = "02-state.md#the-previous-frame-rule";
+
+/// Target of a redirect stub: a file whose entire content is the single line
+/// `This page moved to [path](path).`
+fn stub_target(text: &str) -> Option<&str> {
+    let line = text.strip_suffix('\n').unwrap_or(text);
+    if line.contains('\n') {
+        return None;
+    }
+    let rest = line.strip_prefix("This page moved to [")?;
+    let (label, rest) = rest.split_once("](")?;
+    let target = rest.strip_suffix(").")?;
+    (label == target && !target.is_empty()).then_some(target)
+}
+
+/// Lines outside fenced code blocks, with 1-based line numbers.
+fn prose_lines(text: &str) -> Vec<(usize, &str)> {
+    let mut out = Vec::new();
+    let mut fence: Option<usize> = None;
+    for (index, line) in text.lines().enumerate() {
+        let trimmed = line.trim_start();
+        let ticks = trimmed.bytes().take_while(|byte| *byte == b'`').count();
+        match fence {
+            Some(open) if ticks >= open && trimmed[ticks..].trim().is_empty() => fence = None,
+            Some(_) => {}
+            None if ticks >= 3 => fence = Some(ticks),
+            None => out.push((index + 1, line)),
+        }
+    }
+    out
+}
+
+/// Relative link targets on one prose line: inline `](target)` links and
+/// reference definitions `[label]: target`. Inline code spans are ignored.
+fn relative_links(line: &str) -> Vec<String> {
+    let mut cleaned = String::with_capacity(line.len());
+    let mut in_code = false;
+    for ch in line.chars() {
+        if ch == '`' {
+            in_code = !in_code;
+        } else if !in_code {
+            cleaned.push(ch);
+        }
+    }
+    let mut targets = Vec::new();
+    let trimmed = cleaned.trim_start();
+    if trimmed.starts_with('[')
+        && let Some((_, rest)) = trimmed.split_once("]: ")
+    {
+        targets.push(rest.split_whitespace().next().unwrap_or("").to_string());
+    }
+    let mut rest = cleaned.as_str();
+    while let Some(start) = rest.find("](") {
+        let tail = &rest[start + 2..];
+        let end = tail.find(')').unwrap_or(tail.len());
+        targets.push(
+            tail[..end]
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_string(),
+        );
+        rest = &tail[end..];
+    }
+    targets.retain(|target| {
+        !target.is_empty()
+            && !target.starts_with('#')
+            && !target.starts_with('<')
+            && !target.contains("://")
+            && !target.starts_with("mailto:")
+    });
+    targets
+}
+
+/// GitHub-style heading anchor: lowercase, keep alphanumerics, `-` and `_`,
+/// turn spaces into `-`, drop everything else.
+fn heading_anchor(heading: &str) -> String {
+    heading
+        .chars()
+        .filter_map(|ch| {
+            if ch.is_alphanumeric() || ch == '-' || ch == '_' {
+                Some(ch.to_lowercase().next().unwrap_or(ch))
+            } else if ch == ' ' {
+                Some('-')
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Every anchor a Markdown file defines through its headings (with GitHub's
+/// `-1`, `-2` suffixes for repeats) or explicit `id="..."` attributes.
+fn anchors(text: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for (_, line) in prose_lines(text) {
+        let trimmed = line.trim_start();
+        let level = trimmed.bytes().take_while(|byte| *byte == b'#').count();
+        if (1..=6).contains(&level) && trimmed[level..].starts_with(' ') {
+            let base = heading_anchor(trimmed[level..].trim());
+            let mut anchor = base.clone();
+            let mut suffix = 1;
+            while out.contains(&anchor) {
+                anchor = format!("{base}-{suffix}");
+                suffix += 1;
+            }
+            out.insert(anchor);
+        }
+        let mut rest = line;
+        while let Some(start) = rest.find("id=\"") {
+            let tail = &rest[start + 4..];
+            let end = tail.find('"').unwrap_or(tail.len());
+            out.insert(tail[..end].to_string());
+            rest = &tail[end..];
+        }
+    }
+    out
+}
+
+/// Markdown files that link into the docs tree: README*, AGENTS.md,
+/// CONTRIBUTING.md, `docs/**` (plus `llms.txt`) and both skill trees.
+fn linked_doc_files(root: &Path) -> Vec<PathBuf> {
+    let mut files = vec![
+        root.join("README.md"),
+        root.join("AGENTS.md"),
+        root.join("CONTRIBUTING.md"),
+        root.join("docs/llms.txt"),
+    ];
+    collect_files(&root.join("docs"), "md", &mut files);
+    collect_files(&root.join(".agents/skills"), "md", &mut files);
+    collect_files(&root.join(".claude/skills"), "md", &mut files);
+    files
+}
+
+fn relative(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .display()
+        .to_string()
+        .replace('\\', "/")
+}
+
+/// Broken relative links in `text` (a file in `dir`): missing files, and
+/// `#anchors` that the target Markdown file does not define.
+fn broken_links(text: &str, dir: &Path, self_anchors: &BTreeSet<String>) -> Vec<String> {
+    let mut broken = Vec::new();
+    for (number, line) in prose_lines(text) {
+        for target in relative_links(line) {
+            let (path, anchor) = target.split_once('#').unwrap_or((target.as_str(), ""));
+            let file = dir.join(path);
+            if !path.is_empty() && !file.exists() {
+                broken.push(format!("{number}: missing {target}"));
+                continue;
+            }
+            if anchor.is_empty() {
+                continue;
+            }
+            let defined = if path.is_empty() {
+                self_anchors.clone()
+            } else if path.ends_with(".md") && file.is_file() {
+                anchors(&read(&file))
+            } else {
+                continue;
+            };
+            if !defined.contains(anchor) {
+                broken.push(format!("{number}: missing anchor {target}"));
+            }
+        }
+    }
+    broken
+}
+
+#[test]
+fn link_checker_rejects_missing_files_and_anchors() {
+    let dir = repo_root().join("docs");
+    let none = BTreeSet::new();
+    assert!(broken_links("[ok](guide/01-quick-start.md)\n", &dir, &none).is_empty());
+    assert_eq!(
+        broken_links("[gone](NO_SUCH_PAGE.md)\n", &dir, &none).len(),
+        1
+    );
+    assert_eq!(
+        broken_links("[bad](guide/02-state.md#no-such-heading)\n", &dir, &none).len(),
+        1
+    );
+    assert!(broken_links("```\n[x](missing.md)\n```\n", &dir, &none).is_empty());
+    assert_eq!(
+        heading_anchor("8b. Theming deep dive"),
+        "8b-theming-deep-dive"
+    );
+    assert_eq!(
+        heading_anchor("Derived state with `use_memo`"),
+        "derived-state-with-use_memo"
+    );
+}
+
+#[test]
+fn relative_doc_links_resolve() {
+    let root = repo_root();
+    let mut broken = Vec::new();
+    for path in linked_doc_files(&root) {
+        let text = read(&path);
+        let dir = path.parent().expect("doc file has a parent directory");
+        for problem in broken_links(&text, dir, &anchors(&text)) {
+            broken.push(format!("{}:{problem}", relative(&root, &path)));
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "broken relative documentation links:\n{}",
+        broken.join("\n")
+    );
+}
+
+#[test]
+fn moved_doc_paths_are_redirect_stubs() {
+    let root = repo_root();
+    assert_eq!(
+        stub_target("This page moved to [guide/a.md](guide/a.md).\n"),
+        Some("guide/a.md")
+    );
+    assert_eq!(stub_target("# Title\n\nThis page moved to [a](a).\n"), None);
+    assert_eq!(stub_target("This page moved to [a.md](b.md).\n"), None);
+
+    for name in MOVED_DOCS {
+        let path = root.join(format!("docs/{name}.md"));
+        let text = read(&path);
+        let target = stub_target(&text)
+            .unwrap_or_else(|| panic!("docs/{name}.md must be a one-line redirect stub"));
+        let file = target.split('#').next().unwrap_or(target);
+        let resolved = root.join("docs").join(file);
+        assert!(
+            resolved.is_file(),
+            "docs/{name}.md redirects to missing {target}"
+        );
+        assert!(
+            stub_target(&read(&resolved)).is_none(),
+            "docs/{name}.md redirects to another stub ({target})"
+        );
+    }
+}
+
 #[test]
 fn docs_index_lists_every_maintained_guide() {
     let root = repo_root();
-    let index = read(root.join("docs/README.md"));
+    let docs = root.join("docs");
+    let index = read(docs.join("README.md"));
+    let mut pages = Vec::new();
+    collect_files(&docs, "md", &mut pages);
 
-    for entry in fs::read_dir(root.join("docs")).expect("docs directory") {
-        let path = entry.expect("docs entry").path();
-        if path.extension().and_then(|value| value.to_str()) != Some("md") {
-            continue;
-        }
+    let mut missing = Vec::new();
+    for path in pages {
+        let link = relative(&docs, &path);
         let name = path
             .file_name()
             .and_then(|value| value.to_str())
             .expect("UTF-8 documentation filename");
-        if name == "README.md" || name.starts_with("README.") {
+        if name == "README.md" || name.starts_with("README.") || link.starts_with("archive/") {
             continue;
         }
-        assert!(
-            index.contains(&format!("({name})")),
-            "docs/README.md must link maintained guide {name}"
-        );
+        if stub_target(&read(&path)).is_some() {
+            continue;
+        }
+        if !index.contains(&format!("({link})")) && !index.contains(&format!("({link}#")) {
+            missing.push(link);
+        }
     }
+    assert!(
+        missing.is_empty(),
+        "docs/README.md must link every maintained page:\n{}",
+        missing.join("\n")
+    );
+}
+
+/// Prose lines that mention the previous-frame rule without linking the
+/// canonical explanation. Headings are exempt so their anchors stay stable.
+fn unlinked_previous_frame_mentions(text: &str) -> Vec<usize> {
+    prose_lines(text)
+        .into_iter()
+        .filter(|(_, line)| {
+            let lower = line.to_lowercase();
+            (lower.contains("previous frame") || lower.contains("previous-frame"))
+                && !line.trim_start().starts_with('#')
+                && !line.contains(PREVIOUS_FRAME_ANCHOR)
+        })
+        .map(|(number, _)| number)
+        .collect()
+}
+
+#[test]
+fn previous_frame_rule_is_explained_once() {
+    assert_eq!(
+        unlinked_previous_frame_mentions("Rects come from the previous frame.\n"),
+        vec![1]
+    );
+    assert!(
+        unlinked_previous_frame_mentions(
+            "See the [previous-frame rule](guide/02-state.md#the-previous-frame-rule).\n"
+        )
+        .is_empty()
+    );
+
+    let root = repo_root();
+    let docs = root.join("docs");
+    let canonical = docs.join("guide/02-state.md");
+    assert!(
+        anchors(&read(&canonical)).contains("the-previous-frame-rule"),
+        "docs/guide/02-state.md must keep the canonical previous-frame section"
+    );
+    let mut files = vec![root.join("README.md"), docs.join("llms.txt")];
+    collect_files(&docs, "md", &mut files);
+    let mut unlinked = Vec::new();
+    for path in files {
+        let link = relative(&docs, &path);
+        if path == canonical || link.starts_with("archive/") {
+            continue;
+        }
+        for number in unlinked_previous_frame_mentions(&read(&path)) {
+            unlinked.push(format!("{}:{number}", relative(&root, &path)));
+        }
+    }
+    assert!(
+        unlinked.is_empty(),
+        "previous-frame mentions must link {PREVIOUS_FRAME_ANCHOR} instead of re-explaining it:\n{}",
+        unlinked.join("\n")
+    );
 }
 
 #[test]
 fn maintained_recipes_use_encapsulated_state_accessors() {
     let root = repo_root();
     let files = [
-        "docs/COOKBOOK.md",
-        "docs/COMPLETE_REFERENCE.md",
-        "docs/STATE_APIS.md",
-        "docs/WIDGETS.md",
+        "docs/reference/cookbook.md",
+        "docs/reference/complete-reference.md",
+        "docs/reference/state.md",
+        "docs/reference/widgets.md",
     ];
     let forbidden = [
         "table.rows.",
@@ -315,8 +655,8 @@ fn maintained_recipes_use_encapsulated_state_accessors() {
 fn maintained_recipes_avoid_deprecated_aliases() {
     let root = repo_root();
     let files = [
-        "docs/COOKBOOK.md",
-        "docs/PATTERNS.md",
+        "docs/reference/cookbook.md",
+        "docs/guide/03-patterns.md",
         ".agents/skills/slt-migration/SKILL.md",
     ];
 
@@ -357,7 +697,7 @@ fn agent_reference_tracks_example_inventory() {
 fn project_docs_point_to_agents_instructions() {
     let root = repo_root();
     for relative in [
-        "docs/DESIGN_PRINCIPLES.md",
+        "docs/internals/design-principles.md",
         ".agents/skills/slt/REFERENCES.md",
         ".agents/skills/slt-migration/SKILL.md",
     ] {
@@ -372,7 +712,7 @@ fn project_docs_point_to_agents_instructions() {
 #[test]
 fn state_api_guide_lists_every_public_widget_state() {
     let root = repo_root();
-    let guide = read(root.join("docs/STATE_APIS.md"));
+    let guide = read(root.join("docs/reference/state.md"));
     let mut sources = Vec::new();
     collect_files(&root.join("src/widgets"), "rs", &mut sources);
 
@@ -388,7 +728,7 @@ fn state_api_guide_lists_every_public_widget_state() {
             if name.ends_with("State") {
                 assert!(
                     guide.contains(&format!("## {name}")),
-                    "docs/STATE_APIS.md must document public widget state {name}"
+                    "docs/reference/state.md must document public widget state {name}"
                 );
             }
         }

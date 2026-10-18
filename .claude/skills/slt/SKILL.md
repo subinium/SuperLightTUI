@@ -24,7 +24,7 @@ Targets SLT v0.25.0. Verify every API against `src/` before using it.
 
 SLT is **immediate-mode**. Your app is one closure: `slt::run(|ui: &mut Context| { ... })`. The closure runs every frame. State lives in plain Rust variables outside the closure — no `App` trait, no `Model/View/Update`, no retained tree. SLT handles flexbox layout, ANSI diff, and stdout flush.
 
-`Response.rect` reflects the **previous** frame because layout runs after the closure returns. Frame 1 returns a zero `Rect`. Guard measurement-dependent logic with `if ui.tick() > 0 { ... }`. See `docs/PREVIOUS_FRAME_GUIDE.md`.
+`Response.rect` reflects the **previous** frame because layout runs after the closure returns. Frame 1 returns a zero `Rect`. Guard measurement-dependent logic with `if ui.tick() > 0 { ... }`. See `docs/guide/02-state.md#the-previous-frame-rule`.
 
 For larger apps write **components as functions**: `fn render_card(ui: &mut Context, data: &Card)`. Share read-mostly state with `ui.provide(value, |ui| ...)` + `ui.use_context::<T>()` instead of threading `&theme` through every helper.
 
@@ -32,7 +32,7 @@ Imports: `use slt::prelude::*;` is the one-line app import (run entry points, `C
 
 ## The API rules (predictability anchors)
 
-These are non-negotiable since v0.20. When generating new code, every public widget must match all of them. Known exceptions are listed in `docs/API_DESIGN.md`; do not copy them into new APIs.
+These are non-negotiable since v0.20. When generating new code, every public widget must match all of them. Known exceptions are listed in `docs/internals/design-principles.md#api-review-rules`; do not copy them into new APIs.
 
 1. **Builder for optional config.** Methods on `Context` return a builder when ≥1 option exists. Builders are consuming (`mut self -> Self`), render on `Drop`, and expose `.show()` (consumes the builder) to capture a `*Response`.
    ```rust
@@ -76,7 +76,7 @@ These are non-negotiable since v0.20. When generating new code, every public wid
    ui.text("Saved").bold().fg(green);  // ✅ Text builder chain
    ```
 
-## Naming categories (NAMING.md micro tier)
+## Naming categories (naming micro tier)
 
 Method names encode their category. When picking a name, match the category shape of nearby methods.
 
@@ -292,7 +292,7 @@ Red flags that mean STOP: "Probably fine", "Just a docs change", "CI will catch 
 - **Stale removed APIs.** `gauge_w`, `gauge_colored`, `line_gauge_with`, `breadcrumb_sep`, `LineGaugeOpts`, `HighlightRange::single`, `label_owned` are GONE in v0.20. Use the builder forms.
 - **`Response.rect` on frame 1.** Zero `Rect`. Guard with `ui.tick() > 0`.
 - **`use_state()` inside `if`/`match`/`for`.** Use `use_state_keyed(id, init)` (`&'static str` or runtime `String` id). `use_state_named` is deprecated (same slot).
-- **Deprecated 0.26 forms.** Do not write `button_with` / `button_colored`, `badge_colored`, `stat_colored`, `separator_colored`, `progress_bar_colored`, `line_chart_colored`, `help_colored`, `slider_with`, `grid_with`, `use_state_named`; use the builder methods above. Removed outright: `.pad`, `.min_width`-style container setters, `ui.row_gap(n, f)` / `ui.col_gap(n, f)` (use `container().gap(n)`), `key_seq`, `code_block_lang` / `code_block_numbered*`, f32 color methods. See `docs/MIGRATION.md` (v0.25 → v0.26).
+- **Deprecated 0.26 forms.** Do not write `button_with` / `button_colored`, `badge_colored`, `stat_colored`, `separator_colored`, `progress_bar_colored`, `line_chart_colored`, `help_colored`, `slider_with`, `grid_with`, `use_state_named`; use the builder methods above. Removed outright: `.pad`, `.min_width`-style container setters, `ui.row_gap(n, f)` / `ui.col_gap(n, f)` (use `container().gap(n)`), `key_seq`, `code_block_lang` / `code_block_numbered*`, f32 color methods. See `docs/reference/migration.md` (v0.25 → v0.26).
 - **Holding a builder across `ui` calls.** `let r = ui.button("x"); ui.text(".."); r.clicked` does not compile; write `ui.button("x").show()`.
 - **Forgetting `.show()` on builders that return a response.** Drop renders and discards the response. Capture with `let r = ui.gauge(...).show();`.
 - **`'static` on deferred raw draw.** Use `draw_with` for owned data, or `draw_precomputed` when the closure must borrow local data and fixed source dimensions are acceptable.
