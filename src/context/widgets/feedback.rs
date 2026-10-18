@@ -146,8 +146,8 @@ impl Context {
         };
 
         let value_text = format_compact_number(*value);
-        let label_width = UnicodeWidthStr::width(label) as u32;
-        let value_width = UnicodeWidthStr::width(value_text.as_str()) as u32;
+        let label_width = crate::width::unicode_width(label) as u32;
+        let value_width = crate::width::unicode_width(value_text.as_str()) as u32;
         let track_width = self
             .area_width
             .saturating_sub(label_width + value_width + 8)
@@ -321,7 +321,7 @@ impl Context {
         // frame's rect from `prev_hit_map`. On the first frame the row has
         // no entry yet, so we fall back to assuming the row starts at (0,0)
         // — same behaviour as the prior implementation.
-        let q_width = UnicodeWidthStr::width(question) as u32;
+        let q_width = crate::width::unicode_width(question) as u32;
         if !clicked && let Some((mx, my)) = self.last_left_press_pos() {
             let next_id = self.rollback.interaction_count;
             let prev_rect = self.prev_hit_map.get(next_id).copied();

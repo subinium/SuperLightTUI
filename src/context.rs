@@ -29,7 +29,9 @@ use crate::widgets::{
     color_hex_label, parse_hex_color,
 };
 use crate::width::UnicodeSegmentation;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthChar;
+#[cfg(test)]
+use unicode_width::UnicodeWidthStr;
 
 #[allow(dead_code)]
 fn slt_assert(condition: bool, msg: &str) {
