@@ -215,6 +215,7 @@ pub(crate) fn run_frame_kernel(
     }
     ctx.process_focus_keys();
     ctx.finish_screen_focus();
+    ctx.finish_focus_identity(&mut state.focus);
     ctx.render_notifications();
     ctx.emit_pending_tooltips();
 
@@ -327,8 +328,14 @@ pub(crate) fn run_frame_kernel(
 
     #[cfg(feature = "crossterm")]
     let mut should_copy_selection = false;
+    // Issue #465: a text widget owns this pointer gesture for its own
+    // selection; keep the screen-level overlay out of it.
     #[cfg(feature = "crossterm")]
-    for ev in &ctx.events {
+    if ctx.text_pointer_capture {
+        state.selection.clear();
+    }
+    #[cfg(feature = "crossterm")]
+    for ev in ctx.events.iter().filter(|_| !ctx.text_pointer_capture) {
         if let Event::Mouse(mouse) = ev {
             match mouse.kind {
                 event::MouseKind::Down(event::MouseButton::Left) => {

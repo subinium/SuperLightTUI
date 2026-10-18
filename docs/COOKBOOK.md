@@ -58,7 +58,8 @@ The closure is the whole app. Plain Rust variables hold state; `slt::Context` mu
 ### What it shows
 
 - Two `TextInputState` fields with `add_validator(...)` chains that run every frame.
-- Password masking via `TextInputState::masked`.
+- Password masking via the `TextInputState::masked(true)` builder
+  (`TextInputState::password()` for an input without a placeholder).
 - Automatic Tab / Shift+Tab focus cycling — no manual focus handling required.
 - Submit button that is only enabled when both fields pass validation.
 
@@ -79,8 +80,7 @@ fn main() -> std::io::Result<()> {
         }
     });
 
-    let mut password = TextInputState::with_placeholder("At least 8 characters");
-    password.masked = true;
+    let mut password = TextInputState::with_placeholder("At least 8 characters").masked(true);
     password.add_validator(|v| {
         if v.len() < 8 {
             Err("Password must be at least 8 characters".into())

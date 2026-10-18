@@ -221,11 +221,11 @@ fn text_input_validation_error_renders() {
 }
 
 #[test]
-fn text_input_validate_method() {
+fn text_input_validate_now_method() {
     let mut input = TextInputState::new();
     input.value = "abc".into();
 
-    input.validate(|value| {
+    input.validate_now(|value| {
         if value.len() >= 5 {
             Ok(())
         } else {
@@ -235,7 +235,7 @@ fn text_input_validate_method() {
     assert_eq!(input.validation_error.as_deref(), Some("too short"));
 
     input.value = "abcdef".into();
-    input.validate(|value| {
+    input.validate_now(|value| {
         if value.len() >= 5 {
             Ok(())
         } else {
@@ -243,6 +243,22 @@ fn text_input_validate_method() {
         }
     });
     assert_eq!(input.validation_error, None);
+}
+
+/// The deprecated `TextInputState::validate` keeps running immediately.
+#[test]
+#[allow(deprecated)]
+fn text_input_deprecated_validate_alias_runs_now() {
+    let mut input = TextInputState::new();
+    input.value = "abc".into();
+    input.validate(|value| {
+        if value.len() >= 5 {
+            Ok(())
+        } else {
+            Err("too short".into())
+        }
+    });
+    assert_eq!(input.validation_error.as_deref(), Some("too short"));
 }
 
 #[test]

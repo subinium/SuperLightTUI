@@ -371,8 +371,8 @@ These are not widgets but essential `Context` methods for state, input, and envi
 
 | Widget | State type | Key fields / methods |
 |---|---|---|
-| `text_input` | `TextInputState` | `.value: String`, `.cursor: usize`, `.placeholder`, `::with_placeholder(s)`, `.suggestions: Vec<String>`, `.matched_suggestions()` |
-| `textarea` | `TextareaState` | `.lines: Vec<String>`, `.cursor_row`, `.cursor_col`, `.wrap_width: Option<u32>`, `.max_length` |
+| `text_input` | `TextInputState` | `.value: String`, `.cursor: usize`, `.placeholder`, `::with_placeholder(s)`, `::password()`, `.clear()`, `.set_value(s)`, `.selection()`, `.selected_text()`, `.select_all()`, `.suggestions: Vec<String>`, `.matched_suggestions()` |
+| `textarea` | `TextareaState` | `.lines: Vec<String>`, `.cursor_row`, `.cursor_col`, `.wrap_width: Option<u32>`, `.max_length`, `.selection()`, `.selected_text()`, `.select_all()` |
 | `select` | `SelectState` | `.items()`, `.set_items(...)`, `.selected`, `.open`, `.filter` |
 | `radio` | `RadioState` | `.items: Vec<String>`, `.selected: usize` |
 | `multi_select` | `MultiSelectState` | `.items()`, `.set_items(...)`, `.cursor`, `.selected` |

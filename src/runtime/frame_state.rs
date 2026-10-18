@@ -32,6 +32,153 @@ pub(crate) struct FocusState {
     /// been resolved. Consumed once the matching registration is found in
     /// `focus_name_map_prev`.
     pub pending_focus_name: Option<String>,
+    /// Issue #453: focus-slot metadata carried between frames.
+    pub identity: FocusIdentityCarry,
+}
+
+/// Issue #453: what kind of text entry a focus slot performs. Keys the
+/// widget edits with are withheld from global shortcut queries while it owns
+/// focus (see `Context::key`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TextEntryKind {
+    /// Single-line editor: printable keys plus Backspace, Delete, Left,
+    /// Right, Home and End.
+    SingleLine,
+    /// Multi-line editor: everything `SingleLine` owns plus Enter, Up and
+    /// Down.
+    MultiLine,
+}
+
+/// Per-frame metadata recorded for every focus slot, indexed by slot id.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct FocusSlotMeta {
+    /// Issue #454: stable identity of the widget that owns the slot (a
+    /// widget-state id, a hashed `register_focusable_keyed` key, or a hashed
+    /// `register_focusable_named` name). `None` for positional slots.
+    pub key: Option<u64>,
+    /// Issue #453: `Some` when the slot is a text-entry widget.
+    pub text_entry: Option<TextEntryKind>,
+    /// Issue #465: `CHORD_*` bits for the Ctrl/Super chords the text widget
+    /// handles itself (select all, copy/cut while a selection exists, undo /
+    /// redo, kill line). Shortcut queries do not see those chords while the
+    /// widget owns focus.
+    pub chords: u8,
+}
+
+/// Issue #465: the focused text widget handles `Ctrl+A`.
+pub(crate) const CHORD_SELECT_ALL: u8 = 1;
+/// Issue #465: the focused text widget has a selection and handles
+/// `Ctrl+C` / `Ctrl+X`.
+pub(crate) const CHORD_COPY_CUT: u8 = 2;
+/// Issue #465: the focused text widget handles `Ctrl+Z` / `Ctrl+Y`.
+pub(crate) const CHORD_HISTORY: u8 = 4;
+/// Issue #465: the focused text widget handles `Ctrl+K`.
+pub(crate) const CHORD_KILL_LINE: u8 = 8;
+
+/// Issue #454: high bit reserved for widget-state focus keys so they never
+/// collide with hashed user keys (which have it cleared).
+pub(crate) const STATE_FOCUS_KEY_BIT: u64 = 1 << 63;
+
+/// Issue #454: allocate a process-unique focus key for a widget state.
+pub(crate) fn next_state_focus_key() -> u64 {
+    static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) | STATE_FOCUS_KEY_BIT
+}
+
+/// Issue #454: map a user-supplied key to the hashed-key namespace.
+pub(crate) fn hashed_focus_key(key: impl std::hash::Hash) -> u64 {
+    use std::hash::Hasher as _;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    key.hash(&mut hasher);
+    hasher.finish() & !STATE_FOCUS_KEY_BIT
+}
+
+/// In-frame view of the focus-slot metadata, owned by `Context`.
+#[derive(Debug, Default)]
+pub(crate) struct FocusIdentity {
+    /// Metadata recorded this frame, indexed by slot id.
+    pub slots: Vec<FocusSlotMeta>,
+    /// Metadata recorded by the previous frame, indexed by slot id.
+    pub prev_slots: Vec<FocusSlotMeta>,
+    /// Issue #453: text-entry ownership (kind and handled chords) at the
+    /// start of this frame.
+    pub prev_text_entry: Option<(TextEntryKind, u8)>,
+    /// Issue #454: key of the slot focus starts on. While set (and focus has
+    /// not been moved explicitly this frame), focus follows this key instead
+    /// of the slot number.
+    pub expected_key: Option<u64>,
+    /// Issue #454: `focus_index` value the key rule is anchored to. Any other
+    /// value means focus was moved explicitly and the positional rule applies.
+    pub origin_index: usize,
+    /// Issue #454: key of the slot that was focused when the previous frame
+    /// ended, for `gained_focus` / `lost_focus`.
+    pub prev_focused_key: Option<u64>,
+}
+
+impl FocusIdentity {
+    /// Whether `key` belonged to some slot in the previous frame.
+    pub(crate) fn seen_last_frame(&self, key: u64) -> bool {
+        self.prev_slots.iter().any(|slot| slot.key == Some(key))
+    }
+}
+
+impl FocusIdentityCarry {
+    /// Hand the carried metadata to a new frame whose focus starts on
+    /// `target` with `focus_index == origin_index`. `target` and
+    /// `prev_focused` are slot ids in the previous frame's numbering.
+    pub(crate) fn begin_frame(
+        &mut self,
+        target: usize,
+        origin_index: usize,
+        prev_focused: Option<usize>,
+    ) -> FocusIdentity {
+        let mut slots = std::mem::take(&mut self.slots_buf);
+        slots.clear();
+        let prev_slots = std::mem::take(&mut self.slots);
+        let start = prev_slots.get(target).copied().unwrap_or_default();
+        let prev_text_entry = self
+            .text_claim
+            .map(|kind| (kind, 0))
+            .or(start.text_entry.map(|kind| (kind, start.chords)));
+        let prev_focused_key = prev_focused
+            .and_then(|id| prev_slots.get(id))
+            .and_then(|slot| slot.key);
+        FocusIdentity {
+            slots,
+            prev_slots,
+            prev_text_entry,
+            expected_key: start.key,
+            origin_index,
+            prev_focused_key,
+        }
+    }
+
+    /// Take back the metadata recorded by a finished frame.
+    pub(crate) fn end_frame(
+        &mut self,
+        identity: &mut FocusIdentity,
+        count: usize,
+        text_claim: Option<TextEntryKind>,
+    ) {
+        let mut recycled = std::mem::take(&mut identity.prev_slots);
+        recycled.clear();
+        identity.slots.truncate(count);
+        self.slots = std::mem::take(&mut identity.slots);
+        self.slots_buf = recycled;
+        self.text_claim = text_claim;
+    }
+}
+
+/// Focus-slot metadata handed from one frame to the next.
+#[derive(Debug, Default)]
+pub(crate) struct FocusIdentityCarry {
+    /// Slot metadata recorded by the most recent completed frame.
+    pub slots: Vec<FocusSlotMeta>,
+    /// Recycled buffer the next frame records its slot metadata into.
+    pub slots_buf: Vec<FocusSlotMeta>,
+    /// Issue #453: text-entry ownership claimed by a widget without a focus
+    /// slot (an open command palette) on the most recent completed frame.
+    pub text_claim: Option<TextEntryKind>,
 }
 
 /// v0.21.1: maximum gap between two same-cell left clicks for them to count as

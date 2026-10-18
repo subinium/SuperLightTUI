@@ -37,19 +37,46 @@ pub(crate) fn prepare_text_insert(
         return Some((result, byte + text.len()));
     }
     let max = max_length?;
-    // Concatenation can merge one cluster at either insertion edge (RI runs
-    // can also change pairing). Examine the two extra candidates against the
-    // complete resulting string, not an additive pre-insertion length check.
-    let budget = max.saturating_sub(value.graphemes(true).count());
-    let mut ends = [0; 3];
-    for (start, cluster) in text.grapheme_indices(true).take(budget.saturating_add(2)) {
-        ends.rotate_left(1);
-        ends[2] = start + cluster.len();
-    }
-    for end in ends.into_iter().rev() {
-        if end == 0 || end == text.len() {
-            continue;
-        }
+    // The longest prefix of `text`, cut at one of its own grapheme
+    // boundaries, whose *resulting* string fits `max` (issue #496).
+    //
+    // Inserted clusters can merge into the grapheme before the cursor (ZWJ
+    // emoji sequences, conjoining jamo, combining marks, CR+LF), and the cut
+    // end can merge into the grapheme after it, so the answer is not a fixed
+    // number of clusters past the remaining budget. Two facts keep the
+    // search exact and cheap:
+    //
+    // * `prefix(e) = graphemes(before + text[..e])` never decreases with `e`:
+    //   UAX #29 boundaries depend only on what precedes them (plus the next
+    //   scalar), so appending text never removes a boundary inside the
+    //   already-segmented part.
+    // * `prefix(e) <= total(e) <= prefix(e) + after_count`, and gluing `after`
+    //   on removes at most two boundaries (the junction, plus one inside
+    //   `after` when GB11 / GB9c look back across it; RI pairing keeps the
+    //   count). So no end with `prefix(e) > max + 2 - after_count` can fit,
+    //   and every end with `prefix(e) + after_count <= max` fits.
+    //
+    // Binary search the first bound, then walk down exactly; only the few
+    // ends between the two bounds need a full count.
+    const MAX_JUNCTION_LOSS: usize = 2;
+    let before = &value[..byte];
+    let after = &value[byte..];
+    let after_count = after.graphemes(true).count();
+    let ends: Vec<usize> = text
+        .grapheme_indices(true)
+        .map(|(start, cluster)| start + cluster.len())
+        .filter(|&end| end < text.len())
+        .collect();
+    let prefix_count = |end: usize| {
+        let mut joined = String::with_capacity(before.len() + end);
+        joined.push_str(before);
+        joined.push_str(&text[..end]);
+        joined.graphemes(true).count()
+    };
+    let ceiling = (max + MAX_JUNCTION_LOSS).checked_sub(after_count)?;
+    // `ends[..upper]` are the ends whose prefix count is within `ceiling`.
+    let upper = ends.partition_point(|&end| prefix_count(end) <= ceiling);
+    for &end in ends[..upper].iter().rev() {
         let candidate = build(&text[..end]);
         if candidate.graphemes(true).count() <= max {
             return Some((candidate, byte + end));
@@ -91,27 +118,235 @@ mod insertion_regressions {
         .prop_map(|chars| chars.into_iter().collect())
     }
 
+    /// Exhaustive reference: the longest prefix of `inserted` (cut at one of
+    /// its own grapheme boundaries) whose *resulting* string fits `max`.
+    fn reference(
+        value: &str,
+        cursor: usize,
+        inserted: &str,
+        max: usize,
+    ) -> Option<(String, usize)> {
+        let byte = value
+            .grapheme_indices(true)
+            .nth(cursor)
+            .map_or(value.len(), |(byte, _)| byte);
+        inserted
+            .grapheme_indices(true)
+            .map(|(start, cluster)| start + cluster.len())
+            .filter_map(|end| {
+                let candidate = format!("{}{}{}", &value[..byte], &inserted[..end], &value[byte..]);
+                (candidate.graphemes(true).count() <= max).then_some((candidate, byte + end))
+            })
+            .next_back()
+    }
+
+    fn check(value: &str, cursor: usize, inserted: &str, max: usize) {
+        let byte = value
+            .grapheme_indices(true)
+            .nth(cursor)
+            .map_or(value.len(), |(byte, _)| byte);
+        assert_eq!(
+            prepare_text_insert(value, byte, inserted, Some(max)),
+            reference(value, cursor, inserted, max),
+            "value={value:?} cursor={cursor} inserted={inserted:?} max={max}"
+        );
+    }
+
+    /// Issue #496: proptest shrink. The inserted ZWJ and emoji both merge
+    /// into the emoji before the cursor, and a truncated prefix ending in a
+    /// leading jamo joins the vowel jamo after the cursor, so the fitting
+    /// prefix lies further out than a fixed `budget + 2` cluster window.
+    #[test]
+    fn issue_496_zwj_and_jamo_joins_across_the_cursor() {
+        check("aकककa👩ᅡ🇰कaᄀaᄀ", 6, "\u{200d}👩\raᆨकaaaᅡकaaᄀa", 24);
+    }
+
+    #[test]
+    fn leading_jamo_at_cursor_joins_inserted_vowel() {
+        // value "ᄀ|x": inserting V after L forms one syllable.
+        check("ᄀx", 1, "ᅡbcd", 3);
+        check("ᄀx", 1, "ᅡᆨbcd", 3);
+    }
+
+    #[test]
+    fn vowel_and_trailing_jamo_join_across_the_cursor() {
+        // "가" (L+V) before the cursor, T inserted: still one syllable.
+        check("\u{1100}\u{1161}x", 1, "\u{11a8}yz", 2);
+        // V before the cursor, T + more inserted, limit hit right away.
+        check("\u{1100}\u{1161}\u{1100}", 1, "\u{11a8}\u{1161}q", 3);
+    }
+
+    #[test]
+    fn limit_hit_mid_syllable() {
+        // The cut must fall on a boundary of the inserted text while the
+        // resulting syllable count stays within the limit.
+        check("ab", 1, "\u{1100}\u{1161}\u{11a8}\u{1100}\u{1161}", 3);
+        check("ab", 1, "\u{1100}\u{1161}\u{11a8}\u{1100}\u{1161}", 4);
+        check("a\u{1100}", 2, "\u{1161}\u{11a8}\u{1100}\u{1161}x", 2);
+    }
+
+    #[test]
+    fn long_zwj_chain_merges_into_the_emoji_before_the_cursor() {
+        let chain: String = "\u{200d}👩".repeat(40);
+        check("👩b", 1, &format!("{chain}xyz"), 3);
+        check("👩b", 1, &format!("{chain}xyz"), 2);
+    }
+
+    fn cases() -> u32 {
+        std::env::var("PROPTEST_CASES")
+            .ok()
+            .and_then(|cases| cases.parse().ok())
+            .unwrap_or(2048)
+    }
+
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(2048))]
+        #![proptest_config(ProptestConfig::with_cases(cases()))]
         #[test]
         fn limited_insert_matches_exhaustive_resulting_grapheme_reference(
             value in text(), inserted in text(), cursor in 0usize..24, max in 0usize..30,
         ) {
             let byte = value.grapheme_indices(true).nth(cursor).map_or(value.len(), |(byte, _)| byte);
-            let expected = inserted.grapheme_indices(true).map(|(start, cluster)| start + cluster.len())
-                .filter_map(|end| {
-                    let candidate = format!("{}{}{}", &value[..byte], &inserted[..end], &value[byte..]);
-                    (candidate.graphemes(true).count() <= max).then_some((candidate, byte + end))
-                }).next_back();
+            let expected = reference(&value, cursor, &inserted, max);
             prop_assert_eq!(prepare_text_insert(&value, byte, &inserted, Some(max)), expected);
         }
     }
+}
+
+/// Issue #465: mouse-selection bookkeeping shared by `text_input` and
+/// `textarea` (press-drag state and a click counter for double / triple
+/// clicks).
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct PointerSelect {
+    /// A left-button press inside the widget started a drag selection that
+    /// has not been released yet.
+    pub(crate) dragging: bool,
+    clicks: u8,
+    last_at: Option<crate::clock::Instant>,
+    last_pos: Option<(u32, u32)>,
+}
+
+impl PointerSelect {
+    /// Count a left press at `pos`: 1 for a single click, 2 for a double and
+    /// 3 for a triple click (same cell, each within the double-click window).
+    pub(crate) fn register_click(&mut self, now: crate::clock::Instant, pos: (u32, u32)) -> u8 {
+        let repeat = self.last_pos == Some(pos)
+            && self
+                .last_at
+                .is_some_and(|at| now.duration_since(at) <= crate::DOUBLE_CLICK_WINDOW);
+        self.clicks = if repeat { (self.clicks + 1).min(3) } else { 1 };
+        self.last_at = Some(now);
+        self.last_pos = Some(pos);
+        self.clicks
+    }
+}
+
+/// Undo snapshot for [`TextInputState`] (issue #465).
+#[derive(Debug, Clone)]
+pub(crate) struct TextInputSnapshot {
+    value: String,
+    cursor: usize,
+    anchor: Option<usize>,
+}
+
+/// Issue #465: selection, undo history and pointer state of a
+/// [`TextInputState`]. Private so the invariants stay inside the widget.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct TextInputEditing {
+    /// Selection anchor (grapheme index). The selection spans
+    /// `anchor..cursor`, normalized.
+    pub(crate) anchor: Option<usize>,
+    undo: Vec<TextInputSnapshot>,
+    redo: Vec<TextInputSnapshot>,
+    /// The last edit was a typed character, so the next one joins its undo
+    /// step.
+    pub(crate) last_typing: bool,
+    pub(crate) pointer: PointerSelect,
+    /// `Ctrl+A` does *not* select all (opt-out flag; select-all is the
+    /// default).
+    pub(crate) ctrl_a_disabled: bool,
+    /// Previous frame's rendered layout: `(cell, grapheme index)` for every
+    /// visible grapheme plus a trailing end entry, relative to the first text
+    /// cell. Used to map mouse positions to cursor positions.
+    pub(crate) visual: Vec<(u32, usize)>,
+}
+
+/// Normalized grapheme range between an anchor and a cursor, or `None` when
+/// they coincide.
+pub(crate) fn normalized_range(anchor: usize, cursor: usize) -> Option<std::ops::Range<usize>> {
+    match anchor.cmp(&cursor) {
+        std::cmp::Ordering::Less => Some(anchor..cursor),
+        std::cmp::Ordering::Greater => Some(cursor..anchor),
+        std::cmp::Ordering::Equal => None,
+    }
+}
+
+/// Byte offset of grapheme index `index` in `text` (the length when past the
+/// end).
+pub(crate) fn grapheme_byte(text: &str, index: usize) -> usize {
+    text.grapheme_indices(true)
+        .nth(index)
+        .map_or(text.len(), |(byte, _)| byte)
+}
+
+/// Whether a grapheme counts as part of a word for word-wise movement and
+/// double-click selection: its base scalar is alphanumeric (so CJK
+/// ideographs and accented letters are word characters).
+pub(crate) fn cluster_is_word(cluster: &str) -> bool {
+    cluster
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_alphanumeric() || c == '_')
+}
+
+/// Grapheme range of the word (or run of non-word, non-space graphemes, or
+/// run of spaces) containing grapheme `index`.
+pub(crate) fn word_range_at(text: &str, index: usize) -> std::ops::Range<usize> {
+    let clusters: Vec<&str> = text.graphemes(true).collect();
+    if clusters.is_empty() {
+        return 0..0;
+    }
+    let index = index.min(clusters.len() - 1);
+    let class = |cluster: &str| {
+        if cluster_is_word(cluster) {
+            0u8
+        } else if cluster.chars().all(char::is_whitespace) {
+            1
+        } else {
+            2
+        }
+    };
+    let target = class(clusters[index]);
+    let mut start = index;
+    while start > 0 && class(clusters[start - 1]) == target {
+        start -= 1;
+    }
+    let mut end = index + 1;
+    while end < clusters.len() && class(clusters[end]) == target {
+        end += 1;
+    }
+    start..end
 }
 
 /// State for a single-line text input widget.
 ///
 /// Pass a mutable reference to `Context::text_input` each frame. The widget
 /// handles all keyboard events when focused.
+///
+/// # Selection, clipboard and undo
+///
+/// While focused, `Shift` + `Left` / `Right` / `Home` / `End` (and
+/// `Shift+Ctrl`/`Shift+Alt` + arrows for whole words) extend a selection,
+/// `Ctrl+A` selects everything (opt out with
+/// [`ctrl_a_select_all(false)`](Self::ctrl_a_select_all)), and with mouse
+/// capture a press-drag selects a range, a double-click a word and a
+/// triple-click everything. Typing or pasting replaces the selection as one
+/// undo step, Backspace / Delete remove it, `Ctrl+C` copies it and `Ctrl+X`
+/// cuts it through [`Context::copy_to_clipboard`](crate::Context::copy_to_clipboard)
+/// (OSC 52). `Ctrl+Z` undoes and `Ctrl+Y` / `Ctrl+Shift+Z` redoes. Masked
+/// inputs never put their plaintext on the clipboard: `Ctrl+C` / `Ctrl+X`
+/// do not copy (cut still deletes). `Ctrl+C` without a selection is left to
+/// the app; note that the default `RunConfig` quits on `Ctrl+C` before the
+/// frame runs, so copying needs `RunConfig::handle_ctrl_c(false)`.
 ///
 /// # Example
 ///
@@ -149,6 +384,10 @@ pub struct TextInputState {
     validators: Vec<TextInputValidator>,
     /// All current validation errors from all validators.
     validation_errors: Vec<String>,
+    /// Issue #454: process-unique focus identity (fresh on `Clone`).
+    focus_key: u64,
+    /// Issue #465: selection, undo history and pointer state.
+    pub(crate) editing: TextInputEditing,
 }
 
 impl std::fmt::Debug for TextInputState {
@@ -165,6 +404,8 @@ impl std::fmt::Debug for TextInputState {
             .field("show_suggestions", &self.show_suggestions)
             .field("validators_len", &self.validators.len())
             .field("validation_errors", &self.validation_errors)
+            .field("focus_key", &self.focus_key)
+            .field("selection", &self.selection())
             .finish()
     }
 }
@@ -179,6 +420,9 @@ impl Clone for TextInputState {
     /// re-running any validation.
     ///
     /// Re-register validators on the clone before calling `run_validators()`.
+    ///
+    /// The clone gets its own [`focus_key`](TextInputState::focus_key), so
+    /// rendering both copies yields two independent focus slots.
     fn clone(&self) -> Self {
         Self {
             value: self.value.clone(),
@@ -192,6 +436,11 @@ impl Clone for TextInputState {
             show_suggestions: self.show_suggestions,
             validators: Vec::new(),
             validation_errors: self.validation_errors.clone(),
+            focus_key: crate::runtime::next_state_focus_key(),
+            editing: TextInputEditing {
+                pointer: PointerSelect::default(),
+                ..self.editing.clone()
+            },
         }
     }
 }
@@ -211,7 +460,20 @@ impl TextInputState {
             show_suggestions: false,
             validators: Vec::new(),
             validation_errors: Vec::new(),
+            focus_key: crate::runtime::next_state_focus_key(),
+            editing: TextInputEditing::default(),
         }
+    }
+
+    /// Stable focus identity of this input (issue #454).
+    ///
+    /// [`Context::text_input`](crate::Context::text_input) registers its focus
+    /// slot under this key, so focus stays on this input when other
+    /// focusables are inserted or removed before it. Each state (including a
+    /// [`Clone`]) has its own key. Compare with
+    /// [`Context::focused_key`](crate::Context::focused_key).
+    pub fn focus_key(&self) -> u64 {
+        self.focus_key
     }
 
     /// Create a text input with placeholder text shown when the value is empty.
@@ -228,15 +490,372 @@ impl TextInputState {
         self
     }
 
-    /// Validate the current value and store the latest error message.
+    /// Create an empty masked input for passwords: shorthand for
+    /// `TextInputState::new().masked(true)`.
     ///
-    /// Sets [`TextInputState::validation_error`] to `None` when validation
-    /// succeeds, or to `Some(error)` when validation fails.
+    /// # Example
     ///
-    /// This is a backward-compatible shorthand that runs a single validator.
-    /// For multiple validators, use [`add_validator`](Self::add_validator) and [`run_validators`](Self::run_validators).
-    pub fn validate(&mut self, validator: impl Fn(&str) -> Result<(), String>) {
+    /// ```
+    /// use slt::{TestBackend, widgets::TextInputState};
+    ///
+    /// let mut pw = TextInputState::password();
+    /// pw.set_value("hunter2");
+    /// let mut tb = TestBackend::new(20, 3);
+    /// tb.render(|ui| {
+    ///     let _ = ui.text_input(&mut pw);
+    /// });
+    /// tb.assert_contains("•••••••");
+    /// tb.assert_not_contains("hunter2");
+    /// ```
+    pub fn password() -> Self {
+        Self::new().masked(true)
+    }
+
+    /// Builder: display the value as `•` glyphs (`true`) or as plain text.
+    ///
+    /// Sets the public [`masked`](TextInputState::masked) field.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::TextInputState;
+    ///
+    /// let pin = TextInputState::with_placeholder("PIN").masked(true);
+    /// assert!(pin.masked);
+    /// ```
+    pub fn masked(mut self, on: bool) -> Self {
+        self.masked = on;
+        self
+    }
+
+    /// Clear the input: empties the value, moves the cursor to the start and
+    /// resets validation errors and the suggestion popup.
+    ///
+    /// Registered validators and the placeholder are kept. Use it after a
+    /// submit, e.g. in a chat or todo input.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::TextInputState;
+    ///
+    /// let mut todo = TextInputState::new();
+    /// todo.set_value("buy milk");
+    /// todo.clear();
+    /// assert_eq!(todo.value, "");
+    /// assert_eq!(todo.cursor, 0);
+    /// ```
+    pub fn clear(&mut self) {
+        self.value.clear();
+        self.cursor = 0;
+        self.reset_editing();
+        self.validation_error = None;
+        self.validation_errors.clear();
+        self.suggestion_index = 0;
+        self.show_suggestions = false;
+    }
+
+    /// Replace the value and move the cursor to its end.
+    ///
+    /// The text is truncated to [`max_length`](TextInputState::max_length)
+    /// grapheme clusters when a limit is set. Line breaks are not allowed in
+    /// a single-line input: `\r` and `\n` are replaced with spaces.
+    /// Validation state is left untouched; call
+    /// [`run_validators`](Self::run_validators) if the new value should be
+    /// re-checked.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::TextInputState;
+    ///
+    /// let mut code = TextInputState::new().max_length(4);
+    /// code.set_value("123456");
+    /// assert_eq!(code.value, "1234");
+    /// assert_eq!(code.cursor, 4);
+    /// ```
+    pub fn set_value(&mut self, value: impl Into<String>) {
+        let mut value: String = value.into();
+        if value.contains(['\r', '\n']) {
+            value = value.replace("\r\n", " ").replace(['\r', '\n'], " ");
+        }
+        if let Some(max) = self.max_length
+            && let Some((byte, _)) = value.grapheme_indices(true).nth(max)
+        {
+            value.truncate(byte);
+        }
+        self.cursor = value.graphemes(true).count();
+        self.value = value;
+        self.reset_editing();
+    }
+
+    /// Programmatic replacement starts a fresh editing session: no selection
+    /// and no undo history (matching `TextareaState::set_value`).
+    fn reset_editing(&mut self) {
+        self.editing.anchor = None;
+        self.editing.undo.clear();
+        self.editing.redo.clear();
+        self.editing.last_typing = false;
+    }
+
+    // ── selection (issue #465) ─────────────────────────────────────────
+
+    /// The selected range as grapheme-cluster indices into
+    /// [`value`](Self::value), normalized so `start <= end`. `None` when
+    /// nothing is selected.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::TextInputState;
+    ///
+    /// let mut s = TextInputState::new();
+    /// s.set_value("hello world");
+    /// s.set_selection(6, 11);
+    /// assert_eq!(s.selection(), Some(6..11));
+    /// assert_eq!(s.selected_text(), Some("world"));
+    /// ```
+    pub fn selection(&self) -> Option<std::ops::Range<usize>> {
+        let len = self.value.graphemes(true).count();
+        let anchor = self.editing.anchor?.min(len);
+        normalized_range(anchor, self.cursor.min(len))
+    }
+
+    /// The selected text, or `None` when nothing is selected. For a
+    /// [`masked`](Self::masked) input this is still the plaintext; the widget
+    /// itself never copies it to the clipboard.
+    pub fn selected_text(&self) -> Option<&str> {
+        let range = self.selection()?;
+        let start = grapheme_byte(&self.value, range.start);
+        let end = grapheme_byte(&self.value, range.end);
+        Some(&self.value[start..end])
+    }
+
+    /// Select the whole value (cursor at the end).
+    pub fn select_all(&mut self) {
+        let len = self.value.graphemes(true).count();
+        self.editing.anchor = Some(0);
+        self.cursor = len;
+    }
+
+    /// Select from `anchor` to `cursor` (grapheme indices, clamped to the
+    /// value). The cursor ends at `cursor`; `anchor == cursor` clears the
+    /// selection.
+    pub fn set_selection(&mut self, anchor: usize, cursor: usize) {
+        let len = self.value.graphemes(true).count();
+        self.editing.anchor = Some(anchor.min(len));
+        self.cursor = cursor.min(len);
+    }
+
+    /// Drop the selection, keeping the cursor where it is.
+    pub fn clear_selection(&mut self) {
+        self.editing.anchor = None;
+    }
+
+    /// Builder: whether `Ctrl+A` selects all text while focused (default
+    /// `true`). Set `false` to leave `Ctrl+A` to app shortcuts.
+    pub fn ctrl_a_select_all(mut self, on: bool) -> Self {
+        self.editing.ctrl_a_disabled = !on;
+        self
+    }
+
+    pub(crate) fn ctrl_a_selects_all(&self) -> bool {
+        !self.editing.ctrl_a_disabled
+    }
+
+    // ── editing primitives used by `Context::text_input` ───────────────
+
+    fn snapshot(&self) -> TextInputSnapshot {
+        TextInputSnapshot {
+            value: self.value.clone(),
+            cursor: self.cursor,
+            anchor: self.editing.anchor,
+        }
+    }
+
+    fn restore(&mut self, snap: TextInputSnapshot) {
+        self.value = snap.value;
+        self.cursor = snap.cursor;
+        self.editing.anchor = snap.anchor;
+    }
+
+    /// Record the current state as an undo step (dropping the redo branch).
+    pub(crate) fn push_undo(&mut self) {
+        self.editing.redo.clear();
+        self.editing.undo.push(self.snapshot());
+        if self.editing.undo.len() > DEFAULT_TEXTAREA_HISTORY_MAX {
+            self.editing.undo.remove(0);
+        }
+    }
+
+    /// Undo the last edit. Returns `true` when something changed.
+    pub(crate) fn undo(&mut self) -> bool {
+        let Some(snap) = self.editing.undo.pop() else {
+            return false;
+        };
+        let current = self.snapshot();
+        self.editing.redo.push(current);
+        self.restore(snap);
+        self.editing.last_typing = false;
+        true
+    }
+
+    /// Redo the last undone edit. Returns `true` when something changed.
+    pub(crate) fn redo(&mut self) -> bool {
+        let Some(snap) = self.editing.redo.pop() else {
+            return false;
+        };
+        let current = self.snapshot();
+        self.editing.undo.push(current);
+        self.restore(snap);
+        self.editing.last_typing = false;
+        true
+    }
+
+    /// Move the cursor to `target`, extending the selection when `extend`,
+    /// otherwise dropping it.
+    pub(crate) fn move_cursor(&mut self, target: usize, extend: bool) {
+        if extend {
+            self.editing.anchor.get_or_insert(self.cursor);
+        } else {
+            self.editing.anchor = None;
+        }
+        self.cursor = target;
+        self.editing.last_typing = false;
+    }
+
+    /// Delete the selection as one undo step. Returns `false` (and does
+    /// nothing) when nothing is selected.
+    pub(crate) fn delete_selection(&mut self) -> bool {
+        let Some(range) = self.selection() else {
+            return false;
+        };
+        self.push_undo();
+        let start = grapheme_byte(&self.value, range.start);
+        let end = grapheme_byte(&self.value, range.end);
+        self.value.replace_range(start..end, "");
+        self.cursor = grapheme_cursor_after(&self.value, start);
+        self.editing.anchor = None;
+        self.editing.last_typing = false;
+        true
+    }
+
+    /// Insert `text` at the cursor, replacing the selection (one undo step
+    /// for delete + insert). Consecutive typed characters (`typing`) share
+    /// an undo step. Returns `true` when the value changed.
+    pub(crate) fn insert_text(&mut self, text: &str) -> bool {
+        self.insert_text_as(text, false)
+    }
+
+    /// Typed-character form of [`insert_text`](Self::insert_text).
+    pub(crate) fn type_text(&mut self, text: &str) -> bool {
+        self.insert_text_as(text, true)
+    }
+
+    fn insert_text_as(&mut self, text: &str, typing: bool) -> bool {
+        if let Some(range) = self.selection() {
+            let start = grapheme_byte(&self.value, range.start);
+            let end = grapheme_byte(&self.value, range.end);
+            let mut base = String::with_capacity(self.value.len());
+            base.push_str(&self.value[..start]);
+            base.push_str(&self.value[end..]);
+            self.push_undo();
+            match prepare_text_insert(&base, start, text, self.max_length) {
+                Some((value, caret)) => {
+                    self.cursor = grapheme_cursor_after(&value, caret);
+                    self.value = value;
+                }
+                None => {
+                    self.cursor = grapheme_cursor_after(&base, start);
+                    self.value = base;
+                }
+            }
+            self.editing.anchor = None;
+            self.editing.last_typing = typing;
+            return true;
+        }
+        let byte = grapheme_byte(&self.value, self.cursor);
+        let Some((value, caret)) = prepare_text_insert(&self.value, byte, text, self.max_length)
+        else {
+            return false;
+        };
+        if !(typing && self.editing.last_typing) {
+            self.push_undo();
+        }
+        self.cursor = grapheme_cursor_after(&value, caret);
+        self.value = value;
+        self.editing.last_typing = typing;
+        true
+    }
+
+    /// Backspace: delete the selection, or the grapheme before the cursor.
+    pub(crate) fn delete_backward(&mut self) -> bool {
+        if self.delete_selection() {
+            return true;
+        }
+        self.editing.last_typing = false;
+        if self.cursor == 0 {
+            return false;
+        }
+        self.push_undo();
+        let start = grapheme_byte(&self.value, self.cursor - 1);
+        let end = grapheme_byte(&self.value, self.cursor);
+        self.value.replace_range(start..end, "");
+        self.cursor = grapheme_cursor_after(&self.value, start);
+        true
+    }
+
+    /// Delete: delete the selection, or the grapheme after the cursor.
+    pub(crate) fn delete_forward(&mut self) -> bool {
+        if self.delete_selection() {
+            return true;
+        }
+        self.editing.last_typing = false;
+        if self.cursor >= self.value.graphemes(true).count() {
+            return false;
+        }
+        self.push_undo();
+        let start = grapheme_byte(&self.value, self.cursor);
+        let end = grapheme_byte(&self.value, self.cursor + 1);
+        self.value.replace_range(start..end, "");
+        self.cursor = grapheme_cursor_after(&self.value, start);
+        true
+    }
+
+    /// Run `validator` against the current value once, now, and store the
+    /// result in [`validation_error`](TextInputState::validation_error)
+    /// (`None` on success).
+    ///
+    /// For validators that should run again on demand, register them with
+    /// [`add_validator`](Self::add_validator) and call
+    /// [`run_validators`](Self::run_validators). Inside a form, attach them
+    /// with [`FormField::validate`], which `form_field` runs automatically.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::TextInputState;
+    ///
+    /// let mut email = TextInputState::new();
+    /// email.set_value("nobody");
+    /// email.validate_now(|v| if v.contains('@') { Ok(()) } else { Err("invalid".into()) });
+    /// assert_eq!(email.validation_error.as_deref(), Some("invalid"));
+    /// ```
+    pub fn validate_now(&mut self, validator: impl Fn(&str) -> Result<(), String>) {
         self.validation_error = validator(&self.value).err();
+    }
+
+    /// Deprecated name of [`validate_now`](Self::validate_now).
+    ///
+    /// On [`FormField`], `validate` *attaches* a validator that runs later;
+    /// here it ran immediately, so code copied between the two silently
+    /// changed meaning. The immediate form is now spelled `validate_now`.
+    #[deprecated(
+        since = "0.26.0",
+        note = "renamed to `validate_now`; `FormField::validate` attaches a validator instead of running it"
+    )]
+    pub fn validate(&mut self, validator: impl Fn(&str) -> Result<(), String>) {
+        self.validate_now(validator);
     }
 
     /// Add a validator function that produces its own error message.
@@ -431,6 +1050,8 @@ pub struct FormField {
     /// When the field's validators run. Defaults to
     /// [`ValidateTrigger::OnBlur`].
     pub trigger: ValidateTrigger,
+    /// Stable lookup key for [`FormState::get`]; defaults to the label.
+    key: Option<String>,
     /// This field's validators. Mutate via [`validate`](Self::validate); run
     /// via [`run_validators`](Self::run_validators).
     validators: Vec<Validator>,
@@ -454,6 +1075,7 @@ impl FormField {
             input: TextInputState::new(),
             error: None,
             trigger: ValidateTrigger::default(),
+            key: None,
             validators: Vec::new(),
             was_focused: false,
             #[cfg(feature = "async")]
@@ -465,6 +1087,55 @@ impl FormField {
     pub fn placeholder(mut self, p: impl Into<String>) -> Self {
         self.input.placeholder = p.into();
         self
+    }
+
+    /// Builder: mask this field's input as `•` glyphs (passwords, PINs).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::{TestBackend, widgets::FormField};
+    ///
+    /// let mut field = FormField::new("Password").masked(true);
+    /// field.input.set_value("s3cret");
+    /// let mut tb = TestBackend::new(30, 6);
+    /// tb.render(|ui| {
+    ///     ui.form_field(&mut field);
+    /// });
+    /// tb.assert_contains("••••••");
+    /// tb.assert_not_contains("s3cret");
+    /// ```
+    pub fn masked(mut self, on: bool) -> Self {
+        self.input.masked = on;
+        self
+    }
+
+    /// Builder: shorthand for [`masked(true)`](Self::masked).
+    pub fn password(self) -> Self {
+        self.masked(true)
+    }
+
+    /// Builder: set the key [`FormState::get`] and
+    /// [`FormState::field_mut`] look this field up by. Defaults to the
+    /// label, so set it when labels are translated or may change.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::{FormField, FormState};
+    ///
+    /// let form = FormState::new().field(FormField::new("Courriel").key("email"));
+    /// assert_eq!(form.get("email"), Some(""));
+    /// ```
+    pub fn key(mut self, key: impl Into<String>) -> Self {
+        self.key = Some(key.into());
+        self
+    }
+
+    /// The key this field is looked up by: the one set with
+    /// [`key`](Self::key), or the label.
+    pub fn lookup_key(&self) -> &str {
+        self.key.as_deref().unwrap_or(&self.label)
     }
 
     /// Attach a validator closure (chainable; call multiple times to stack
@@ -777,11 +1448,58 @@ impl FormState {
     }
 
     /// Get field value by index.
+    ///
+    /// Positional: reordering fields changes which value is read. Prefer
+    /// [`get`](Self::get).
     pub fn value(&self, index: usize) -> &str {
         self.fields
             .get(index)
             .map(|f| f.input.value.as_str())
             .unwrap_or("")
+    }
+
+    /// Get a field's value by its [`key`](FormField::key); fields without an
+    /// explicit key are matched by label. Returns `None` when no field
+    /// matches.
+    ///
+    /// Unlike [`value`](Self::value), this keeps reading the right field when
+    /// fields are reordered.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::{FormField, FormState};
+    ///
+    /// let mut form = FormState::new()
+    ///     .field(FormField::new("Name"))
+    ///     .field(FormField::new("Email").key("email"));
+    /// form.field_mut("email").unwrap().input.set_value("a@b.c");
+    /// assert_eq!(form.get("email"), Some("a@b.c"));
+    /// assert_eq!(form.get("Name"), Some(""));
+    /// assert_eq!(form.get("phone"), None);
+    /// ```
+    pub fn get(&self, key: &str) -> Option<&str> {
+        self.field_index(key)
+            .map(|index| self.fields[index].input.value.as_str())
+    }
+
+    /// Get a field mutably by its [`key`](FormField::key); fields without an
+    /// explicit key are matched by label.
+    pub fn field_mut(&mut self, key: &str) -> Option<&mut FormField> {
+        self.field_index(key).map(|index| &mut self.fields[index])
+    }
+
+    /// Explicit keys win over labels, so a field whose label equals another
+    /// field's key never shadows it.
+    fn field_index(&self, key: &str) -> Option<usize> {
+        self.fields
+            .iter()
+            .position(|field| field.key.as_deref() == Some(key))
+            .or_else(|| {
+                self.fields
+                    .iter()
+                    .position(|field| field.key.is_none() && field.label == key)
+            })
     }
 }
 
@@ -890,6 +1608,18 @@ pub(crate) struct TextareaNavigation {
 /// batch is not an undo transaction: accepted edits retain their normal undo
 /// grouping even when their net content change is zero.
 ///
+/// # Selection
+///
+/// `Shift` + arrows / `Home` / `End` (and `Shift+Ctrl`/`Shift+Alt` +
+/// `Left`/`Right` for words) extend a selection, `Ctrl+A` selects all (opt
+/// out with [`ctrl_a_select_all(false)`](Self::ctrl_a_select_all)), and with
+/// mouse capture a press-drag selects a range, a double-click a word and a
+/// triple-click a line. Typing, `Enter` or a paste replaces the selection as
+/// one undo step; Backspace / Delete remove it; `Ctrl+C` copies and `Ctrl+X`
+/// cuts through OSC 52. Positions are `(row, column)` pairs in grapheme
+/// clusters, like [`cursor_row`](Self::cursor_row) /
+/// [`cursor_col`](Self::cursor_col).
+///
 /// # Example
 ///
 /// ```no_run
@@ -902,7 +1632,7 @@ pub(crate) struct TextareaNavigation {
 /// })?;
 /// # Ok::<_, std::io::Error>(())
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct TextareaState {
     /// The lines of text, one entry per line.
     pub lines: Vec<String>,
@@ -932,6 +1662,46 @@ pub struct TextareaState {
     /// keypress does not push a snapshot.
     pub(crate) last_was_char_insert: bool,
     pub(crate) navigation: Option<TextareaNavigation>,
+    /// Issue #454: process-unique focus identity (fresh on `Clone`).
+    focus_key: u64,
+    /// Issue #465: selection anchor `(row, col)`; the selection spans
+    /// `anchor..cursor`, normalized.
+    pub(crate) anchor: Option<(usize, usize)>,
+    /// Issue #465: press-drag and click-count state.
+    pub(crate) pointer: PointerSelect,
+    /// Issue #465: `Ctrl+A` does *not* select all (opt-out flag).
+    pub(crate) ctrl_a_disabled: bool,
+    /// Issue #465: visual `(row, col)` where the previous frame drew the
+    /// caret glyph, which shifts the cells after it by one. Used to map
+    /// mouse positions back to text positions.
+    pub(crate) caret_glyph: Option<(usize, usize)>,
+}
+
+impl Clone for TextareaState {
+    /// Clones content, cursor and history. The clone gets its own
+    /// [`focus_key`](TextareaState::focus_key) so both copies can be rendered
+    /// as independent focus slots.
+    fn clone(&self) -> Self {
+        Self {
+            lines: self.lines.clone(),
+            cursor_row: self.cursor_row,
+            cursor_col: self.cursor_col,
+            max_length: self.max_length,
+            wrap_width: self.wrap_width,
+            scroll_offset: self.scroll_offset,
+            history: self.history.clone(),
+            history_index: self.history_index,
+            history_max: self.history_max,
+            redo_tip: self.redo_tip.clone(),
+            last_was_char_insert: self.last_was_char_insert,
+            navigation: self.navigation,
+            focus_key: crate::runtime::next_state_focus_key(),
+            anchor: self.anchor,
+            pointer: PointerSelect::default(),
+            ctrl_a_disabled: self.ctrl_a_disabled,
+            caret_glyph: None,
+        }
+    }
 }
 
 impl TextareaState {
@@ -950,7 +1720,18 @@ impl TextareaState {
             redo_tip: None,
             last_was_char_insert: false,
             navigation: None,
+            focus_key: crate::runtime::next_state_focus_key(),
+            anchor: None,
+            pointer: PointerSelect::default(),
+            ctrl_a_disabled: false,
+            caret_glyph: None,
         }
+    }
+
+    /// Stable focus identity of this text area (issue #454). See
+    /// [`TextInputState::focus_key`].
+    pub fn focus_key(&self) -> u64 {
+        self.focus_key
     }
 
     /// Return all lines joined with newline characters.
@@ -986,6 +1767,137 @@ impl TextareaState {
         self.redo_tip = None;
         self.last_was_char_insert = false;
         self.navigation = None;
+        self.anchor = None;
+    }
+
+    // ── selection (issue #465) ─────────────────────────────────────────
+
+    /// Clamp a `(row, col)` position into the current text.
+    fn clamp_pos(&self, (row, col): (usize, usize)) -> (usize, usize) {
+        let row = row.min(self.lines.len().saturating_sub(1));
+        let len = self
+            .lines
+            .get(row)
+            .map_or(0, |line| line.graphemes(true).count());
+        (row, col.min(len))
+    }
+
+    /// The selected range as `(row, col)` grapheme positions, normalized so
+    /// `start <= end`. `None` when nothing is selected.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::TextareaState;
+    ///
+    /// let mut s = TextareaState::new();
+    /// s.set_value("one\ntwo");
+    /// s.set_selection((0, 1), (1, 2));
+    /// assert_eq!(s.selection(), Some((0, 1)..(1, 2)));
+    /// assert_eq!(s.selected_text().as_deref(), Some("ne\ntw"));
+    /// ```
+    pub fn selection(&self) -> Option<std::ops::Range<(usize, usize)>> {
+        let anchor = self.clamp_pos(self.anchor?);
+        let cursor = self.clamp_pos((self.cursor_row, self.cursor_col));
+        match anchor.cmp(&cursor) {
+            std::cmp::Ordering::Less => Some(anchor..cursor),
+            std::cmp::Ordering::Greater => Some(cursor..anchor),
+            std::cmp::Ordering::Equal => None,
+        }
+    }
+
+    /// The selected text with `\n` between lines, or `None` when nothing is
+    /// selected.
+    pub fn selected_text(&self) -> Option<String> {
+        let range = self.selection()?;
+        let ((r1, c1), (r2, c2)) = (range.start, range.end);
+        let b1 = grapheme_byte(&self.lines[r1], c1);
+        let b2 = grapheme_byte(&self.lines[r2], c2);
+        if r1 == r2 {
+            return Some(self.lines[r1][b1..b2].to_string());
+        }
+        let mut out = String::from(&self.lines[r1][b1..]);
+        for line in &self.lines[r1 + 1..r2] {
+            out.push('\n');
+            out.push_str(line);
+        }
+        out.push('\n');
+        out.push_str(&self.lines[r2][..b2]);
+        Some(out)
+    }
+
+    /// Select the whole document (cursor at the end).
+    pub fn select_all(&mut self) {
+        self.anchor = Some((0, 0));
+        self.cursor_row = self.lines.len().saturating_sub(1);
+        self.cursor_col = self
+            .lines
+            .last()
+            .map_or(0, |line| line.graphemes(true).count());
+        self.navigation = None;
+    }
+
+    /// Select from `anchor` to `cursor` (`(row, col)` grapheme positions,
+    /// clamped). The cursor ends at `cursor`.
+    pub fn set_selection(&mut self, anchor: (usize, usize), cursor: (usize, usize)) {
+        self.anchor = Some(self.clamp_pos(anchor));
+        (self.cursor_row, self.cursor_col) = self.clamp_pos(cursor);
+        self.navigation = None;
+    }
+
+    /// Drop the selection, keeping the cursor where it is.
+    pub fn clear_selection(&mut self) {
+        self.anchor = None;
+    }
+
+    /// Builder: whether `Ctrl+A` selects all text while focused (default
+    /// `true`).
+    pub fn ctrl_a_select_all(mut self, on: bool) -> Self {
+        self.ctrl_a_disabled = !on;
+        self
+    }
+
+    /// Delete the selection as one undo step. Returns `false` when nothing
+    /// is selected.
+    pub(crate) fn delete_selection(&mut self) -> bool {
+        let Some(range) = self.selection() else {
+            return false;
+        };
+        self.push_history();
+        self.remove_range(range);
+        true
+    }
+
+    /// Remove `range` without recording history and put the cursor at its
+    /// start.
+    fn remove_range(&mut self, range: std::ops::Range<(usize, usize)>) {
+        let ((r1, c1), (r2, c2)) = (range.start, range.end);
+        let b1 = grapheme_byte(&self.lines[r1], c1);
+        let b2 = grapheme_byte(&self.lines[r2], c2);
+        let mut joined = String::with_capacity(b1 + self.lines[r2].len() - b2);
+        joined.push_str(&self.lines[r1][..b1]);
+        joined.push_str(&self.lines[r2][b2..]);
+        self.lines.splice(r1..=r2, std::iter::once(joined));
+        self.cursor_row = r1;
+        self.cursor_col = grapheme_cursor_after(&self.lines[r1], b1);
+        self.anchor = None;
+        self.last_was_char_insert = false;
+        self.navigation = None;
+    }
+
+    /// Insert `text`, replacing the selection. Replacement is one undo step
+    /// (a single snapshot before the delete + insert).
+    pub(crate) fn replace_selection_or_insert(&mut self, text: &str, typing: bool) -> bool {
+        let Some(range) = self.selection() else {
+            return self.insert_text(text, typing);
+        };
+        self.push_history();
+        self.remove_range(range);
+        // The snapshot above already covers this edit.
+        self.last_was_char_insert = true;
+        self.insert_text(text, true);
+        self.last_was_char_insert = typing;
+        true
     }
 
     pub(crate) fn insert_text(&mut self, text: &str, typing: bool) -> bool {

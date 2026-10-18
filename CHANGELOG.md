@@ -40,6 +40,38 @@
   `compact_str` 0.10. MSRV stays at 1.88; `tree-sitter-highlight` stays on 0.26
   because 0.27 requires Rust 1.90, and the MSRV CI job now checks
   `--all-features` (every `syntax-*` grammar) on 1.88.
+- **Breaking (behaviour):** while a text-entry widget (`text_input`,
+  `textarea`, `form_field`, an open `command_palette`) owns focus, `key`,
+  `key_code`, `key_mod`, `consume_key` and `consume_key_code` no longer report
+  the keys it edits with: printable keys without Ctrl / Super / Meta,
+  Backspace, Delete, Left, Right, Home, End, and for multi-line editors Enter,
+  Up and Down (#453). The result no longer depends on whether the check runs
+  before or after the widget, so the Quick Start `if ui.key('q') { ui.quit() }`
+  is safe next to a form. Ownership follows the slot focused as the frame
+  starts (a click that moves focus releases the keys in the same batch); on an
+  app's first frame nothing is withheld. Ctrl/Super/Meta chords (#349), Esc,
+  Tab and F-keys are unchanged. Migration: code that intentionally reads typed
+  characters while a field is focused switches to `raw_key`.
+- **Breaking (behaviour):** a focused `text_input` now handles Ctrl+A, Ctrl+Z,
+  Ctrl+Y and, while text is selected, Ctrl+C / Ctrl+X itself (#465); a
+  focused `textarea` additionally owns Ctrl+K as before. Those chords are
+  withheld from `key_mod` / `shortcut` while the widget owns focus, in either
+  call order. Ctrl+C without a selection still reaches the app. Copying with
+  Ctrl+C needs `RunConfig::handle_ctrl_c(false)`, because the default config
+  quits on Ctrl+C before the frame runs.
+- Focus follows the widget, not the slot number (#454). `text_input`,
+  `textarea` and `form_field` key their focus slot by a process-unique id
+  stored in their state (a `Clone` gets a fresh id), and
+  `register_focusable_named` keys its slot by the name. When focusables are
+  inserted or removed before the focused widget, focus (and
+  `gained_focus` / `lost_focus`) stays on that widget; clicks and
+  `focus_by_name` resolve to the identity of their target. If the focused
+  widget itself disappears, focus moves to the nearest surviving slot
+  (clamped instead of wrapped) on the next frame. Explicit moves (Tab,
+  `set_focus_index`, `focus_next`, group navigation, screen and modal focus
+  traps) keep their positional semantics. A keyed widget whose key was not
+  registered on the previous frame (for example state rebuilt inside the
+  closure each frame) keeps the 0.25 positional behaviour.
 - Color depth auto-detection resolves a precedence chain (#447): `NO_COLOR` /
   `TERM=dumb` (now `NoColor`), then `COLORTERM` or a probe-confirmed XTGETTCAP
   `Tc`, then terminal identity (`TERM` `xterm-kitty` / `xterm-ghostty` /
@@ -61,6 +93,36 @@
 
 ### Added
 
+- `Context::register_focusable_keyed(key)` for custom widgets whose focus
+  should follow a stable `Hash` key, `Context::focused_key()`, and
+  `TextInputState::focus_key()` / `TextareaState::focus_key()` (#454).
+- Text-input builders (#461): `TextInputState::clear()` (value, cursor,
+  validation errors, suggestion popup), `set_value(..)` (clamped to
+  `max_length` graphemes, cursor at the end, line breaks become spaces),
+  `masked(bool)` builder and `TextInputState::password()`;
+  `FormField::masked(bool)` / `password()` / `key(..)`; keyed form access via
+  `FormState::get(key)` and `FormState::field_mut(key)` (explicit key first,
+  then the label of unkeyed fields), which survives field reordering.
+- Text selection in `text_input` and `textarea` (#465): Shift + arrows /
+  Home / End, Shift+Ctrl/Alt + Left/Right by word (also new plain
+  Ctrl/Alt + Left/Right word movement in `text_input`), Shift+Up/Down in
+  `textarea`, Ctrl+A select all (`ctrl_a_select_all(false)` opts out), and
+  with mouse capture press-drag, double-click word and triple-click
+  everything (`text_input`) or the line (`textarea`). Typing, Enter or paste
+  replaces the selection as one undo step; Backspace/Delete remove it; Ctrl+C
+  copies and Ctrl+X cuts through OSC 52 (`copy_to_clipboard`). Masked inputs
+  never copy plaintext (copy is a no-op, cut only deletes) and a
+  double-click there selects everything rather than revealing word
+  boundaries. Ranges are grapheme indices, so CJK, ZWJ emoji, flags and
+  combining marks are never split; wide graphemes highlight both cells and
+  soft-wrapped textarea lines highlight per visual line. API:
+  `selection()`, `selected_text()`, `select_all()`, `set_selection(..)`,
+  `clear_selection()` on both states (`(row, col)` pairs for textarea).
+  `TextInputState` gains undo/redo (Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z, 100 steps,
+  typing bursts coalesce). New theme token `Theme::selection_bg`
+  (`ThemeBuilder::selection_bg`, default `None` = `selected_bg` /
+  `selected_fg`) and `Theme::text_selection_style()`. A drag inside a text
+  widget no longer starts the screen-level selection overlay.
 - `Context::set_title`, `set_progress`, `set_status`, and `set_cursor_shape`
   with `Progress` (OSC 9;4), `ProgramState` / `ProgramStatus` (OSC 7501), and
   `CursorShape` (DECSCUSR). Setters persist until changed, emit only on
@@ -109,6 +171,11 @@
 
 ### Fixed
 
+- Inserting into a `max_length`-limited `text_input` / `textarea` now keeps
+  the longest prefix whose resulting text fits even when inserted text joins
+  the graphemes around the cursor (ZWJ emoji sequences, conjoining Hangul
+  jamo, CR+LF, Indic conjuncts) (#496). The old search only examined a fixed
+  window of `budget + 2` clusters and could drop text that fits.
 - `list` and unpaged `table` showed a selection below the viewport off
   screen, and clicks mapped to the wrong row once scrolled; clicks now map
   to `offset + row` (below the header for tables) (#487).
@@ -126,6 +193,19 @@
   item-height buffers sized for a much larger previous list (#416): replacing
   100k items with 10 now retains under 1 KB instead of ~1.6 MB.
   `TableState::set_rows` already released them; filter changes keep capacity.
+
+### Deprecated
+
+- `TextInputState::validate` is renamed `TextInputState::validate_now`
+  (#461). On `FormField`, `validate` attaches a validator; on
+  `TextInputState` it ran immediately, so copied code silently changed
+  meaning. The old name remains as a deprecated alias.
+
+- `Context::shortcut(code, modifiers)`: order-independent shortcut query with
+  exact modifier matching (Shift ignored for characters) that follows the
+  text-focus rule above, and `Context::raw_key(c)`, which ignores both the
+  modal guard and text-focus ownership (#453). `raw_key_code` / `raw_key_mod`
+  now also document that they ignore text-focus ownership.
 
 ### Security
 
