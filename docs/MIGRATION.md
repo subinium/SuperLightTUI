@@ -153,6 +153,13 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
 
   Code that kept the `&mut Context` returned by `text()` (for example
   `let ui = ui.text("x");`) should keep using the original `ui`.
+- **`TestBackend::run_with_events` keeps focus (#464).** It no longer resets
+  focus to slot 0 before each call. A test that pressed Tab in one call and
+  typed in the next now types into the newly focused widget (as a user
+  would). Tests that relied on the reset should call
+  `render_with_events(events, 0, 0, f)`. For new multi-step tests prefer
+  `tb.step(events, &mut f).press(KeyCode::Tab, &mut f).type_text("x", &mut f)`,
+  which drives one `FnMut` over plain state instead of `RefCell` + `sequence()`.
 
 ---
 

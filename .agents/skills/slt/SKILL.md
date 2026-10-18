@@ -350,14 +350,16 @@ fn click_triggers() {
         |ui| { if ui.button("Save").clicked { /* assert */ } });
 }
 
-// Sequence builder (most readable): each step takes the render closure
-tb.sequence()
-    .tick(|ui| { ui.text("ready"); })
-    .key(KeyCode::Esc, |ui| { ui.text("after esc"); })
-    .run();
-tb.assert_contains("after esc");
-// Steps are FnOnce closures held together; for shared mutable state use
-// tb.type_string("hello", |ui| { ... }) or successive tb.render(...) calls.
+// Multi-step (default, v0.26): one FnMut over plain &mut state, no RefCell.
+// step/press/type_text/run_with_events all keep focus between frames.
+let (mut a, mut b) = (TextInputState::new(), TextInputState::new());
+let mut app = |ui: &mut Context| { ui.text_input(&mut a); ui.text_input(&mut b); };
+tb.step(vec![], &mut app)
+    .press(KeyCode::Tab, &mut app)
+    .type_text("x", &mut app);
+assert_eq!(b.value, "x"); // after the closure's last use
+// Hover: EventBuilder::new().hover(x, y). Force a focus slot:
+// tb.render_with_events(events, 0, 0, |ui| ..).
 ```
 
 See `tests/example_snapshots/testing_report.rs` for `record_frames`, `assert_not_contains`, `assert_style_at`.

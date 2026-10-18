@@ -104,7 +104,8 @@ These shipped in v0.20 and are NOT in older docs. Every entry verified against `
 
 ### Testing (v0.20)
 - `TestBackend::new(w, h).record_frames()` + `tb.frames()[i]` — frame history
-- `tb.sequence().tick(\|ui\| ..).key(KeyCode::Esc, \|ui\| ..).type_string("hi", \|ui\| ..).run()` — every step takes its render closure
+- `tb.step(events, &mut app).press(KeyCode::Tab, &mut app).type_text("hi", &mut app)` (v0.26) — one `FnMut` over plain `&mut` state drives the sequence; focus is kept (as in `run_with_events`, which no longer resets it). `EventBuilder::hover(x, y)` for hover
+- `tb.sequence().tick(\|ui\| ..).key(KeyCode::Esc, \|ui\| ..).type_string("hi", \|ui\| ..).run()` — every step takes its own render closure
 - `Buffer::snapshot_format()` — readable snapshot dump
 - `tb.assert_not_contains(s)`, `assert_line_not_contains`, `assert_empty_line(y)`, `assert_style_at(x, y, style)`
 

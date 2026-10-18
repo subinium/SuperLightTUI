@@ -722,11 +722,12 @@ Notes:
   `.drag(x, y)`, `.mouse_up(x, y)`, `.key(c)`, `.key_with(code, mods)`,
   `.paste(text)`, and `.resize(w, h)`. `.click(x, y)` sends a left-button
   press.
-- `run_with_events` starts every call with focus on index 0. Use
+- `run_with_events` keeps the focus carried from the previous frame (since
+  v0.26; it used to reset to index 0). Use
   `render_with_events(events, focus_index, focus_count, ..)` to pick the
-  focused widget, or `tb.sequence()` to chain steps (for example
-  `.key(KeyCode::Tab, ..)` then `.key(KeyCode::Enter, ..)`) with focus carried
-  between them.
+  focused widget explicitly, or `tb.step(events, &mut f)` /
+  `.press(KeyCode::Tab, &mut f)` / `.type_text("x", &mut f)` to drive a whole
+  sequence with one render closure over plain `&mut` state.
 - `TestBackend` injects mouse events directly, regardless of `MouseMode`, so
   a hover test passes even if your real `main` runs in the default `Drag`
   mode, where plain pointer moves are never reported. Check the mode your

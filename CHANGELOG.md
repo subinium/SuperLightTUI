@@ -4,6 +4,11 @@
 
 ### Added
 
+- `TestBackend::step(events, &mut f)`, `press(code, &mut f)` and
+  `type_text(s, &mut f)` (#464): chainable one-frame steps that borrow a
+  single `FnMut` render closure and keep focus, so a multi-step interaction
+  test runs over plain `&mut` state without `RefCell`.
+  `EventBuilder::hover(x, y)` is an alias of `mouse_move` for hover tests.
 - Accessible linear output mode for screen readers and pipelines (#469):
   `RunConfig::accessible(bool)`, enabled by default with `SLT_ACCESSIBLE=1`
   (an explicit call wins). `run`, `run_inline` and `run_static` then never
@@ -104,6 +109,11 @@
   returns the element's `Response`. The builder adds no allocation per call.
   `scripts/api_audit.sh` V1 now only counts non-deprecated `impl Context`
   methods, shrinking its allowlist from 31 to 7 entries.
+- **Breaking (tests):** `TestBackend::run_with_events` keeps the focus state
+  carried from the previous frame instead of resetting it to slot 0 before
+  every call (#464), so "press Tab, then type" reaches the second input.
+  `render_with_events(events, 0, 0, f)` still forces slot 0. Every in-repo
+  `run_with_events` test passed unchanged under the new behaviour.
 - Hover tooltips wait for `RunConfig::tooltip_delay` (500 ms by default) while
   the pointer rests on the same target, instead of appearing on the first
   hovered frame (#452). `tooltip_delay(Duration::ZERO)` restores the old

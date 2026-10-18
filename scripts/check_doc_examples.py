@@ -19,6 +19,7 @@ MAINTAINED_DOCS = (
     "INTERACTION",
     "TERMINAL_COMPATIBILITY",
     "QUICK_START",
+    "TESTING",
 )
 
 # Docs whose recipes must also compile warning-free (issue #456: the Quick
