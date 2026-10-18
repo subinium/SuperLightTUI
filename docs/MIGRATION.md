@@ -124,6 +124,13 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
   their own offset math for that case should set `scroll.anchor = false` (or
   drop the manual correction). Use `ScrollState::new().stick_to_bottom(true)`
   instead of hand-rolled "follow the tail" logic.
+- **No more `let _ =` on layout and display calls (#456).** `Response` is no
+  longer `#[must_use]` as a type, so `let _ = ui.row(..)` /
+  `let _ = ui.separator()` can become plain statements. Nothing breaks:
+  existing `let _ =` keeps compiling. A bare `ui.button(..)` (and
+  `button_colored` / `button_with`) still warns; check `.clicked` or chain
+  `.on_click(ui, ..)`. Crates with `#![deny(unused_must_use)]` only lose
+  warnings.
 
 ---
 

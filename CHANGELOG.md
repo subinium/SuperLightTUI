@@ -89,6 +89,12 @@
 
 ### Changed
 
+- `Response` is no longer `#[must_use]` as a type (#456): `ui.col(..)`,
+  `ui.row(..)`, `ui.separator()`, `ui.badge(..)`, `ui.alert(..)` and the other
+  layout/display calls are plain statements without `let _ =`, and
+  `Response::{on_hover, on_hover_ui, on_click, ..}` can end a chain. Only
+  `button`, `button_colored` and `button_with` keep a fn-level `#[must_use]`,
+  because their `clicked` flag is their only output.
 - Hover tooltips wait for `RunConfig::tooltip_delay` (500 ms by default) while
   the pointer rests on the same target, instead of appearing on the first
   hovered frame (#452). `tooltip_delay(Duration::ZERO)` restores the old

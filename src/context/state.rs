@@ -307,6 +307,43 @@ impl<T: 'static> Memo<T> {
 /// Container responses describe the container's own interaction area, not
 /// automatically the focus state of every child widget.
 ///
+/// # Ignoring a response
+///
+/// Since v0.26 `Response` is not `#[must_use]` as a type: layout and display
+/// calls (`ui.col(..)`, `ui.row(..)`, `ui.separator()`, `ui.badge(..)`, ...)
+/// are plain statements, with no `let _ =`. The warning is kept only where
+/// dropping the result is almost always a bug: the stateless clickable
+/// widgets [`button`](Context::button),
+/// [`button_colored`](Context::button_colored) and
+/// [`button_with`](Context::button_with), whose `clicked` flag is their only
+/// output.
+///
+/// ```
+/// #![deny(unused_must_use)]
+/// # use slt::*;
+/// # TestBackend::new(80, 24).render(|ui| {
+/// ui.col(|ui| {
+///     ui.text("Name");
+/// });
+/// ui.row(|ui| {
+///     ui.text("a");
+/// });
+/// ui.separator();
+/// ui.badge("new");
+/// ui.button("Save").on_click(ui, |_| {});
+/// # });
+/// ```
+///
+/// A bare `ui.button(..)` statement still warns:
+///
+/// ```compile_fail
+/// #![deny(unused_must_use)]
+/// # use slt::*;
+/// # TestBackend::new(80, 24).render(|ui| {
+/// ui.button("Save");
+/// # });
+/// ```
+///
 /// # Examples
 ///
 /// ```
@@ -321,7 +358,6 @@ impl<T: 'static> Memo<T> {
 /// # });
 /// ```
 #[derive(Debug, Clone, Default)]
-#[must_use = "Response contains interaction state — check .clicked, .hovered, or .changed"]
 pub struct Response {
     /// Whether the widget was left-clicked (or activated) this frame.
     ///
@@ -485,7 +521,6 @@ impl Response {
     /// Unlike [`Context::tooltip`], the binding is not order-sensitive:
     /// the tooltip is attached to *this* response specifically, so
     /// chaining further widgets afterward does not strip it.
-    #[must_use = "on_hover returns the Response for further chaining"]
     pub fn on_hover(self, ctx: &mut Context, text: impl Into<String>) -> Self {
         if !self.hovered || self.rect.width == 0 || self.rect.height == 0 || !ctx.tooltip_ready() {
             return self;
@@ -521,7 +556,6 @@ impl Response {
     ///     });
     /// });
     /// ```
-    #[must_use = "on_hover_ui returns the Response for further chaining"]
     pub fn on_hover_ui(self, ctx: &mut Context, f: impl FnOnce(&mut Context)) -> Self {
         if self.hovered && self.rect.width > 0 && self.rect.height > 0 {
             f(ctx);
