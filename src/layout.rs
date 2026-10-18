@@ -8,7 +8,6 @@ use crate::style::{
     WidthSpec,
 };
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthChar;
 #[cfg(test)]
 use unicode_width::UnicodeWidthStr;
 
@@ -28,7 +27,8 @@ pub(crate) use focus::{
 };
 pub(crate) use render::{InspectorFocus, render, render_debug_overlay, render_inspector};
 pub(crate) use tree::{
-    LayoutNode, MAX_LAYOUT_DEPTH, NodeKind, build_tree, wrap_lines, wrap_segments,
+    LayoutArena, LayoutNode, MAX_LAYOUT_DEPTH, NodeKind, build_tree, build_tree_in, wrap_lines,
+    wrap_segments,
 };
 
 /// Test-only entry point exposing `wrap_segments` for allocation-budget tests.
