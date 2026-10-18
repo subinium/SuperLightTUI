@@ -1,3 +1,5 @@
+//! Unit tests for widget state types.
+
 use super::*;
 
 #[test]

@@ -187,6 +187,10 @@ pub struct Help<'a> {
     len: usize,
 }
 
+#[expect(
+    clippy::return_self_not_must_use,
+    reason = "the widget call already recorded the element (or renders on drop); modifiers edit it in place, so a statement-terminated chain is the intended use"
+)]
 impl Help<'_> {
     /// Color of the key labels (kept bold).
     #[inline]
@@ -240,6 +244,10 @@ pub struct Badge<'a> {
     idx: usize,
 }
 
+#[expect(
+    clippy::return_self_not_must_use,
+    reason = "the widget call already recorded the element (or renders on drop); modifiers edit it in place, so a statement-terminated chain is the intended use"
+)]
 impl Badge<'_> {
     /// Background color; the foreground follows [`Color::contrast_fg`].
     #[inline]
@@ -278,6 +286,10 @@ pub struct Stat<'a> {
     value_idx: usize,
 }
 
+#[expect(
+    clippy::return_self_not_must_use,
+    reason = "the widget call already recorded the element (or renders on drop); modifiers edit it in place, so a statement-terminated chain is the intended use"
+)]
 impl Stat<'_> {
     /// Color of the value line (kept bold).
     #[inline]

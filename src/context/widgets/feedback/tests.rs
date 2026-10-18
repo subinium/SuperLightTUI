@@ -1,3 +1,6 @@
+//! Unit tests for the feedback widget family (confirm hit-testing, alert
+//! argument order).
+
 use crate::widgets::AlertLevel;
 use crate::{EventBuilder, TestBackend};
 

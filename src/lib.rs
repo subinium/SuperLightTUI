@@ -88,6 +88,8 @@
 #![warn(clippy::dbg_macro)]
 #![warn(clippy::print_stdout)]
 #![warn(clippy::print_stderr)]
+#![warn(clippy::return_self_not_must_use)]
+#![warn(clippy::missing_panics_doc)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 /// Animation primitives: tween, spring, keyframes, sequence, stagger.

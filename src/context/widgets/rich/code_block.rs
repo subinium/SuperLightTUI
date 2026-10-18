@@ -1,3 +1,6 @@
+//! The `code_block` builder: syntax-highlighted code with an optional
+//! line-number gutter, rendered on `show()` or drop.
+
 use super::*;
 
 impl Context {
@@ -42,6 +45,10 @@ pub struct CodeBlock<'a> {
     numbered: bool,
 }
 
+#[expect(
+    clippy::return_self_not_must_use,
+    reason = "the widget call already recorded the element (or renders on drop); modifiers edit it in place, so a statement-terminated chain is the intended use"
+)]
 impl<'a> CodeBlock<'a> {
     fn new(ctx: &'a mut Context, code: &'a str) -> Self {
         Self {
@@ -66,6 +73,11 @@ impl<'a> CodeBlock<'a> {
     }
 
     /// Render now and return the [`Response`].
+    ///
+    /// # Panics
+    ///
+    /// Does not panic: `show` consumes the builder, so the context is taken
+    /// exactly once.
     pub fn show(mut self) -> Response {
         // SAFETY: ctx is Some until Drop runs; show consumes self before Drop.
         let ctx = self.ctx.take().expect("CodeBlock::show called twice");

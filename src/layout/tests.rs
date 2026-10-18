@@ -1,3 +1,6 @@
+//! Layout kernel tests: wrapping, flex sizing, scroll collection and
+//! debug-overlay counts.
+
 use super::tree::{ContainerConfig, default_container_config};
 use super::*;
 
@@ -1016,7 +1019,7 @@ fn flexbox_column_grow_with_max_height_no_gap() {
     );
 }
 
-// --- Regression tests for v0.19.1 hotfix ---------------------------------
+// --- Scroll-collection invariants (#151) ----------------------------------
 
 #[test]
 fn collect_all_keeps_scroll_invariant_with_nested_scrollables() {
@@ -2608,7 +2611,7 @@ mod hscroll_proptest {
 }
 
 // ---------------------------------------------------------------------------
-// Per-frame intrinsic-size memo (v0.22.0): the memoization of `min_width` /
+// Per-frame intrinsic-size memo: the memoization of `min_width` /
 // `min_height` / `min_height_for_width` must stay byte-identical to the
 // uncached computation. The subtle case is a `Pct`/`Ratio` constraint: such a
 // node is measured by its grandparent while still unresolved, then resolved

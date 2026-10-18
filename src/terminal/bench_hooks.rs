@@ -178,7 +178,7 @@ pub struct __BenchSprixelFixture {
     previous: Buffer,
 }
 
-/// Build a self-contained sprixel-reblit fixture for the perf suite (v0.21.1).
+/// Build a self-contained sprixel-reblit fixture for the perf suite.
 ///
 /// Creates `n` opaque sprixel placements laid out down the buffer and mirrors
 /// them into both the current and previous frame so the steady-state flush
@@ -237,7 +237,7 @@ impl __BenchSprixelFixture {
     }
 }
 
-/// Benchmark-only entry point for the optimized sprixel re-blit scan (v0.21.1).
+/// Benchmark-only entry point for the optimized sprixel re-blit scan.
 ///
 /// Builds an `n`-placement steady-state fixture and runs [`flush_sprixels`] once
 /// into `sink` at `row_offset`, mirroring the [`__bench_flush_buffer_diff`]

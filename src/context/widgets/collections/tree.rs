@@ -1,3 +1,6 @@
+//! Tree widgets: `tree` over [`TreeState`] and the filesystem-backed
+//! `directory_tree`.
+
 use super::*;
 use crate::{DirectoryTreeState, TreeNode};
 

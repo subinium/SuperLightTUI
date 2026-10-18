@@ -810,7 +810,7 @@ fn vs16_row_stays_in_sync_on_one_and_two_column_terminals() {
 }
 
 /// Issue #441: ASCII and CJK rows keep their pre-#441 bytes (only the #489
-/// single reset differs from v0.25.0).
+/// single reset differs from those goldens).
 #[test]
 fn ascii_and_cjk_rows_keep_golden_bytes() {
     let area = Rect::new(0, 0, 10, 2);

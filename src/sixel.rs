@@ -1,3 +1,6 @@
+//! Sixel image encoding: RGBA resampling, 6x6x6 palette quantization and
+//! bounded-output DCS generation.
+
 const SIXEL_START: &str = "\x1bPq";
 const SIXEL_END: &str = "\x1b\\";
 const MAX_SIXEL_WORK_UNITS: u64 = 268_435_456;

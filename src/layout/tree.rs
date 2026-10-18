@@ -1,3 +1,6 @@
+//! The [`LayoutNode`] tree built from the command stream, text wrapping
+//! helpers and the per-frame node pool.
+
 use super::*;
 
 /// Regression guard for the size of [`LayoutNode`] (issues #153, #488).
@@ -8,11 +11,11 @@ use super::*;
 /// `Container`, `RawDraw`), which are the vast majority of nodes, pay only
 /// the 8-byte `Option<Box<TextNodeData>>`.
 ///
-/// History: 432 B before the #153 split; grown by scalar layout fields for
-/// flex-wrap / flex-basis (#258), horizontal scroll (#247), the per-frame
-/// intrinsic-size memo (v0.22) and bound scroll identity (v0.25) to 368 B.
+/// The node carries scalar layout fields for flex-wrap / flex-basis (#258),
+/// horizontal scroll (#247), the per-frame intrinsic-size memo and bound
+/// scroll identity.
 ///
-/// v0.26 (#488) lowered the bound to 336 B: the text-only `link_url`
+/// The bound is 336 B (#488): the text-only `link_url`
 /// moved into [`TextNodeData`] (24 B), and the three intrinsic-size memos
 /// switched from `Cell<Option<..>>` to `u32::MAX` sentinels (28 B -> 16 B),
 /// which pays for the new 4-byte [`LayoutNode::arena_slot`]. If a future

@@ -1,3 +1,5 @@
+//! The [`Widget`] trait for reusable custom widgets.
+
 use super::*;
 
 /// Trait for creating custom widgets.

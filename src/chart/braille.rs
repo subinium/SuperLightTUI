@@ -1,3 +1,6 @@
+//! Braille-dot rasterization for line and scatter datasets: each terminal
+//! cell holds a 2x4 dot matrix, and segments are drawn with Bresenham.
+
 use super::*;
 
 #[expect(

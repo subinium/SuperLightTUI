@@ -488,7 +488,7 @@ fn sprixel_reblit_count_invariant_over_single_cell_writes() {
     }
 }
 
-// ---- v0.21.1 sprixel reblit-scan optimization regression ---------------
+// ---- Sprixel reblit-scan optimization regression -----------------------
 //
 // These drive the hashed-key position lookup and the per-row written-span
 // shortcut (#486), proving the optimization preserves the exact #265 re-blit

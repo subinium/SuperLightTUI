@@ -1,3 +1,6 @@
+//! AI-oriented streaming widgets: `streaming_text`, `streaming_markdown`,
+//! `tool_approval` and `context_bar`.
+
 use super::*;
 
 impl Context {

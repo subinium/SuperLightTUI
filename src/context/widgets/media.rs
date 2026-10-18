@@ -322,7 +322,7 @@ impl Context {
 
         let (cell_width, cell_height) = crate::terminal::cell_pixel_size();
         // Issue #265: route through the sprixel damage matrix instead of a flat
-        // `raw_sequence`, so a text edit adjacent to the image no longer forces
+        // `raw_sequence`, so a text edit adjacent to the image does not force
         // a full re-blit. The footprint is recorded as fully `Opaque`; the flush
         // layer flips cells to `Annihilated` only where text overwrites ink.
         let response = self.interaction();

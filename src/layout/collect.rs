@@ -1,3 +1,6 @@
+//! Single-pass collection of per-frame layout feedback (hit areas, scroll
+//! regions, focus rects, raw-draw rects) into [`FrameData`].
+
 use super::*;
 use std::sync::Arc;
 

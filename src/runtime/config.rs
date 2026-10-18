@@ -184,8 +184,7 @@ pub struct RunConfig {
     pub widget_theme: style::WidgetTheme,
     /// Whether the runtime intercepts Ctrl+C and exits the loop cleanly.
     ///
-    /// When `true` (the default), Ctrl+C is treated as a quit signal —
-    /// matching the v0.19 behavior. When `false`, the Ctrl+C key event flows
+    /// When `true` (the default), Ctrl+C is treated as a quit signal. When `false`, the Ctrl+C key event flows
     /// through to the frame closure as a regular [`Event::Key`](crate::Event::Key), matching
     /// RataTUI's raw-mode semantics. The user is then responsible for
     /// deciding whether to call [`Context::quit`](crate::Context::quit) or treat it as any other
@@ -241,8 +240,7 @@ pub struct RunConfig {
     /// Whether [`Response::clicked`](crate::Response::clicked) fires on the
     /// mouse release instead of the press.
     ///
-    /// `false` (the default) activates on the press, matching SLT before
-    /// v0.26. `true` activates on the frame the left button is released inside
+    /// `false` (the default) activates on the press. `true` activates on the frame the left button is released inside
     /// the same slot that was pressed, so dragging off a button before letting
     /// go cancels the click, like the browser `click` event. Keyboard
     /// activation is unaffected. Since 0.26.0.
@@ -519,7 +517,7 @@ impl RunConfig {
 
     /// Configure whether the runtime auto-exits on Ctrl+C.
     ///
-    /// Defaults to `true` (current v0.19 behavior). Set to `false` to
+    /// Defaults to `true`. Set to `false` to
     /// receive Ctrl+C as a regular [`Event::Key`](crate::Event::Key) inside the frame closure
     /// — see [`RunConfig::handle_ctrl_c`] for the full migration story.
     ///

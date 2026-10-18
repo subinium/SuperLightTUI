@@ -1,3 +1,6 @@
+//! Bar-dataset rasterization into the chart cell grid, plus histogram
+//! binning (`build_histogram_config`).
+
 use super::*;
 
 #[expect(

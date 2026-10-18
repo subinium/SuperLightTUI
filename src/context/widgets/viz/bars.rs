@@ -1,3 +1,5 @@
+//! Bar chart widgets: horizontal and vertical, grouped and stacked bars.
+
 use super::*;
 
 struct VerticalBarLayout {

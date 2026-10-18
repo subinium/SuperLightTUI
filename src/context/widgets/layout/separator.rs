@@ -69,6 +69,10 @@ pub struct Separator<'a> {
     idx: usize,
 }
 
+#[expect(
+    clippy::return_self_not_must_use,
+    reason = "the widget call already recorded the element (or renders on drop); modifiers edit it in place, so a statement-terminated chain is the intended use"
+)]
 impl Separator<'_> {
     /// Draw the line in `color` at full intensity (drops the default dim).
     #[inline]

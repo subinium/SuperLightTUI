@@ -215,6 +215,7 @@ impl ListState {
     /// ```
     ///
     /// Available since `0.21.0`.
+    #[must_use]
     pub fn with_item_heights(mut self, heights: Vec<u32>) -> Self {
         self.set_item_heights(heights);
         self
@@ -754,6 +755,7 @@ impl FilePickerState {
     }
 
     /// Configure whether hidden files should be shown.
+    #[must_use]
     pub fn show_hidden(mut self, show: bool) -> Self {
         self.show_hidden = show;
         self.invalidate_scan();
@@ -761,6 +763,7 @@ impl FilePickerState {
     }
 
     /// Restrict visible files to the provided extensions.
+    #[must_use]
     pub fn extensions(mut self, exts: &[&str]) -> Self {
         self.extensions = exts
             .iter()
@@ -1776,7 +1779,7 @@ impl TableState {
         }
         // Default resolved widths to the content widths; `resolve_column_widths`
         // overlays the per-column specs each frame once the available width is
-        // known. When no spec is set this is the pre-v0.21 behavior verbatim.
+        // known. With no spec set the columns keep their content widths.
         self.column_widths = self.content_widths.clone();
         self.widths_dirty = false;
     }
@@ -2041,12 +2044,14 @@ impl TreeNode {
     }
 
     /// Mark this node as expanded.
+    #[must_use]
     pub fn expanded(mut self) -> Self {
         self.expanded = true;
         self
     }
 
     /// Set child nodes for this node.
+    #[must_use]
     pub fn children(mut self, children: Vec<TreeNode>) -> Self {
         self.children = children;
         self

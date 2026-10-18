@@ -25,9 +25,8 @@ impl Context {
     /// [`SpinnerState::line`] to create the state.
     ///
     /// Returns a [`Response`] with `hovered` populated correctly so callers
-    /// can attach tooltips or react to mouse interaction. Prior to v0.20.0
-    /// this returned `&mut Self`; `ui.spinner(&state);` stays a plain
-    /// statement (since v0.26 `Response` is not `#[must_use]` as a type).
+    /// can attach tooltips or react to mouse interaction. `ui.spinner(&state);`
+    /// is a plain statement (`Response` is not `#[must_use]` as a type).
     pub fn spinner(&mut self, state: &SpinnerState) -> Response {
         let response = self.interaction();
         // #490: a spinner animates on every tick.
@@ -96,8 +95,8 @@ impl Context {
         step: f64,
     ) -> Response {
         let focused = self.register_focusable();
-        // v0.21.1: capture focus-edge flags (issue #208 gap — slider assembled
-        // its Response by hand and never set gained_focus/lost_focus).
+        // Capture focus-edge flags here: slider assembles its Response by
+        // hand, so it must set gained_focus/lost_focus itself (#208).
         let (gained_focus, lost_focus) = self.focus_transitions(focused);
         let mut changed = false;
 

@@ -91,6 +91,7 @@ impl SelectState {
     }
 
     /// Set placeholder text shown when no item can be displayed.
+    #[must_use]
     pub fn placeholder(mut self, p: impl Into<String>) -> Self {
         self.placeholder = p.into();
         self
@@ -402,6 +403,7 @@ impl ColorPickerState {
     /// let picker = ColorPickerState::tailwind().columns(6);
     /// assert_eq!(picker.columns, 6);
     /// ```
+    #[must_use]
     pub fn columns(mut self, n: usize) -> Self {
         self.columns = n.max(1);
         self

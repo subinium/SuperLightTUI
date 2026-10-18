@@ -630,8 +630,8 @@ impl Context {
     /// `.hovered`, and `.rect` are populated for the track region. `.changed`
     /// is `true` on a frame where a scrollbar interaction moved the offset.
     /// When the content fits the viewport nothing is rendered and
-    /// [`Response::none()`] is returned. Prior to v0.21.0 the receiver was
-    /// `&ScrollState`; pass `&mut scroll` instead.
+    /// [`Response::none()`] is returned. Takes `&mut ScrollState` because a
+    /// thumb drag or track click writes the new offset back.
     pub fn scrollbar(&mut self, state: &mut ScrollState) -> Response {
         let vh = state.viewport_height();
         let ch = state.content_height();

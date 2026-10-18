@@ -21,6 +21,10 @@ impl Context {
     /// active at its start. The destination renders on the next frame, so
     /// source and destination content are never composed together.
     ///
+    /// # Panics
+    ///
+    /// Panics only if an internal invariant is broken: the active screen always owns the navigation scope it pops.
+    ///
     /// # Example
     ///
     /// ```no_run

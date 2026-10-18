@@ -1,3 +1,5 @@
+//! The braille `canvas` widget and its fallible / configured variants.
+
 use super::*;
 
 impl Context {

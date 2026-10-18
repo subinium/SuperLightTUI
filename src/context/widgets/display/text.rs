@@ -1,3 +1,6 @@
+//! Text widgets and the scoped [`Text`] builder: `text`, `styled`, `link`,
+//! `timer_display`, keymap help and the per-element style modifiers.
+
 use super::*;
 use crate::KeyMap;
 
@@ -32,8 +35,8 @@ use crate::KeyMap;
 /// # });
 /// ```
 ///
-/// The builder owns no heap data: `ui.text(s)` costs the same as before
-/// v0.26, when it returned `&mut Context`. The `Context`-level modifiers
+/// The builder owns no heap data: it is a `&mut Context` plus an optional
+/// [`Response`], so `ui.text(s)` costs one recorded command. The `Context`-level modifiers
 /// (`ui.bold()`, `ui.fg(..)`, ...) that styled "the last text" are deprecated
 /// in its favour; see `docs/reference/migration.md`.
 pub struct Text<'a> {
@@ -44,6 +47,10 @@ pub struct Text<'a> {
     response: Option<Response>,
 }
 
+#[expect(
+    clippy::return_self_not_must_use,
+    reason = "the widget call already recorded the element (or renders on drop); modifiers edit it in place, so a statement-terminated chain is the intended use"
+)]
 impl<'a> Text<'a> {
     /// Wrap the text element that `ctx` recorded last.
     #[inline]

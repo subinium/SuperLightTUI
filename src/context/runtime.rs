@@ -1,3 +1,7 @@
+//! Core [`Context`] methods that are not widgets: frame setup from events,
+//! focus traversal, hooks (`use_state`, `use_memo`, effects), notifications
+//! and key gating.
+
 use super::*;
 
 impl Context {
@@ -71,7 +75,7 @@ impl Context {
                 mouse_pos = Some((mouse.x, mouse.y));
                 match mouse.kind {
                     MouseKind::Down(MouseButton::Left) => {
-                        // v0.21.1: a left click on the same cell as the previous
+                        // A left click on the same cell as the previous
                         // click, within `DOUBLE_CLICK_WINDOW`, is a double-click.
                         // Clear the tracker after firing so a third click starts
                         // a fresh pair (no triple-counting).
@@ -106,7 +110,7 @@ impl Context {
                             double: false,
                         });
                     }
-                    // v0.21.1: accumulate net vertical wheel delta + the cursor
+                    // Accumulate net vertical wheel delta + the cursor
                     // position, hover-gated per-widget by `response_for`.
                     MouseKind::ScrollUp => {
                         scroll_pos = Some((mouse.x, mouse.y));
@@ -361,7 +365,7 @@ impl Context {
             text_pointer_capture: false,
             accessible: state.accessible,
             // Issue #248: sample a single wall-clock "now" for every timer
-            // method called this frame. v0.21.1: reuse the `frame_now` sampled
+            // method called this frame. Reuse the `frame_now` sampled
             // above (also used for double-click timing) so the frame has one
             // coherent clock reading.
             frame_instant: frame_now,
@@ -447,7 +451,7 @@ impl Context {
     /// Advance keyboard focus one step, honoring an active modal's focus trap.
     /// `forward` selects next vs previous; both wrap. Shared by
     /// [`focus_next`](Self::focus_next) / [`focus_prev`](Self::focus_prev) and
-    /// the `Tab`/`Shift+Tab` handler in `process_focus_keys` (v0.21.1).
+    /// the `Tab`/`Shift+Tab` handler in `process_focus_keys`.
     pub(crate) fn advance_focus(&mut self, forward: bool) {
         self.advance_focus_over(forward, false);
     }
@@ -914,8 +918,8 @@ impl Context {
     /// Shared by [`begin_widget_interaction`](Self::begin_widget_interaction)
     /// and the widgets that assemble their `Response` by hand rather than
     /// through it (`text_input`, `slider`, `number_input`) — issue #208 left
-    /// those three reporting `gained_focus`/`lost_focus` as always-false; this
-    /// closes that gap (v0.21.1).
+    /// those three reporting `gained_focus`/`lost_focus` as always-false; every
+    /// focusable widget must route through here.
     pub(crate) fn focus_transitions(&mut self, focused: bool) -> (bool, bool) {
         if let Some(this_id) = self.rollback.last_focusable_id.take() {
             // Issue #454: when the previously focused slot had an identity,
@@ -2100,10 +2104,9 @@ impl Context {
     /// later `ui.*` calls — read the value on demand with `.get(ui)` /
     /// `.copied(ui)`.
     ///
-    /// Before v0.21.0 this returned `&T`, a live borrow of `&mut Context` that
-    /// could not be held across subsequent `ui.*` mutations. That form (later
-    /// `use_memo_ref`) was removed in 0.26. Migrate
-    /// `let x = *ui.use_memo(&d, f);` to `let x = ui.use_memo(&d, f).copied(ui);`.
+    /// Read a `Copy` value with `ui.use_memo(&d, f).copied(ui)`; the handle
+    /// never borrows `&mut Context`, so it can be held across later `ui.*`
+    /// calls.
     ///
     /// [`use_state`]: Self::use_state
     ///
@@ -2246,7 +2249,7 @@ impl Context {
     }
 
     // ----------------------------------------------------------------
-    // v0.20.0 hooks: keyed state, effects, named focus, key gating
+    // Hooks: keyed state, effects, named focus, key gating
     // ----------------------------------------------------------------
 
     /// Component-local persistent state keyed by a runtime string.

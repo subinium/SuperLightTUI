@@ -104,6 +104,10 @@ pub struct DiffView<'a> {
     opts: DiffOpts<'a>,
 }
 
+#[expect(
+    clippy::return_self_not_must_use,
+    reason = "the widget call already recorded the element (or renders on drop); modifiers edit it in place, so a statement-terminated chain is the intended use"
+)]
 impl<'a> DiffView<'a> {
     /// Unified (default) or side-by-side layout.
     pub fn layout(mut self, layout: DiffLayout) -> Self {

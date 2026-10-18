@@ -1,3 +1,5 @@
+//! Unit tests for the rich-content widget family.
+
 use crate::TestBackend;
 
 // streaming_markdown should not allocate a new String on `code_block_lang`

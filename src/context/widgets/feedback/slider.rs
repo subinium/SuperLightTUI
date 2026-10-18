@@ -96,6 +96,10 @@ pub struct Slider<'a> {
     response: OnceCell<Response>,
 }
 
+#[expect(
+    clippy::return_self_not_must_use,
+    reason = "the widget call already recorded the element (or renders on drop); modifiers edit it in place, so a statement-terminated chain is the intended use"
+)]
 impl Slider<'_> {
     /// Keyboard step: each Left/Right moves the value by `step`. A
     /// non-finite or non-positive step disables keyboard stepping.

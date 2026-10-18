@@ -1,3 +1,6 @@
+//! Layout-tree rendering into a [`Buffer`]: borders, clipping, scroll
+//! offsets, layer tinting and the debug overlay.
+
 use super::*;
 
 pub(crate) fn render(node: &LayoutNode, buf: &mut Buffer) {
@@ -161,9 +164,8 @@ enum LayerTint {
 
 /// Per-layer widget breakdown for the debug status bar.
 ///
-/// Returned by [`count_leaf_widgets_layered`]. The legacy `total` accessor
-/// preserves the v0.19.3 "N widgets" status line so existing snapshot tests
-/// stay green; the per-layer fields surface in the new
+/// Returned by [`count_leaf_widgets_layered`]. `total` drives the
+/// "N widgets" status line that snapshot tests pin; the per-layer fields surface in the
 /// "(N base, M overlay, K modal)" suffix.
 #[derive(Debug, Clone, Copy, Default)]
 struct LayerCounts {

@@ -1,3 +1,7 @@
+//! Shared helpers for widget implementations: deferred raw-draw invocation
+//! with balanced clips, grapheme and width utilities, table cell clamping,
+//! intrinsic-size queries and the platform URL opener.
+
 use super::*;
 
 struct DeferredDrawClipGuard<'a> {
@@ -224,8 +228,8 @@ pub(crate) fn push_table_row<S: AsRef<str>>(
 ///
 /// Shorter content is right-padded with spaces (current behavior); longer
 /// content is truncated with a `…` ellipsis. With an `Auto` column the
-/// resolved width already equals the content width, so this is a pure pad —
-/// preserving the pre-v0.21 string-grid output byte-for-byte.
+/// resolved width already equals the content width, so this is a pure pad
+/// and an all-`Auto` table renders the plain string grid byte-for-byte.
 pub(crate) fn clamp_table_cell(cell: &str, width: u32) -> String {
     let mut out = String::with_capacity((width as usize).max(cell.len()));
     push_table_cell(&mut out, cell, width);
@@ -526,7 +530,7 @@ pub(crate) fn textarea_visual_to_logical(
     }
 }
 
-/// Intrinsic-size measurement API (v0.21.1).
+/// Intrinsic-size measurement API.
 ///
 /// These read-only queries expose the layout engine's text-wrapping math and
 /// the previous frame's named-container geometry without changing any rendering

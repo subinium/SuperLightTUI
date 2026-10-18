@@ -1,3 +1,6 @@
+//! Axis tick selection, "nice number" rounding, tick label formatting and
+//! bounds normalization for chart axes.
+
 #[derive(Debug, Clone)]
 pub(crate) struct TickSpec {
     pub(crate) values: Vec<f64>,

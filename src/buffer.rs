@@ -1059,8 +1059,12 @@ impl Buffer {
 
     /// Return a reference to the cell at `(x, y)`.
     ///
-    /// Panics if `(x, y)` is out of bounds. Use [`Buffer::try_get`] when the
-    /// coordinates may come from untrusted input.
+    /// Use [`Buffer::try_get`] when the coordinates may come from untrusted
+    /// input.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `(x, y)` is outside the buffer area.
     #[inline]
     pub fn get(&self, x: u32, y: u32) -> &Cell {
         assert!(
@@ -1073,8 +1077,12 @@ impl Buffer {
 
     /// Return a mutable reference to the cell at `(x, y)`.
     ///
-    /// Panics if `(x, y)` is out of bounds. Use [`Buffer::try_get_mut`] when
-    /// the coordinates may come from untrusted input.
+    /// Use [`Buffer::try_get_mut`] when the coordinates may come from
+    /// untrusted input.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `(x, y)` is outside the buffer area.
     #[inline]
     pub fn get_mut(&mut self, x: u32, y: u32) -> &mut Cell {
         assert!(
@@ -1773,6 +1781,11 @@ impl Buffer {
     ///
     /// If the new area is larger, new cells are initialized to blank. All
     /// existing content is discarded.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the cell storage for `area` cannot be allocated. Use
+    /// [`Buffer::try_resize`] to handle that case.
     pub fn resize(&mut self, area: Rect) {
         self.try_resize(area)
             .unwrap_or_else(|error| panic!("Buffer::resize({area:?}) failed: {error}"));

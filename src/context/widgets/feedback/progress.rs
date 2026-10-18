@@ -82,6 +82,10 @@ pub struct ProgressBar<'a> {
     idx: usize,
 }
 
+#[expect(
+    clippy::return_self_not_must_use,
+    reason = "the widget call already recorded the element (or renders on drop); modifiers edit it in place, so a statement-terminated chain is the intended use"
+)]
 impl ProgressBar<'_> {
     /// Fill color of the bar.
     #[inline]

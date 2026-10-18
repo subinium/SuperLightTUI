@@ -445,7 +445,7 @@ fn handle_suspend_builder_is_independent_of_ctrl_c() {
     assert!(cfg.handle_ctrl_c, "Ctrl+C default preserved");
 }
 
-// ── v0.21.1: resize debounce / coalesce ─────────────────────────────
+// ── Resize debounce / coalesce ──────────────────────────────────────
 
 fn resize(w: u32, h: u32) -> Event {
     Event::Resize(w, h)
