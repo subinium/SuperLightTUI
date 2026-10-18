@@ -222,6 +222,9 @@ pub use context::{
     CodeBlock, ContainerBuilder, Context, DiffView, Gauge, GutterOpts, LineGauge, Memo, Response,
     State, TreemapItem, Widget,
 };
+// Issue #466: code editor builder and state.
+pub use context::CodeEditor;
+pub use widgets::CodeEditorState;
 // Issues #446 / #468: terminal metadata and clipboard outcome types.
 pub use context::{ClipboardStatus, CursorShape, ProgramState, ProgramStatus, Progress};
 // Issue #234: opaque handle from `Context::spawn`, gated behind `async`.

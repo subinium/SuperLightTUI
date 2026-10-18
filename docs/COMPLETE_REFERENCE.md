@@ -197,6 +197,7 @@ Embedding with your own event loop (issue #278): the built-in crossterm backends
 |---|---|
 | `TextInputState` | `text_input`, `text_input_colored` |
 | `TextareaState` | `textarea` |
+| `CodeEditorState` | `code_editor` |
 | `SelectState` | `select`, `select_colored` |
 | `RadioState` | `radio`, `radio_colored` |
 | `MultiSelectState` | `multi_select` |
@@ -348,6 +349,7 @@ Finalization:
 | `ui.slider_with(&mut f64, SliderOpts::new(label, range).step(step))` | — | Slider with explicit step size using the v0.23 opts API. |
 | `ui.text_input(&mut state)` / `text_input_colored` | `TextInputState` | Single-line input. |
 | `ui.textarea(&mut state, visible_rows)` | `TextareaState` | Multi-line editor. |
+| `ui.code_editor(&mut state)` | `CodeEditorState` | Builder; `.show()` returns `Response` (`changed` when the text changed). Syntax-highlighted editor on a `TextareaState` (same keys, selection, clipboard, undo / redo). `.line_numbers(bool)` (right-aligned gutter, on by default), `.h(rows)`, `.w(cols)`, `.wrap(bool)` (soft wrap; default horizontal scroll), `.current_line(bool)`, `.bracket_match(bool)`. Highlighting follows `CodeEditorState::lang` and needs the `syntax-*` feature (plain fallback edits identically). Tab inserts spaces to the next tab stop (`.tab_width(n)` / `.hard_tabs(true)` on the state), Tab / Shift+Tab indent / dedent a multi-line selection, Enter keeps the indentation (+1 level after `{` `(` `[`), PageUp / PageDown page. Owns Tab while focused unless `CodeEditorState::tab_indents(false)`. Only visible rows render; an edit re-highlights only its chunk. |
 | `ui.select(&mut state)` / `select_colored` | `SelectState` | Dropdown. |
 | `ui.radio(&mut state)` / `radio_colored` | `RadioState` | Radio group. |
 | `ui.multi_select(&mut state)` | `MultiSelectState` | Multi-select with Space. |
@@ -1168,7 +1170,7 @@ WidgetColors, WidgetTheme, WidthSpec
 
 // From widgets
 AlertLevel, ApprovalAction, ButtonVariant, CalendarState, ChordState,
-ColorPickerState, CommandPaletteState, ContextItem, DirectoryTreeState,
+CodeEditorState, ColorPickerState, CommandPaletteState, ContextItem, DirectoryTreeState,
 FileEntry, FilePickerScanError,
 FilePickerScanOperation, FilePickerScanStatus, FilePickerState, FormField, FormFieldResponse,
 FormState, GridColumn, ListState, ModeState, MultiSelectState, PaletteCommand,
@@ -1340,6 +1342,14 @@ scroll_offset: usize
 Constructors: `TextareaState::new()`.
 Builders: `.max_length(n)`, `.word_wrap(width)`.
 Methods: `.value() -> String`, `.set_value(s)`, `.lines() -> &[String]`, `.clear()`.
+
+### CodeEditorState (code editor)
+```text
+// all fields private; wraps a TextareaState
+```
+Constructors: `CodeEditorState::new(source)`, `CodeEditorState::default()`.
+Builders: `.lang("rust")`, `.tab_width(n)`, `.hard_tabs(bool)`, `.tab_indents(bool)`, `.auto_indent(bool)`.
+Methods: `.value()`, `.set_value(s)`, `.lines()`, `.line_count()`, `.cursor()`, `.set_cursor(row, col)`, `.set_lang(Option<String>)`, `.language()`, `.indent_width()`, `.tabs_indent()`, `.textarea()`, `.textarea_mut()`.
 
 ### ListState
 ```text

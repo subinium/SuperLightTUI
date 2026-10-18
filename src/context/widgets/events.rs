@@ -13,8 +13,9 @@ use crate::runtime::TextEntryKind;
 /// Printable keys belong to the widget unless they carry a global shortcut
 /// modifier (Ctrl / Super / Meta, see #349). Cursor and deletion keys belong
 /// to it with any modifier (Ctrl+Left is word navigation). Multi-line editors
-/// also own Enter, Up and Down. Everything else (Esc, Tab, F-keys, chords)
-/// stays visible to shortcut queries.
+/// also own Enter, Up and Down, and code editors (#466) also own Tab,
+/// Shift+Tab, PageUp and PageDown. Everything else (Esc, Tab, F-keys,
+/// chords) stays visible to shortcut queries.
 ///
 /// Issue #465: Ctrl/Super chords the widget handles itself (`chords`, see
 /// `CHORD_*`) are owned too: select all, copy / cut while text is selected,
@@ -41,7 +42,10 @@ fn text_entry_owns(kind: TextEntryKind, chords: u8, key: &KeyEvent) -> bool {
         | KeyCode::Right
         | KeyCode::Home
         | KeyCode::End => true,
-        KeyCode::Enter | KeyCode::Up | KeyCode::Down => kind == TextEntryKind::MultiLine,
+        KeyCode::Enter | KeyCode::Up | KeyCode::Down => kind != TextEntryKind::SingleLine,
+        KeyCode::Tab | KeyCode::BackTab | KeyCode::PageUp | KeyCode::PageDown => {
+            kind == TextEntryKind::Code
+        }
         _ => false,
     }
 }

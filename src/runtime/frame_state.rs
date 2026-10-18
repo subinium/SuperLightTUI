@@ -47,6 +47,9 @@ pub(crate) enum TextEntryKind {
     /// Multi-line editor: everything `SingleLine` owns plus Enter, Up and
     /// Down.
     MultiLine,
+    /// Issue #466: code editor: everything `MultiLine` owns plus Tab,
+    /// Shift+Tab (indent / dedent), PageUp and PageDown.
+    Code,
 }
 
 /// Per-frame metadata recorded for every focus slot, indexed by slot id.

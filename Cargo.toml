@@ -248,6 +248,10 @@ name = "diff_viewer"
 path = "examples/diff_viewer.rs"
 
 [[example]]
+name = "code_editor"
+path = "examples/code_editor.rs"
+
+[[example]]
 name = "counter"
 path = "examples/counter.rs"
 
@@ -363,4 +367,10 @@ harness = false
 
 [[bench]]
 name = "alloc_diagnostics"
+harness = false
+
+# Issue #466: code editor keystroke latency. Run with `--features syntax-rust`
+# for the highlighted numbers; without it the plain fallback is measured.
+[[bench]]
+name = "code_editor"
 harness = false

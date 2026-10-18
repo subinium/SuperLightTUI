@@ -909,6 +909,61 @@ pub(crate) fn highlight_code_cached(
     }
 }
 
+/// Issue #466: highlight `code` without touching the shared preparation
+/// cache, returning exactly one entry per `\n`-separated line of `code`
+/// (trailing empty lines included).
+///
+/// The code editor highlights its document in bounded chunks and keeps its
+/// own per-chunk cache, so routing every chunk through
+/// [`highlight_code_cached`] would only churn that shared cache. `None` when
+/// the language is unsupported or no `syntax-*` feature is enabled.
+pub(crate) fn highlight_lines(code: &str, lang: &str, theme: &Theme) -> Option<HighlightedLines> {
+    #[cfg(any(
+        feature = "syntax-rust",
+        feature = "syntax-python",
+        feature = "syntax-javascript",
+        feature = "syntax-typescript",
+        feature = "syntax-go",
+        feature = "syntax-bash",
+        feature = "syntax-json",
+        feature = "syntax-toml",
+        feature = "syntax-c",
+        feature = "syntax-cpp",
+        feature = "syntax-java",
+        feature = "syntax-ruby",
+        feature = "syntax-css",
+        feature = "syntax-html",
+        feature = "syntax-yaml",
+    ))]
+    {
+        let mut lines = highlight_code_uncached(code, lang, theme)?;
+        lines.resize_with(code.split('\n').count(), Vec::new);
+        Some(lines)
+    }
+
+    #[cfg(not(any(
+        feature = "syntax-rust",
+        feature = "syntax-python",
+        feature = "syntax-javascript",
+        feature = "syntax-typescript",
+        feature = "syntax-go",
+        feature = "syntax-bash",
+        feature = "syntax-json",
+        feature = "syntax-toml",
+        feature = "syntax-c",
+        feature = "syntax-cpp",
+        feature = "syntax-java",
+        feature = "syntax-ruby",
+        feature = "syntax-css",
+        feature = "syntax-html",
+        feature = "syntax-yaml",
+    )))]
+    {
+        let _ = (code, lang, theme);
+        None
+    }
+}
+
 /// Returns `true` if tree-sitter highlighting is available for `lang`.
 ///
 /// This checks both that the corresponding `syntax-*` feature is enabled

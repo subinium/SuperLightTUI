@@ -361,7 +361,9 @@ redo. Read or set it from code with `state.selection()`,
 
 ## Keyboard focus and shortcuts
 
-- Tab / Shift+Tab cycle focus through focusable widgets in render order.
+- Tab / Shift+Tab cycle focus through focusable widgets in render order. A
+  focused `code_editor` uses them to indent and dedent instead; build its
+  state with `CodeEditorState::tab_indents(false)` to keep Tab for focus.
 - Enter / Space activate a focused button, checkbox, accordion, and similar.
 - `ui.register_focusable_named("search")` + `ui.focus_by_name("search")` move
   focus programmatically.
