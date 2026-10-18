@@ -500,6 +500,13 @@ pub struct Buffer {
     /// The area this buffer covers, in terminal coordinates.
     pub area: Rect,
     /// Flat row-major storage of all cells. Length equals `area.width * area.height`.
+    ///
+    /// Prefer the cell-write methods ([`Buffer::set_string`],
+    /// [`Buffer::set_char`], [`Buffer::get_mut`], ...), which record the
+    /// columns they change. After writing this vector directly, call
+    /// [`Buffer::mark_touched_rect`] for the changed region: [`Buffer::reset`]
+    /// re-blanks only recorded cells and the terminal flush skips rows that
+    /// were recorded in neither frame.
     pub content: Vec<Cell>,
     pub(crate) clip_stack: Vec<Rect>,
     pub(crate) raw_sequences: Vec<(u32, u32, String)>,
@@ -534,6 +541,46 @@ pub struct Buffer {
     /// hash refresh, so `flush_buffer_diff` can short-circuit the cell
     /// scan when its hash also matches `previous.line_hashes[y]`.
     pub(crate) line_dirty: Vec<bool>,
+    /// Per-row written span (issues #485/#486).
+    ///
+    /// Invariant: every cell of row `y` outside `touched[y - area.y]` equals
+    /// [`Buffer::fill_cell`], the blank cell of the last reset. Every
+    /// mutating `Buffer` method widens the span of the columns it may have
+    /// changed; code that writes [`Buffer::content`] directly must call
+    /// [`Buffer::mark_touched_rect`]. Length equals `area.height`.
+    pub(crate) touched: Vec<RowSpan>,
+    /// Background of the blank fill cell written by the last reset (`None`
+    /// after [`Buffer::reset`], `Some(bg)` after [`Buffer::reset_with_bg`]).
+    pub(crate) fill_bg: Option<crate::style::Color>,
+}
+
+/// Half-open column span `[lo, hi)`, relative to `area.x`, of a row's cells
+/// that may differ from the buffer's fill cell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RowSpan {
+    pub(crate) lo: u32,
+    pub(crate) hi: u32,
+}
+
+impl RowSpan {
+    /// The empty span: no cell differs from the fill.
+    pub(crate) const EMPTY: Self = Self {
+        lo: u32::MAX,
+        hi: 0,
+    };
+
+    /// Whether the span covers no column.
+    #[inline]
+    pub(crate) fn is_empty(self) -> bool {
+        self.lo >= self.hi
+    }
+
+    /// Smallest span covering both `self` and `[lo, hi)`.
+    #[inline]
+    pub(crate) fn widen(&mut self, lo: u32, hi: u32) {
+        self.lo = self.lo.min(lo);
+        self.hi = self.hi.max(hi);
+    }
 }
 
 fn checked_buffer_dimensions(area: Rect) -> Result<(usize, usize), BufferError> {
@@ -622,7 +669,86 @@ impl Buffer {
             // 0 with `line_dirty=true` so the first flush still recomputes.
             line_hashes: try_repeated(0, height)?,
             line_dirty: try_repeated(true, height)?,
+            touched: try_repeated(RowSpan::EMPTY, height)?,
+            fill_bg: None,
         })
+    }
+
+    /// The blank cell every untouched cell holds: a space with default style
+    /// and the background of the last reset.
+    #[inline]
+    pub(crate) fn fill_cell(&self) -> Cell {
+        let mut cell = Cell::default();
+        cell.style.bg = self.fill_bg;
+        cell
+    }
+
+    /// Widen row `y`'s written span by the absolute columns `[x_lo, x_hi)`.
+    ///
+    /// Coordinates outside the area are clamped; rows outside the area are
+    /// ignored. Also flags the row dirty for the per-row flush skip.
+    #[inline]
+    pub(crate) fn touch_cols(&mut self, y: u32, x_lo: u32, x_hi: u32) {
+        if y < self.area.y {
+            return;
+        }
+        let row = (y - self.area.y) as usize;
+        let lo = x_lo.max(self.area.x) - self.area.x;
+        let hi = x_hi.min(self.area.right()).saturating_sub(self.area.x);
+        if lo >= hi {
+            return;
+        }
+        if let Some(span) = self.touched.get_mut(row) {
+            span.widen(lo, hi);
+        }
+        if let Some(slot) = self.line_dirty.get_mut(row) {
+            *slot = true;
+        }
+    }
+
+    /// Record that the cells of `rect` may have been written directly.
+    ///
+    /// Every `Buffer` method that mutates cells already does this. Code that
+    /// writes [`Buffer::content`] directly (for example a `draw` callback
+    /// indexing the cell vector) must call this for the region it changed:
+    /// `reset` only re-blanks touched cells and the terminal flush skips rows
+    /// that were not touched in either frame. The region is clamped to the
+    /// buffer area.
+    pub fn mark_touched_rect(&mut self, rect: Rect) {
+        let Some(rect) = self.area.intersection(rect) else {
+            return;
+        };
+        for y in rect.y..rect.bottom() {
+            self.touch_cols(y, rect.x, rect.right());
+        }
+    }
+
+    /// Return a description of the first cell that breaks the written-span
+    /// invariant, or `None` when every untouched cell equals the fill cell.
+    #[cfg(any(test, debug_assertions))]
+    pub(crate) fn fill_invariant_violation(&self) -> Option<String> {
+        let width = self.area.width as usize;
+        if self.content.len() != width * self.area.height as usize
+            || self.touched.len() != self.area.height as usize
+        {
+            return Some("content or span length does not match the area".to_string());
+        }
+        let fill = self.fill_cell();
+        for (row, span) in self.touched.iter().enumerate() {
+            let cells = &self.content[row * width..(row + 1) * width];
+            for (col, cell) in cells.iter().enumerate() {
+                let inside =
+                    !span.is_empty() && (span.lo as usize..span.hi as usize).contains(&col);
+                if !inside && *cell != fill {
+                    return Some(format!(
+                        "untouched cell ({}, {}) = {cell:?} differs from fill {fill:?}",
+                        self.area.x as usize + col,
+                        self.area.y as usize + row
+                    ));
+                }
+            }
+        }
+        None
     }
 
     /// Push a scroll clip info frame.
@@ -870,7 +996,7 @@ impl Buffer {
             self.area
         );
         let idx = self.index_of(x, y);
-        self.mark_row_dirty(y);
+        self.touch_cols(y, x, x.saturating_add(1));
         &mut self.content[idx]
     }
 
@@ -896,7 +1022,7 @@ impl Buffer {
     pub fn try_get_mut(&mut self, x: u32, y: u32) -> Option<&mut Cell> {
         if self.in_bounds(x, y) {
             let idx = self.index_of(x, y);
-            self.mark_row_dirty(y);
+            self.touch_cols(y, x, x.saturating_add(1));
             Some(&mut self.content[idx])
         } else {
             None
@@ -971,6 +1097,7 @@ impl Buffer {
             }
             if grapheme.len() == 1 && is_printable_ascii_byte(grapheme.as_bytes()[0]) {
                 if self.ascii_cell_writable(x, y, clip) {
+                    self.touch_cols(y, x, x + 1);
                     self.write_ascii_cell(x, y, grapheme, style, link, clip);
                 }
                 x = x.saturating_add(1);
@@ -1009,6 +1136,7 @@ impl Buffer {
             return;
         }
         let (lo, hi) = (lo as u32, hi as u32);
+        self.touch_cols(y, lo, hi);
         for col in lo..hi {
             let offset = (col - x) as usize;
             self.write_ascii_cell(col, y, &s[offset..=offset], style, link, clip);
@@ -1026,6 +1154,8 @@ impl Buffer {
     }
 
     /// Write one printable-ASCII byte at an in-area, in-clip `(x, y)`.
+    ///
+    /// The caller has already widened the row's written span over `x`.
     ///
     /// A cell whose stored symbol is one byte is a width-1 grapheme with no
     /// continuation, so it is overwritten directly. Anything else (a wide
@@ -1047,7 +1177,6 @@ impl Buffer {
             cell.symbol = compact_str::CompactString::new(symbol);
             cell.style = style;
             cell.hyperlink = link.cloned();
-            self.mark_row_dirty(y);
         } else {
             self.set_grapheme_normalized(
                 x,
@@ -1128,7 +1257,7 @@ impl Buffer {
             return width;
         }
 
-        self.mark_row_dirty(y);
+        self.touch_cols(y, affected_left, affected_right);
         for col in affected_left..affected_right {
             let idx = self.index_of(col, y);
             self.content[idx].reset();
@@ -1183,7 +1312,7 @@ impl Buffer {
         combined.push_str(suffix);
         let normalized = normalize_cell_symbol(&combined);
         if normalized != self.content[idx].symbol {
-            self.mark_row_dirty(y);
+            self.touch_cols(y, leading_x, leading_x + 1);
             self.content[idx].symbol = normalized;
         }
     }
@@ -1202,6 +1331,7 @@ impl Buffer {
             // `sanitize_cell_char` replaced every ASCII control, so this is a
             // printable byte.
             if self.ascii_cell_writable(x, y, clip) {
+                self.touch_cols(y, x, x + 1);
                 self.write_ascii_cell(x, y, symbol, style, None, clip);
             }
             return;
@@ -1209,22 +1339,6 @@ impl Buffer {
         let width = char_display_width(ch) as u32;
         let symbol = compact_str::CompactString::new(symbol);
         self.set_grapheme_normalized(x, y, symbol, width, style, None, clip);
-    }
-
-    /// Mark row `y` as dirty so the next flush recomputes its line hash.
-    ///
-    /// `y` is in the buffer's coordinate space (i.e. `area.y..area.bottom()`).
-    /// Out-of-range values are ignored so callers don't need to bounds-check
-    /// before invoking this on every cell write.
-    #[inline]
-    pub(crate) fn mark_row_dirty(&mut self, y: u32) {
-        if y < self.area.y {
-            return;
-        }
-        let idx = (y - self.area.y) as usize;
-        if let Some(slot) = self.line_dirty.get_mut(idx) {
-            *slot = true;
-        }
     }
 
     /// Recompute the per-row digest for every row currently flagged dirty.
@@ -1363,9 +1477,38 @@ impl Buffer {
 
     /// Reset every cell to a blank space with default style, and clear the clip stack.
     pub fn reset(&mut self) {
-        for cell in &mut self.content {
-            cell.reset();
+        self.reset_to(None, true);
+    }
+
+    /// Reset every cell and apply a background color to all cells.
+    pub fn reset_with_bg(&mut self, bg: crate::style::Color) {
+        self.reset_to(Some(bg), true);
+    }
+
+    /// Shared body of [`Self::reset`], [`Self::reset_with_bg`] and resize.
+    ///
+    /// `verify` checks the written-span invariant in debug builds; resize
+    /// passes `false` because it has just re-laid out the cell vector.
+    fn reset_to(&mut self, bg: Option<crate::style::Color>, verify: bool) {
+        #[cfg(debug_assertions)]
+        if verify
+            && self.content.len() == self.area.area_u64() as usize
+            && self.touched.len() == self.area.height as usize
+            && let Some(violation) = self.fill_invariant_violation()
+        {
+            panic!(
+                "Buffer written-span invariant broken: {violation}. Code that writes \
+                 `Buffer::content` directly must call `Buffer::mark_touched_rect`."
+            );
         }
+        #[cfg(not(debug_assertions))]
+        let _ = verify;
+        self.fill_bg = bg;
+        let blank = self.fill_cell();
+        self.content.fill(blank);
+        let height = self.area.height as usize;
+        self.touched.clear();
+        self.touched.resize(height, RowSpan::EMPTY);
         self.clip_stack.clear();
         self.raw_sequences.clear();
         self.sprixels.clear();
@@ -1376,24 +1519,6 @@ impl Buffer {
         self.kitty_horizontal_clip_stack.clear();
         // Issue #171: every row is now blank — flag them all dirty so the
         // next flush refreshes the digest before any skip check.
-        self.line_dirty.fill(true);
-    }
-
-    /// Reset every cell and apply a background color to all cells.
-    pub fn reset_with_bg(&mut self, bg: crate::style::Color) {
-        for cell in &mut self.content {
-            cell.reset();
-            cell.style.bg = Some(bg);
-        }
-        self.clip_stack.clear();
-        self.raw_sequences.clear();
-        self.sprixels.clear();
-        self.kitty_placements.clear();
-        self.cursor_pos = None;
-        self.cursor_masked = false;
-        self.kitty_clip_info_stack.clear();
-        self.kitty_horizontal_clip_stack.clear();
-        // Issue #171: every cell was just rewritten — mark all rows dirty.
         self.line_dirty.fill(true);
     }
 
@@ -1420,6 +1545,9 @@ impl Buffer {
         self.line_dirty
             .try_reserve_exact(height.saturating_sub(self.line_dirty.len()))
             .map_err(|_| BufferError::AllocationFailed)?;
+        self.touched
+            .try_reserve_exact(height.saturating_sub(self.touched.len()))
+            .map_err(|_| BufferError::AllocationFailed)?;
 
         self.area = area;
         self.content.resize(size, Cell::default());
@@ -1428,13 +1556,14 @@ impl Buffer {
         // here don't affect correctness.
         self.line_hashes.resize(height, 0);
         self.line_dirty.resize(height, true);
-        self.reset();
+        self.reset_to(None, false);
         // A sustained downsize should not retain a pathological high-water
         // allocation forever. Keep up to 2x headroom once capacity exceeds 4x
         // the active length, avoiding churn around ordinary terminal resizes.
         trim_excess_capacity(&mut self.content);
         trim_excess_capacity(&mut self.line_hashes);
         trim_excess_capacity(&mut self.line_dirty);
+        trim_excess_capacity(&mut self.touched);
         Ok(())
     }
 
@@ -2875,6 +3004,184 @@ mod tests {
                 );
                 assert_eq!(a, b, "{text:?}");
                 assert_eq!(optimized.content, reference.content, "{text:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn reset_clears_cells_links_and_frame_state() {
+        use crate::style::Color;
+        let area = Rect::new(2, 1, 40, 3);
+        let mut buf = Buffer::empty(area);
+        let long = "a\u{301}\u{302}\u{303}\u{304}\u{305}\u{306}\u{307}\u{308}\u{309}\u{30A}\u{30B}\u{30C}\u{30D}";
+        assert!(long.len() > 24, "symbol must be heap-allocated");
+        buf.set_string_linked(
+            3,
+            1,
+            long,
+            Style::new().fg(Color::Red),
+            "https://example.com",
+        );
+        buf.set_string(4, 2, "世界 text", Style::new().bold());
+        assert!(buf.get(3, 1).symbol.len() > 24);
+        assert!(buf.get(3, 1).hyperlink.is_some());
+        buf.push_clip(Rect::new(2, 1, 4, 1));
+        buf.raw_sequence(2, 1, "raw".to_string());
+        buf.set_cursor_pos(3, 1, true);
+
+        for bg in [None, Some(Color::Rgb(9, 9, 9)), Some(Color::Blue), None] {
+            match bg {
+                Some(bg) => buf.reset_with_bg(bg),
+                None => buf.reset(),
+            }
+            let mut expected = Cell::default();
+            expected.style.bg = bg;
+            assert!(buf.content.iter().all(|cell| *cell == expected), "{bg:?}");
+            assert!(buf.line_dirty.iter().all(|dirty| *dirty));
+            assert!(buf.clip_stack.is_empty());
+            assert!(buf.raw_sequences.is_empty());
+            assert!(buf.sprixels.is_empty());
+            assert!(buf.kitty_placements.is_empty());
+            assert_eq!(buf.cursor_position(), None);
+            assert!(!buf.cursor_is_masked());
+            assert_eq!(buf.fill_invariant_violation(), None);
+            buf.set_string(10, 2, "again", Style::new().fg(Color::Green));
+        }
+    }
+
+    #[test]
+    fn cell_reset_assigns_the_default_cell() {
+        let mut cell = Cell::default();
+        cell.set_symbol("a\u{301}\u{302}\u{303}\u{304}\u{305}\u{306}\u{307}\u{308}\u{309}");
+        cell.hyperlink = Some(compact_str::CompactString::new(
+            "https://example.com/long-link",
+        ));
+        cell.style = Style::new().bold();
+        cell.reset();
+        assert_eq!(cell, Cell::default());
+    }
+
+    #[test]
+    fn mark_touched_rect_records_direct_content_writes() {
+        let mut buf = Buffer::empty(Rect::new(1, 1, 6, 3));
+        let idx = buf.index_of(3, 2);
+        buf.content[idx].symbol = compact_str::CompactString::new("Z");
+        assert!(buf.fill_invariant_violation().is_some());
+        buf.mark_touched_rect(Rect::new(3, 2, 1, 1));
+        assert_eq!(buf.fill_invariant_violation(), None);
+        // Out-of-area rects are clamped, never panic.
+        buf.mark_touched_rect(Rect::new(0, 0, 100, 100));
+        buf.mark_touched_rect(Rect::new(50, 50, 2, 2));
+        buf.reset();
+        assert_eq!(buf.get(3, 2).symbol, " ");
+    }
+
+    mod written_span_proptest {
+        use super::*;
+        use crate::cell::test_strategies::cell_text;
+        use crate::style::Color;
+        use proptest::prelude::*;
+
+        #[derive(Debug, Clone)]
+        enum Op {
+            Text(u32, u32, String),
+            Linked(u32, u32, String),
+            Char(u32, u32, char),
+            GetMut(u32, u32),
+            TryGetMut(u32, u32),
+            DirectWrite(u32, u32, u32, u32),
+            DimAll,
+            DimAround(u32, u32, u32, u32),
+            PushClip(u32, u32, u32, u32),
+            PopClip,
+            Reset(u8),
+            Resize(u32, u32),
+        }
+
+        fn op() -> impl Strategy<Value = Op> {
+            let c = 0u32..24;
+            prop_oneof![
+                6 => (c.clone(), c.clone(), cell_text()).prop_map(|(x, y, t)| Op::Text(x, y, t)),
+                1 => (c.clone(), c.clone(), cell_text()).prop_map(|(x, y, t)| Op::Linked(x, y, t)),
+                3 => (c.clone(), c.clone(), any::<char>()).prop_map(|(x, y, ch)| Op::Char(x, y, ch)),
+                1 => (c.clone(), c.clone()).prop_map(|(x, y)| Op::GetMut(x, y)),
+                1 => (c.clone(), c.clone()).prop_map(|(x, y)| Op::TryGetMut(x, y)),
+                1 => (c.clone(), c.clone(), 0u32..8, 0u32..4)
+                    .prop_map(|(x, y, w, h)| Op::DirectWrite(x, y, w, h)),
+                1 => Just(Op::DimAll),
+                1 => (c.clone(), c.clone(), 0u32..10, 0u32..6)
+                    .prop_map(|(x, y, w, h)| Op::DimAround(x, y, w, h)),
+                1 => (c.clone(), c.clone(), 0u32..12, 0u32..6)
+                    .prop_map(|(x, y, w, h)| Op::PushClip(x, y, w, h)),
+                1 => Just(Op::PopClip),
+                2 => any::<u8>().prop_map(Op::Reset),
+                1 => (1u32..20, 1u32..8).prop_map(|(w, h)| Op::Resize(w, h)),
+            ]
+        }
+
+        fn apply(buf: &mut Buffer, op: &Op) {
+            match op {
+                Op::Text(x, y, t) => buf.set_string(*x, *y, t, Style::new().fg(Color::Red)),
+                Op::Linked(x, y, t) => {
+                    buf.set_string_linked(*x, *y, t, Style::new(), "https://example.com")
+                }
+                Op::Char(x, y, ch) => buf.set_char(*x, *y, *ch, Style::new().bold()),
+                Op::GetMut(x, y) => {
+                    if buf.in_bounds(*x, *y) {
+                        buf.get_mut(*x, *y).set_char('g');
+                    }
+                }
+                Op::TryGetMut(x, y) => {
+                    if let Some(cell) = buf.try_get_mut(*x, *y) {
+                        cell.style = Style::new().italic();
+                    }
+                }
+                Op::DirectWrite(x, y, w, h) => {
+                    let rect = Rect::new(*x, *y, *w, *h);
+                    if let Some(visible) = buf.area.intersection(rect) {
+                        for yy in visible.y..visible.bottom() {
+                            for xx in visible.x..visible.right() {
+                                let idx = buf.index_of(xx, yy);
+                                buf.content[idx].symbol = compact_str::CompactString::new("D");
+                            }
+                        }
+                    }
+                    buf.mark_touched_rect(rect);
+                }
+                Op::DimAll => crate::layout::render_test_hooks::dim_entire(buf),
+                Op::DimAround(x, y, w, h) => {
+                    crate::layout::render_test_hooks::dim_around(buf, Rect::new(*x, *y, *w, *h))
+                }
+                Op::PushClip(x, y, w, h) => buf.push_clip(Rect::new(*x, *y, *w, *h)),
+                Op::PopClip => buf.pop_clip(),
+                Op::Reset(kind) => match kind % 3 {
+                    0 => buf.reset(),
+                    1 => buf.reset_with_bg(Color::Rgb(1, 2, 3)),
+                    _ => buf.reset_with_bg(Color::Indexed(*kind)),
+                },
+                Op::Resize(w, h) => buf.resize(Rect::new(buf.area.x, buf.area.y, *w, *h)),
+            }
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(1024))]
+
+            #[test]
+            fn untouched_cells_always_equal_the_fill_cell(
+                origin in prop_oneof![Just((0u32, 0u32)), Just((3u32, 2u32))],
+                width in 1u32..20,
+                height in 1u32..8,
+                ops in prop::collection::vec(op(), 1..32),
+            ) {
+                let mut buf = Buffer::empty(Rect::new(origin.0, origin.1, width, height));
+                for (step, op) in ops.iter().enumerate() {
+                    apply(&mut buf, op);
+                    prop_assert_eq!(buf.fill_invariant_violation(), None, "step {} {:?}", step, op);
+                }
+                // A reset must leave exactly the fill cell everywhere.
+                buf.reset_with_bg(Color::Rgb(7, 7, 7));
+                let fill = buf.fill_cell();
+                prop_assert!(buf.content.iter().all(|cell| *cell == fill));
             }
         }
     }

@@ -252,11 +252,9 @@ impl Cell {
     }
 
     /// Reset the cell to a blank space with default style.
+    #[inline]
     pub fn reset(&mut self) {
-        self.symbol.clear();
-        self.symbol.push(' ');
-        self.style = Style::new();
-        self.hyperlink = None;
+        *self = Self::default();
     }
 }
 

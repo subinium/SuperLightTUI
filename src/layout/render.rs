@@ -37,10 +37,12 @@ pub(crate) fn render(node: &LayoutNode, buf: &mut Buffer) {
 /// Walks `buf.content` as one contiguous slice rather than per-cell
 /// `get_mut` so the per-cell bounds assert is paid zero times and the
 /// compiler can vectorize the modifier OR over the whole grid.
-fn dim_entire_buffer(buf: &mut Buffer) {
+pub(super) fn dim_entire_buffer(buf: &mut Buffer) {
     for cell in &mut buf.content {
         cell.style.modifiers |= crate::style::Modifiers::DIM;
     }
+    // Direct `content` writes must be recorded in the written spans.
+    buf.mark_touched_rect(buf.area);
 }
 
 /// OR the `DIM` modifier into a contiguous run of cells `[start, end)` in
@@ -125,6 +127,16 @@ fn dim_buffer_around(buf: &mut Buffer, modal_rect: Rect) {
         dim_cell_range(content, row_base, row_base + left_hi);
         // Right segment: columns [clip_right, area.right()).
         dim_cell_range(content, row_base + right_lo, row_base + full_hi);
+    }
+
+    // Record the four strips in the written spans (direct `content` writes).
+    let top = Rect::new(area.x, area.y, area.width, clip_y - area.y);
+    let bottom = Rect::new(area.x, clip_bottom, area.width, area.bottom() - clip_bottom);
+    let band = clip_bottom - clip_y;
+    let left = Rect::new(area.x, clip_y, clip_x - area.x, band);
+    let right = Rect::new(clip_right, clip_y, area.right() - clip_right, band);
+    for strip in [top, bottom, left, right] {
+        buf.mark_touched_rect(strip);
     }
 }
 

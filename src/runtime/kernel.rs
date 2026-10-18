@@ -412,7 +412,7 @@ pub(crate) fn run_frame_kernel(
         else {
             continue;
         };
-        if let Err(panic) = context::invoke_deferred_draw(
+        let result = context::invoke_deferred_draw(
             buffer,
             rdr.rect,
             rdr.left_clip_cols,
@@ -420,7 +420,11 @@ pub(crate) fn run_frame_kernel(
             rdr.original_width,
             rdr.original_height,
             cb,
-        ) {
+        );
+        // A raw draw receives `&mut Buffer` and may index `content` directly,
+        // bypassing the setters that record written spans (#485/#486).
+        buffer.mark_touched_rect(rdr.rect);
+        if let Err(panic) = result {
             deferred_draw_panic = Some(panic);
             break;
         }

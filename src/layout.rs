@@ -48,5 +48,19 @@ pub fn __bench_dim_buffer_around(buf: &mut Buffer, modal_rect: Rect) {
     render::__bench_dim_buffer_around(buf, modal_rect);
 }
 
+/// Crate-internal test access to the modal dim helpers.
+#[cfg(test)]
+pub(crate) mod render_test_hooks {
+    use super::{Buffer, Rect, render};
+
+    pub(crate) fn dim_entire(buf: &mut Buffer) {
+        render::dim_entire_buffer(buf);
+    }
+
+    pub(crate) fn dim_around(buf: &mut Buffer, modal_rect: Rect) {
+        render::__bench_dim_buffer_around(buf, modal_rect);
+    }
+}
+
 #[cfg(test)]
 mod tests;
