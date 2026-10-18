@@ -1,4 +1,6 @@
-# SLT References — v0.20
+# SLT References
+
+Targets SLT v0.25.0.
 
 Load this when the user asks about feature flags, version-specific APIs, or doc locations.
 
@@ -6,24 +8,43 @@ Load this when the user asks about feature flags, version-specific APIs, or doc 
 
 | Feature | Default? | Purpose | APIs / capabilities enabled |
 |---|---|---|---|
-| `crossterm` | yes | Terminal backend | `slt::run`, `slt::run_with`, `slt::run_inline`, `slt::run_static`, `detect_color_scheme`, `read_clipboard` |
+| `crossterm` | yes | Terminal backend | `slt::run`, `slt::run_with`, `slt::run_inline`, `slt::run_static`, `detect_color_scheme`, `read_clipboard`. Mouse capture is off unless `RunConfig::default().mouse(true)` |
+| `bidi` | yes | UAX #9 text reordering | correct RTL and mixed-direction buffer rendering |
 | `async` | no | Tokio integration | `slt::run_async` (channel-based message pump) |
 | `serde` | no | Serialize/Deserialize | derives on `Style`, `Color`, `Theme`, layout types |
+| `theme-watch` | no | TOML hot reload | `ThemeWatcher`; enables `serde` and `notify` |
 | `image` | no | Image loading helpers | `ui.image(...)` halfblock/kitty/sixel decode paths |
 | `qrcode` | no | QR widget | `ui.qr_code(...)` |
 | `syntax-rust` / `syntax-python` / `syntax-javascript` / `syntax-typescript` / `syntax-go` / `syntax-bash` / `syntax-json` / `syntax-toml` / `syntax-c` / `syntax-cpp` / `syntax-java` / `syntax-ruby` / `syntax-css` / `syntax-html` / `syntax-yaml` | no | Per-language tree-sitter grammars | `ui.code_block(code, "rust")` etc. |
 | `syntax` | no | All `syntax-*` combined | every language above |
 | `kitty-compress` | no | zlib-compressed kitty protocol | larger images, smaller payloads |
-| `full` | no | crossterm+async+serde+image+qrcode+kitty-compress | development / demos only |
+| `full` | no | crossterm+async+serde+theme-watch+image+qrcode+kitty-compress+bidi | development / demos only; excludes syntax grammars |
+
+## Runtime defaults that change behavior
+
+- **Mouse is opt-in.** `RunConfig::default()` has `mouse: false`. Without `slt::run_with(RunConfig::default().mouse(true), ...)`, `clicked` / `hovered` / `right_clicked` / `double_clicked` / `scroll_delta`, scrollbar drag and split-pane drag never fire in a real terminal.
+- **Global shortcuts go after inputs.** Render `text_input` / `textarea` before checking `ui.key('q')`, or gate on the input's `Response.focused`; otherwise typed characters also trigger shortcuts.
+- **`ui.modal` does not trap focus.** It keeps `tab_trap: false`; `modal_with(ModalOptions::default(), ..)` traps.
+- **`RunConfig::handle_ctrl_c(true)`** is the default; pass `false` to receive Ctrl-C yourself.
+
+## v0.24 / v0.25 additions
+
+- `ScrollState::follow_focus: bool` (public field, default `true`) — scroll containers reveal the focused child, including nested axes and modal forms. Set `false` for app-controlled scrolling. `src/widgets/collections.rs`.
+- `Context::form_field_response(&mut FormField) -> FormFieldResponse` — `{ response, input, layout_rect: Option<Rect> }`, `Deref<Target = Response>`. `form_field` stays chainable. `src/context/widgets_display/layout.rs`, `src/widgets/responses.rs`.
+- `Context::focused_layout_rect() -> Option<Rect>` and `Context::measured_layout_rect(name) -> Option<Rect>` — previous-frame full border box before scroll/clip. `Response.rect` stays the clipped hit rect. `src/context/helpers.rs`.
+- `TestBackend::has_pending_input()` / `AppState::has_pending_input()` — input queued behind a Tab group for the next frame.
+- `TestBackend::advance_time(Duration)` — deterministic headless clock (ticks now advance per frame).
+- `Context::try_canvas(w, h, draw) -> Result<Response, CanvasError>`, `Context::canvas_with(&mut CanvasContext, draw)` — bounded / reusable canvas storage.
+- Browser runtime: `crates/slt-wasm` with `WasmOptions`; see `docs/WASM.md`.
 
 ## v0.20 API surface (highlights AI agents miss)
 
 These shipped in v0.20 and are NOT in older docs. Every entry verified against `src/`.
 
 ### Builders (Rule 1)
-- `ui.gauge(ratio: f64) -> Gauge<'_>` — `.label(s).width(n).color(c).show() -> GaugeResponse`. `src/context/widgets_display/gauge.rs:37`
-- `ui.line_gauge(ratio: f64) -> LineGauge<'_>` — `.label(s).filled(c).empty(c).width(n).show()`. `gauge.rs:55`
-- `ui.breadcrumb(&[&str]) -> Breadcrumb<'_>` — `.separator(s).color(c).show() -> BreadcrumbResponse`. `widgets_display/status.rs:200`
+- `ui.gauge(ratio: f64) -> Gauge<'_>` — `.label(s).width(n).color(c).show() -> GaugeResponse`. See `src/context/widgets_display/gauge.rs`.
+- `ui.line_gauge(ratio: f64) -> LineGauge<'_>` — `.label(s).filled(c).empty(c).width(n).show()`. See `src/context/widgets_display/gauge.rs`.
+- `ui.breadcrumb(&[&str]) -> Breadcrumb<'_>` — `.separator(s).color(c).show() -> BreadcrumbResponse`. See `src/context/widgets_display/status.rs`.
 
 ### Opts struct (Rule 3)
 - `ui.scrollable_with_gutter(&mut ScrollState, GutterOpts<G>, body)` — `widgets_display/gutter.rs:115`
@@ -36,48 +57,48 @@ These shipped in v0.20 and are NOT in older docs. Every entry verified against `
 - `ui.vsplit_pane(&mut SplitPaneState, top, bottom) -> SplitPaneResponse` — vertical split
 - `SplitPaneState::new(0.5)`, `.with_min_ratio(0.2)`
 
-### Hooks (v0.19+ + v0.20 additions)
-- `ui.use_state(\|\| init)` — order-based, `src/context/runtime.rs:632`
-- `ui.use_state_named::<T>("id")` — `&'static str`, `T: Default`, `runtime.rs:690`
-- `ui.use_state_named_with("id", \|\| init)` — `&'static str` + init fn, `runtime.rs:671`
-- `ui.use_state_keyed("id-{i}", \|\| init)` — runtime `String`, `runtime.rs:978`
-- `ui.use_state_keyed_default::<T>("id-{i}")` — runtime `String` + `T: Default`, `runtime.rs:1002`
-- `ui.use_memo(&deps, \|d\| compute(d))` — cached compute, `runtime.rs:832`
-- `ui.use_effect(\|d\| { ... }, &deps)` — side effect on deps change, `runtime.rs:1039`
-- `ui.provide(value, \|ui\| ...)` — typed scoped injection, `runtime.rs:780`
-- `ui.use_context::<T>()` — panics if missing, `runtime.rs:807`
-- `ui.try_use_context::<T>()` — `Option<&T>`, `runtime.rs:818`
+### Hooks
+- `ui.use_state(\|\| init)` — order-based, see `src/context/runtime.rs`
+- `ui.use_state_named("id", \|\| init)` — `&'static str` + init fn (two args)
+- `ui.use_state_named_default::<T>("id")` — `&'static str`, `T: Default`
+- `ui.use_state_keyed("id-{i}", \|\| init)` — runtime `String`
+- `ui.use_state_keyed_default::<T>("id-{i}")` — runtime `String` + `T: Default`
+- `ui.use_memo(&deps, \|d\| compute(d))` — cached compute
+- `ui.use_effect(\|d\| { ... }, &deps)` — side effect on deps change
+- `ui.provide(value, \|ui\| ...)` — typed scoped injection
+- `ui.use_context::<T>()` — panics if missing
+- `ui.try_use_context::<T>()` — `Option<&T>`
 
 ### Animation shorthand (v0.20)
-- `ui.animate_value("id", target, duration_ticks) -> f64` — `runtime.rs:743`
-- `ui.animate_bool("id", value) -> f64` — eased 0..1 toggle, `runtime.rs:716`
+- `ui.animate_value("id", target, duration_ticks) -> f64` — see `src/context/runtime.rs`
+- `ui.animate_bool("id", value) -> f64` — eased 0..1 toggle
 
 ### Response signal fields (v0.20)
-`Response { clicked, right_clicked, hovered, changed, focused, gained_focus, lost_focus, rect }`. `right_clicked`, `gained_focus`, `lost_focus` are new in v0.20. Older docs may show only the v0.19 set.
-- `Response::on_hover(ui, "tooltip text")` — chained tooltip (`src/context/state.rs:221`)
+`Response { clicked, right_clicked, hovered, changed, focused, gained_focus, lost_focus, double_clicked, submitted, scroll_delta, rect }`.
+- `Response::on_hover(ui, "tooltip text")` — chained tooltip; see `src/context/state.rs`
 - `Response::on_hover_ui(ui, |ui| { ... })` — chained tooltip with custom body
 
 ### Theme additions (v0.20)
 - `Theme::compact()` / `Theme::comfortable()` / `Theme::spacious()` — density variants of dark
 - `Theme::with_spacing(spacing)` — override Spacing on any theme
 - `ContainerBuilder::theme(theme)` — per-subtree theme override (no ambient state)
-- `ThemeBuilder` / `ThemeBuilder::builder_from(base)` — `const fn` since v0.19.2
+- `Theme::builder()` / `Theme::builder_from(base) -> ThemeBuilder` — `const fn` since v0.19.2
 
 ### Layout / DX (v0.20)
 - `ContainerBuilder::fill()` — equivalent to `.grow(1)`, more readable
 - `Rect::center_in(outer)`, `center_horizontally_in`, `center_vertically_in` — `src/rect.rs`
-- `Context::modal_with(ModalOptions { tab_trap: true }, \|ui\| ...)` — focus-trapped modal
+- `Context::modal_with(slt::context::ModalOptions { tab_trap: true }, \|ui\| ...)` — focus-trapped modal (plain `modal` does not trap)
 - `Context::static_log(...)` / `take_static_log()` — for `slt::run_static` scrollback
 
 ### Keymap (v0.20)
 - `WidgetKeyHelp` trait — implement on a state type to publish keybindings
 - `Context::publish_keymap(...)` / `published_keymaps()` — collect + render help
-- `Context::keymap_help_overlay()` — auto-rendered overlay
+- `Context::keymap_help_overlay(open: bool)` — auto-rendered overlay
 - `RunConfig::handle_ctrl_c(bool)` — opt-out of auto Ctrl-C quit
 
 ### Testing (v0.20)
-- `TestBackend::record_frames()` + `tb.frames()[i]` — frame history
-- `tb.sequence().tick(n).key(...).type_string(s, &mut value).run()`
+- `TestBackend::new(w, h).record_frames()` + `tb.frames()[i]` — frame history
+- `tb.sequence().tick(\|ui\| ..).key(KeyCode::Esc, \|ui\| ..).type_string("hi", \|ui\| ..).run()` — every step takes its render closure
 - `Buffer::snapshot_format()` — readable snapshot dump
 - `tb.assert_not_contains(s)`, `assert_line_not_contains`, `assert_empty_line(y)`, `assert_style_at(x, y, style)`
 
@@ -98,15 +119,15 @@ These were either v0.19 preview or pre-1.0 mistakes consolidated by the v0.20 AP
 
 ## Doc pointers (cross-check before relying on)
 
-These docs exist but several lag behind v0.20. When in doubt, grep source.
+These docs are maintained for the current release, but source and compile-tested examples remain authoritative.
 
-- `docs/COMPLETE_REFERENCE.md` — **partially stale** (header still says v0.19.2; missing gauge/line_gauge/scrollable_with_gutter/split_pane/Response signal fields/v0.19 hooks). Treat as supplementary, not authoritative.
-- `docs/WIDGETS.md` — **partially stale** (breadcrumb 4-variant API, missing v0.20 builders).
-- `docs/STATE_APIS.md` — current for state methods. Note `ScrollState::progress() -> f32` is a documented Rule 2 violation pending fix.
+- `docs/COMPLETE_REFERENCE.md` — broad single-file reference.
+- `docs/WIDGETS.md` — categorized widget and state reference.
+- `docs/STATE_APIS.md` — method-level state reference.
 - `docs/PREVIOUS_FRAME_GUIDE.md` — current. Read for `Response.rect` timing.
 - `docs/PATTERNS.md` — current. `provide`/`use_context`/`use_state_named`/`with_if` covered.
 - `docs/QUICK_START.md` — current.
-- `docs/COOKBOOK.md` — current. (Cargo dep line still says `superlighttui = "0.19"` — bump to `0.20` mentally.)
+- `docs/COOKBOOK.md` — composition recipes; run through `cookbook_tour`.
 - `docs/THEMING.md` — current. `ThemeBuilder` `const fn` since v0.19.2.
 - `docs/TESTING.md` — covers v0.19.1 EventBuilder additions. Read alongside `tests/v020_test_utils_demo.rs` for v0.20 helpers.
 - `docs/ANIMATION.md` — current.
@@ -114,8 +135,8 @@ These docs exist but several lag behind v0.20. When in doubt, grep source.
 - `docs/BACKENDS.md` — `Backend`, `AppState`, `frame()` low-level paths.
 - `docs/ARCHITECTURE.md` — render pipeline.
 - `docs/DEBUGGING.md` — F12 layout overlay, debug flags.
-- `docs/MIGRATION.md` — **partially stale** for v0.19 → v0.20 (frames v0.20 as "next minor", but it shipped). Use this skill's "v0.20 removed APIs" table.
-- `docs/llms.txt` — **partially stale** (v0.19.2 highlight list).
+- `docs/MIGRATION.md` — version-by-version public API migration guide.
+- `docs/llms.txt` — short coding-agent index.
 - `docs/RUSTDOC_GUIDE.md` — current. Doctest standards.
 - `docs/NAMING.md` — current. The micro-tier rubric this skill encodes.
 - `docs/API_DESIGN.md` — current. The 5 rules this skill encodes.
@@ -123,10 +144,10 @@ These docs exist but several lag behind v0.20. When in doubt, grep source.
 
 **Authoritative when docs disagree**: source code (`src/lib.rs` re-exports, `src/context/widgets_*.rs` signatures), `examples/v020_*.rs` runnable demos, `tests/v020_*.rs` regression tests.
 
-## Examples (`examples/` — 59 files, 16 Cargo-listed)
+## Examples (`examples/` — 63 Rust files, 20 Cargo-listed targets)
 
 The skill's `SKILL.md` lists the canonical reference example for each domain. Highlights:
-- **v0.20 surface**: `v020_showcase.rs` (kitchen sink), `v020_tour.rs` (tabbed), `v020_dx_shortcuts.rs` (on_hover/animate_bool/fill)
+- **v0.20 surface**: `v020_tour.rs` (target `v020_tour`, tabbed over every `v020_*` demo), `v020_dx_shortcuts.rs` (on_hover/animate_bool/fill). `v020_showcase.rs` is not compiled by any target; do not use it as a reference.
 - **Cookbook recipes**: `cookbook_login.rs`, `cookbook_table.rs`, `cookbook_modal_toast.rs`, `cookbook_dashboard.rs`, `cookbook_file_picker.rs`, `cookbook_tour.rs`
 - **Composition**: `demo_website.rs` (provide/use_context), `tests/context_provider.rs` (8 unit tests)
 - **CJK / wide chars**: `demo_cjk.rs`
@@ -134,13 +155,13 @@ The skill's `SKILL.md` lists the canonical reference example for each domain. Hi
 
 ## Release / deployment
 
-`CLAUDE.md` at project root has the full 8-step checklist. Short:
+`AGENTS.md` at project root has the full 8-step checklist. Short:
 
 Local PRE-CI → branch `release/vX.Y.Z` → atomic commit → push → PR → wait CI → merge (squash) → pull main → tag → push tag → wait `release.yml` → verify `gh release view` + crates.io + docs.rs → announce.
 
 ## MSRV
 
-Rust 1.81. Verify with `cargo check --features async,serde` on a 1.81 toolchain (CI's MSRV job runs this exact command).
+Rust 1.88. Verify with `cargo +1.88 check -p superlighttui --features async,serde` and the matching all-features Clippy gate.
 
 ## Supported targets
 

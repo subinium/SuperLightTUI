@@ -1,4 +1,6 @@
-# SLT References — v0.23
+# SLT References
+
+Targets SLT v0.25.0.
 
 Load this when the user asks about feature flags, version-specific APIs, or doc locations.
 
@@ -6,7 +8,7 @@ Load this when the user asks about feature flags, version-specific APIs, or doc 
 
 | Feature | Default? | Purpose | APIs / capabilities enabled |
 |---|---|---|---|
-| `crossterm` | yes | Terminal backend | `slt::run`, `slt::run_with`, `slt::run_inline`, `slt::run_static`, `detect_color_scheme`, `read_clipboard` |
+| `crossterm` | yes | Terminal backend | `slt::run`, `slt::run_with`, `slt::run_inline`, `slt::run_static`, `detect_color_scheme`, `read_clipboard`. Mouse capture is off unless `RunConfig::default().mouse(true)` |
 | `bidi` | yes | UAX #9 text reordering | correct RTL and mixed-direction buffer rendering |
 | `async` | no | Tokio integration | `slt::run_async` (channel-based message pump) |
 | `serde` | no | Serialize/Deserialize | derives on `Style`, `Color`, `Theme`, layout types |
@@ -17,6 +19,23 @@ Load this when the user asks about feature flags, version-specific APIs, or doc 
 | `syntax` | no | All `syntax-*` combined | every language above |
 | `kitty-compress` | no | zlib-compressed kitty protocol | larger images, smaller payloads |
 | `full` | no | crossterm+async+serde+theme-watch+image+qrcode+kitty-compress+bidi | development / demos only; excludes syntax grammars |
+
+## Runtime defaults that change behavior
+
+- **Mouse is opt-in.** `RunConfig::default()` has `mouse: false`. Without `slt::run_with(RunConfig::default().mouse(true), ...)`, `clicked` / `hovered` / `right_clicked` / `double_clicked` / `scroll_delta`, scrollbar drag and split-pane drag never fire in a real terminal.
+- **Global shortcuts go after inputs.** Render `text_input` / `textarea` before checking `ui.key('q')`, or gate on the input's `Response.focused`; otherwise typed characters also trigger shortcuts.
+- **`ui.modal` does not trap focus.** It keeps `tab_trap: false`; `modal_with(ModalOptions::default(), ..)` traps.
+- **`RunConfig::handle_ctrl_c(true)`** is the default; pass `false` to receive Ctrl-C yourself.
+
+## v0.24 / v0.25 additions
+
+- `ScrollState::follow_focus: bool` (public field, default `true`) — scroll containers reveal the focused child, including nested axes and modal forms. Set `false` for app-controlled scrolling. `src/widgets/collections.rs`.
+- `Context::form_field_response(&mut FormField) -> FormFieldResponse` — `{ response, input, layout_rect: Option<Rect> }`, `Deref<Target = Response>`. `form_field` stays chainable. `src/context/widgets_display/layout.rs`, `src/widgets/responses.rs`.
+- `Context::focused_layout_rect() -> Option<Rect>` and `Context::measured_layout_rect(name) -> Option<Rect>` — previous-frame full border box before scroll/clip. `Response.rect` stays the clipped hit rect. `src/context/helpers.rs`.
+- `TestBackend::has_pending_input()` / `AppState::has_pending_input()` — input queued behind a Tab group for the next frame.
+- `TestBackend::advance_time(Duration)` — deterministic headless clock (ticks now advance per frame).
+- `Context::try_canvas(w, h, draw) -> Result<Response, CanvasError>`, `Context::canvas_with(&mut CanvasContext, draw)` — bounded / reusable canvas storage.
+- Browser runtime: `crates/slt-wasm` with `WasmOptions`; see `docs/WASM.md`.
 
 ## v0.20 API surface (highlights AI agents miss)
 
@@ -40,7 +59,7 @@ These shipped in v0.20 and are NOT in older docs. Every entry verified against `
 
 ### Hooks
 - `ui.use_state(\|\| init)` — order-based, see `src/context/runtime.rs`
-- `ui.use_state_named("id", \|\| init)` — `&'static str` + init fn
+- `ui.use_state_named("id", \|\| init)` — `&'static str` + init fn (two args)
 - `ui.use_state_named_default::<T>("id")` — `&'static str`, `T: Default`
 - `ui.use_state_keyed("id-{i}", \|\| init)` — runtime `String`
 - `ui.use_state_keyed_default::<T>("id-{i}")` — runtime `String` + `T: Default`
@@ -63,23 +82,23 @@ These shipped in v0.20 and are NOT in older docs. Every entry verified against `
 - `Theme::compact()` / `Theme::comfortable()` / `Theme::spacious()` — density variants of dark
 - `Theme::with_spacing(spacing)` — override Spacing on any theme
 - `ContainerBuilder::theme(theme)` — per-subtree theme override (no ambient state)
-- `ThemeBuilder` / `ThemeBuilder::builder_from(base)` — `const fn` since v0.19.2
+- `Theme::builder()` / `Theme::builder_from(base) -> ThemeBuilder` — `const fn` since v0.19.2
 
 ### Layout / DX (v0.20)
 - `ContainerBuilder::fill()` — equivalent to `.grow(1)`, more readable
 - `Rect::center_in(outer)`, `center_horizontally_in`, `center_vertically_in` — `src/rect.rs`
-- `Context::modal_with(ModalOptions { tab_trap: true }, \|ui\| ...)` — focus-trapped modal
+- `Context::modal_with(slt::context::ModalOptions { tab_trap: true }, \|ui\| ...)` — focus-trapped modal (plain `modal` does not trap)
 - `Context::static_log(...)` / `take_static_log()` — for `slt::run_static` scrollback
 
 ### Keymap (v0.20)
 - `WidgetKeyHelp` trait — implement on a state type to publish keybindings
 - `Context::publish_keymap(...)` / `published_keymaps()` — collect + render help
-- `Context::keymap_help_overlay()` — auto-rendered overlay
+- `Context::keymap_help_overlay(open: bool)` — auto-rendered overlay
 - `RunConfig::handle_ctrl_c(bool)` — opt-out of auto Ctrl-C quit
 
 ### Testing (v0.20)
-- `TestBackend::record_frames()` + `tb.frames()[i]` — frame history
-- `tb.sequence().tick(n).key(...).type_string(s, &mut value).run()`
+- `TestBackend::new(w, h).record_frames()` + `tb.frames()[i]` — frame history
+- `tb.sequence().tick(\|ui\| ..).key(KeyCode::Esc, \|ui\| ..).type_string("hi", \|ui\| ..).run()` — every step takes its render closure
 - `Buffer::snapshot_format()` — readable snapshot dump
 - `tb.assert_not_contains(s)`, `assert_line_not_contains`, `assert_empty_line(y)`, `assert_style_at(x, y, style)`
 
@@ -100,7 +119,7 @@ These were either v0.19 preview or pre-1.0 mistakes consolidated by the v0.20 AP
 
 ## Doc pointers (cross-check before relying on)
 
-These docs are maintained for v0.23, but source and compile-tested examples remain authoritative.
+These docs are maintained for the current release, but source and compile-tested examples remain authoritative.
 
 - `docs/COMPLETE_REFERENCE.md` — broad single-file reference.
 - `docs/WIDGETS.md` — categorized widget and state reference.
@@ -128,7 +147,7 @@ These docs are maintained for v0.23, but source and compile-tested examples rema
 ## Examples (`examples/` — 63 Rust files, 20 Cargo-listed targets)
 
 The skill's `SKILL.md` lists the canonical reference example for each domain. Highlights:
-- **v0.20 surface**: `v020_showcase.rs` (kitchen sink), `v020_tour.rs` (tabbed), `v020_dx_shortcuts.rs` (on_hover/animate_bool/fill)
+- **v0.20 surface**: `v020_tour.rs` (target `v020_tour`, tabbed over every `v020_*` demo), `v020_dx_shortcuts.rs` (on_hover/animate_bool/fill). `v020_showcase.rs` is not compiled by any target; do not use it as a reference.
 - **Cookbook recipes**: `cookbook_login.rs`, `cookbook_table.rs`, `cookbook_modal_toast.rs`, `cookbook_dashboard.rs`, `cookbook_file_picker.rs`, `cookbook_tour.rs`
 - **Composition**: `demo_website.rs` (provide/use_context), `tests/context_provider.rs` (8 unit tests)
 - **CJK / wide chars**: `demo_cjk.rs`
