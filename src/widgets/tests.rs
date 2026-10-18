@@ -60,7 +60,7 @@ fn toast_message_default_values() {
 fn list_state_default_values() {
     let state = ListState::default();
     assert!(state.is_empty());
-    assert_eq!(state.selected, 0);
+    assert_eq!(state.selected_view_index(), 0);
     assert_eq!(state.filter(), "");
     assert!(state.visible_indices().is_empty());
     assert_eq!(state.selected_item(), None);
@@ -117,7 +117,7 @@ fn table_state_default_values() {
     let state = TableState::default();
     assert!(state.headers().is_empty());
     assert!(state.is_empty());
-    assert_eq!(state.selected, 0);
+    assert_eq!(state.selected_view_index(), 0);
     assert_eq!(state.sort_column, None);
     assert!(state.sort_ascending);
     assert_eq!(state.filter(), "");
@@ -202,7 +202,7 @@ fn tabs_state_new_sets_labels() {
 fn list_state_new_selected_item_points_to_first_item() {
     let state = ListState::new(vec!["alpha", "beta"]);
     assert_eq!(state.items(), ["alpha", "beta"]);
-    assert_eq!(state.selected, 0);
+    assert_eq!(state.selected_view_index(), 0);
     assert_eq!(state.visible_indices(), &[0, 1]);
     assert_eq!(state.selected_item(), Some("alpha"));
 }
@@ -211,11 +211,11 @@ fn list_state_new_selected_item_points_to_first_item() {
 fn list_mutation_methods_keep_filter_cache_coherent() {
     let mut state = ListState::new(vec!["alpha", "beta", "alphabet"]);
     state.set_filter("alpha");
-    state.selected = 1;
+    assert!(state.set_selected_view_index(1));
 
     state.set_items(vec!["gamma"]);
     assert!(state.visible_indices().is_empty());
-    assert_eq!(state.selected, 0);
+    assert_eq!(state.selected_view_index(), 0);
 
     state.push_item("alpha-new");
     assert_eq!(state.visible_indices(), &[1]);

@@ -1,0 +1,32 @@
+# Real-terminal probe for the CI terminal jobs (issue #450).
+#
+# A standalone crate with its own `[workspace]` (same pattern as
+# `tests/fixtures/runtime_abort`) so the PTY-driver dependencies never enter the
+# main crate's dev-dependency graph, lockfile or `cargo deny` surface. Only the
+# `pty-driver` feature pulls `portable-pty` (ConPTY on Windows, openpty on
+# Unix) and `vt100` (a screen model for asserting what the pseudo-console
+# rendered); the probe binary itself depends on nothing but `superlighttui`.
+[package]
+name = "slt-terminal-probe"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "slt-terminal-probe"
+path = "src/main.rs"
+
+[[bin]]
+name = "slt-pty-smoke"
+path = "src/bin/pty_smoke.rs"
+required-features = ["pty-driver"]
+
+[features]
+pty-driver = ["dep:portable-pty", "dep:vt100"]
+
+[dependencies]
+superlighttui = { path = "../../.." }
+portable-pty = { version = "0.9", optional = true }
+vt100 = { version = "0.16", optional = true }

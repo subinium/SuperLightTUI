@@ -98,16 +98,8 @@ pub(crate) struct PointerState {
     pub shapes_prev: Vec<(usize, crate::PointerShape)>,
     /// Recycled buffer for this frame's pointer shapes.
     pub shapes_buf: Vec<(usize, crate::PointerShape)>,
-    /// Text cursor shape the last frame asked for (`None` = default).
-    pub cursor_wanted: Option<(crate::CursorShape, bool)>,
-    /// Text cursor shape last written to the terminal.
-    pub cursor_emitted: Option<(crate::CursorShape, bool)>,
     /// Pointer shape under the hover winner after the last frame.
     pub pointer_wanted: Option<crate::PointerShape>,
-    /// Pointer shape last written to the terminal.
-    pub pointer_emitted: Option<crate::PointerShape>,
-    /// `shape_restore_epoch` when the emitted shapes were last valid.
-    pub shape_epoch: u64,
 }
 
 impl PointerState {
@@ -202,8 +194,6 @@ pub(crate) struct PointerFrame {
     pub shapes_prev: Vec<(usize, crate::PointerShape)>,
     /// This frame's pointer shapes by interaction id.
     pub shapes: Vec<(usize, crate::PointerShape)>,
-    /// Text cursor shape requested this frame (#452).
-    pub cursor_request: Option<(crate::CursorShape, bool)>,
     /// Lazily computed gestures for this frame.
     gestures: OnceCell<Gestures>,
     /// Lazily resolved winner per entry of `presses`.
@@ -241,7 +231,6 @@ impl PointerFrame {
             last_motion: state.pointer.last_motion,
             shapes_prev: std::mem::take(&mut state.pointer.shapes_prev),
             shapes,
-            cursor_request: None,
             gestures: OnceCell::new(),
             targets: OnceCell::new(),
             hover_target: OnceCell::new(),
@@ -294,7 +283,6 @@ impl Context {
         } else if self.mouse_pos.is_none() {
             state.pointer.last_motion = None;
         }
-        state.pointer.cursor_wanted = self.pointer.cursor_request;
         state.pointer.pointer_wanted = hover.and_then(|id| self.inherited_pointer_shape(id));
         let pointer = &mut self.pointer;
         state.layout_feedback.prev_hit_meta = std::mem::take(&mut pointer.hit_meta);

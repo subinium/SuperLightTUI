@@ -3,7 +3,7 @@
 The `examples/` directory contains both runnable Cargo example targets and
 source-only demo modules that are composed into the tour binaries.
 
-`Cargo.toml` sets `autoexamples = false`, so only the 29 explicit
+`Cargo.toml` sets `autoexamples = false`, so only the 31 explicit
 `[[example]]` targets below can be run with `cargo run --example ...`.
 Running `cargo run --example <source-file-name>` for any other file in
 `examples/` fails with "no example target named ...". Every other file is a
@@ -46,6 +46,7 @@ a single demo.
 | `inline` | `cargo run --example inline` | - | Inline mode: a fixed-height TUI below the shell prompt (`run_inline`) |
 | `async_demo` | `cargo run --example async_demo --features async` | `async` | Background tokio task feeding messages into the UI (`run_async`) |
 | `error_boundary_demo` | `cargo run --example error_boundary_demo` | - | Catch a panicking child closure with `error_boundary` |
+| `diff_viewer` | `cargo run --example diff_viewer` | `syntax-rust` optional | Review a multi-file patch: unified / split diff, collapse hunks, accept or reject each hunk (`diff`) |
 
 ## Tour Binaries
 
@@ -90,6 +91,7 @@ Derived from the `#[path = ...]` includes in each tour file.
 | `demo_game` | `cargo run --example demo_game` | - | Tetris, snake, and minesweeper |
 | `demo_kitty_image` | `cargo run --example demo_kitty_image` | - | Kitty graphics image gallery in a scroll view |
 | `demo_raw_draw` | `cargo run --example demo_raw_draw` | - | `ContainerBuilder::draw` raw buffer primitives |
+| `ratatui_bridge` | `cargo run --example ratatui_bridge --features ratatui` | `ratatui` | Stock ratatui widgets rendered inside SLT containers, including a scrolled region |
 
 ## Diagnostics And Development Tools
 

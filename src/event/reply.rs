@@ -139,6 +139,19 @@ fn is_reply(bytes: &[u8]) -> bool {
         {
             return numeric_fields(state);
         }
+        // Kitty keyboard flags reply (`CSI ? <flags> u`, issue #448).
+        if let Some(flags) = body
+            .strip_prefix('?')
+            .and_then(|body| body.strip_suffix('u'))
+        {
+            return !flags.is_empty() && flags.bytes().all(|b| b.is_ascii_digit());
+        }
+        // Cursor-position report from the width probe (`CSI r ; c R`, #449).
+        // The probe never measures on row 1, so `CSI 1 ; <mods> R` stays a
+        // legacy modified F3 key.
+        if let Some((row, col)) = body.strip_suffix('R').and_then(|f| f.split_once(';')) {
+            return row != "1" && numeric_fields(row) && !col.contains(';') && numeric_fields(col);
+        }
         return false;
     }
     let body = text

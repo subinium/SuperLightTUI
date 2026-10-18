@@ -88,9 +88,9 @@ impl GeometryFeedback {
             && let Some(offset) = text.cursor_offset
             && let Some(content) = text.content.as_deref()
             && !node.wrap
-            && !(node.truncate && UnicodeWidthStr::width(content) > node.size.0 as usize)
+            && !(node.truncate && crate::width::str_width(content) > node.size.0 as usize)
         {
-            let width = u32::try_from(UnicodeWidthStr::width(content)).unwrap_or(u32::MAX);
+            let width = u32::try_from(crate::width::str_width(content)).unwrap_or(u32::MAX);
             let align = match node.align {
                 Align::Start => 0,
                 Align::Center => node.size.0.saturating_sub(width) / 2,
@@ -99,7 +99,7 @@ impl GeometryFeedback {
             let cursor = content
                 .graphemes(true)
                 .take(offset)
-                .map(|part| u32::try_from(UnicodeWidthStr::width(part)).unwrap_or(u32::MAX))
+                .map(|part| u32::try_from(crate::width::str_width(part)).unwrap_or(u32::MAX))
                 .fold(0u32, u32::saturating_add);
             if let Some(Some(target)) = self.focus.get_mut(id) {
                 target.caret = Some(Rect::new(

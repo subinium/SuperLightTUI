@@ -162,6 +162,9 @@ pub(crate) fn run_frame_kernel(
     is_real_terminal: bool,
     f: &mut impl FnMut(&mut context::Context),
 ) -> FrameKernelResult {
+    // Issue #449: every width measurement in this frame (buffer, layout,
+    // wrapping, truncation) follows the configured ambiguous-width rule.
+    crate::width::set_ambiguous_wide(config.ambiguous_wide);
     let events = input_frame(state, events);
     let frame_start = Instant::now();
     let now = state.diagnostics.clock_override.unwrap_or(frame_start);
@@ -233,6 +236,7 @@ pub(crate) fn run_frame_kernel(
     }
     ctx.process_focus_keys();
     ctx.finish_screen_focus();
+    ctx.finish_focus_identity(&mut state.focus);
     ctx.render_notifications();
     ctx.emit_pending_tooltips();
 
@@ -348,13 +352,15 @@ pub(crate) fn run_frame_kernel(
     ctx.claim_draggable_presses();
     #[cfg(feature = "crossterm")]
     let should_copy_selection = {
+        // Issue #465: a text widget that owns this pointer gesture keeps the
+        // screen-level overlay out of it (the disabled tracker clears it).
         let selection = terminal::track_selection(
             &mut state.selection,
             &ctx.events,
             &ctx.consumed,
             &state.layout_feedback.prev_content_map,
             terminal::ScrollView::new(&ctx.prev_geometry, &ctx.prev_scroll_rects, size.1),
-            config.text_selection,
+            config.text_selection && !ctx.text_pointer_capture,
         );
         // #445: edge auto-scroll applies at the region's next binding.
         state.pointer.selection_autoscroll = selection.autoscroll;
@@ -640,84 +646,63 @@ pub(crate) fn run_frame(
             ),
         );
     }
-    #[cfg(feature = "crossterm")]
-    if terminal_side_effects && kernel.should_copy_selection {
-        let text = terminal::extract_selection_text_in(
-            term.buffer_mut(),
-            &state.selection,
-            &state.layout_feedback.prev_content_map,
-            terminal::ScrollView::new(
-                &state.layout_feedback.geometry,
-                &state.layout_feedback.prev_scroll_rects,
-                size.1,
-            ),
-        );
-        if !text.is_empty() {
-            term.write_clipboard(&text)?;
-        }
-        state.selection.clear();
-    }
-
-    // #452: cursor (DECSCUSR) and pointer (OSC 22) shapes, only on change.
+    // Issues #446 / #468: clipboard writes and terminal metadata are staged
+    // for the backend flush, which writes them into its own sink and records
+    // the clipboard outcome instead of printing over the UI.
     #[cfg(feature = "crossterm")]
     if terminal_side_effects {
-        emit_shape_requests(term, state, config)?;
+        let mut effects = terminal::FrameEffects::default();
+        if kernel.should_copy_selection {
+            let text = terminal::extract_selection_text_in(
+                term.buffer_mut(),
+                &state.selection,
+                &state.layout_feedback.prev_content_map,
+                terminal::ScrollView::new(
+                    &state.layout_feedback.geometry,
+                    &state.layout_feedback.prev_scroll_rects,
+                    size.1,
+                ),
+            );
+            if !text.is_empty() {
+                effects.clipboard.push(text);
+            }
+            state.selection.clear();
+        }
+        effects.clipboard.extend(kernel.clipboard_text);
+        effects.meta = context::terminal_meta(&state.named_states)
+            .cloned()
+            .unwrap_or_default();
+        if effects.meta.title.is_none() {
+            effects.meta.title.clone_from(&config.title);
+        }
+        // #452: OSC 22 pointer shape under the hover winner (opt-in).
+        effects.meta.pointer_shape = if config.pointer_shapes {
+            state
+                .pointer
+                .pointer_wanted
+                .filter(|shape| *shape != crate::PointerShape::Default)
+        } else {
+            None
+        };
+        effects.clipboard_options = terminal::ClipboardOptions {
+            passthrough: config.clipboard_passthrough,
+            max_bytes: config.clipboard_max_bytes,
+        };
+        terminal::stage_frame_effects(effects);
     }
+    // A clipboard status is visible to exactly one frame.
+    context::store_clipboard_status(&mut state.named_states, None);
 
     let flush_start = Instant::now();
     term.flush()?;
     state.diagnostics.flush_duration = flush_start.elapsed();
     #[cfg(feature = "crossterm")]
-    if terminal_side_effects && let Some(text) = kernel.clipboard_text {
-        #[allow(clippy::print_stderr)]
-        if let Err(e) = term.write_clipboard(&text) {
-            eprintln!("[slt] failed to copy to clipboard: {e}");
-        }
+    if terminal_side_effects && let Some(status) = terminal::take_clipboard_status() {
+        context::store_clipboard_status(&mut state.named_states, Some(status));
     }
     state.diagnostics.tick = state.diagnostics.tick.wrapping_add(1);
 
     Ok(true)
-}
-
-/// Write the cursor and pointer shapes the last frame asked for, when they
-/// differ from what the terminal shows (#452).
-#[cfg(feature = "crossterm")]
-fn emit_shape_requests(
-    term: &mut impl Backend,
-    state: &mut FrameState,
-    config: &RunConfig,
-) -> io::Result<()> {
-    let pointer = &mut state.pointer;
-    // A session restore (Ctrl+Z suspend) put the default shapes back; what
-    // the terminal shows no longer matches what we last wrote.
-    let epoch = terminal::shape_restore_epoch();
-    if epoch != pointer.shape_epoch {
-        pointer.shape_epoch = epoch;
-        pointer.cursor_emitted = None;
-        pointer.pointer_emitted = None;
-    }
-    if pointer.cursor_wanted != pointer.cursor_emitted {
-        let code = pointer
-            .cursor_wanted
-            .map_or(0, |(shape, blink)| shape.decscusr(blink));
-        term.write_terminal_sequence(&format!("\x1b[{code} q"))?;
-        pointer.cursor_emitted = pointer.cursor_wanted;
-        terminal::note_cursor_shape_written(pointer.cursor_wanted.is_some());
-    }
-    let wanted = if config.pointer_shapes {
-        pointer
-            .pointer_wanted
-            .filter(|shape| *shape != crate::PointerShape::Default)
-    } else {
-        None
-    };
-    if wanted != pointer.pointer_emitted {
-        let name = wanted.map_or("default", crate::PointerShape::css_name);
-        term.write_terminal_sequence(&format!("\x1b]22;{name}\x1b\\"))?;
-        pointer.pointer_emitted = wanted;
-        terminal::note_pointer_shape_written(wanted.is_some());
-    }
-    Ok(())
 }
 
 pub(crate) fn clear_frame_layout_cache(state: &mut FrameState) {

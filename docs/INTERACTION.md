@@ -237,11 +237,10 @@ hover after that long without motion.
 
 ### Cursor and pointer shapes
 
-`ui.set_cursor_shape(CursorShape::Bar, true)` asks for a text cursor shape
-(DECSCUSR) for the current frame, for example while your own input is
-focused; a frame without a request returns to the terminal default. Pointer
-shapes follow CSS `cursor` and are opt-in because terminals without OSC 22
-support may print the payload:
+`ui.set_cursor_shape(CursorShape::SteadyBar)` sets the text cursor shape
+(DECSCUSR); it persists until changed and is reset on exit. Pointer shapes
+follow CSS `cursor` and are opt-in because terminals without OSC 22 support
+may print the payload:
 
 <!-- slt-check: {"name":"ix_pointer_shape","features":[],"context":"ui"} -->
 ```rust
@@ -330,7 +329,9 @@ split handle, a scrollbar thumb, or any other widget keeps SLT's selection
 overlay idle until the release, so dragging a control never highlights text
 or overwrites the clipboard. For your own drags built on `Response::dragging`
 and `drag_delta`, mark the handle `.draggable()` (HTML `draggable`, CSS
-`user-select: none`) so pressing it does not also select text. Apps with their own drag or selection model can
+`user-select: none`) so pressing it does not also select text. Drags inside
+a `text_input` / `textarea` select text in the field instead and never start
+the overlay. Apps with their own drag or selection model can
 turn the built-in selection off entirely with
 `RunConfig::default().text_selection(false)`.
 
@@ -535,37 +536,74 @@ goes only to the innermost slot under the pointer, so it is never reported
 twice. And collapsing a block above the viewport does not move what you are
 reading: scroll anchoring adjusts the offset by the rows that disappeared.
 
+## Selecting and copying text in fields
+
+A focused `text_input` or `textarea` supports the usual editing selection:
+Shift + arrows / Home / End (Shift+Ctrl or Shift+Alt + Left/Right by word),
+Ctrl+A to select all, and with mouse capture press-drag, double-click (word)
+and triple-click (whole input, or the line in a `textarea`). Typing or
+pasting replaces the selection as one undo step, Backspace / Delete remove
+it, Ctrl+C copies and Ctrl+X cuts through OSC 52, and Ctrl+Z / Ctrl+Y undo and
+redo. Read or set it from code with `state.selection()`,
+`state.selected_text()`, `state.select_all()`, `state.set_selection(..)` and
+`state.clear_selection()`.
+
+- Masked inputs never put plaintext on the clipboard.
+- Ctrl+C without a selection stays an app shortcut. The default `RunConfig`
+  quits on Ctrl+C before your closure runs, so enable
+  `handle_ctrl_c(false)` if users should be able to copy.
+- The highlight uses `Theme::selection_bg` when set, otherwise
+  `selected_bg` / `selected_fg`.
+
 ## Keyboard focus and shortcuts
 
 - Tab / Shift+Tab cycle focus through focusable widgets in render order.
 - Enter / Space activate a focused button, checkbox, accordion, and similar.
 - `ui.register_focusable_named("search")` + `ui.focus_by_name("search")` move
   focus programmatically.
+- Focus follows the widget, not its position: when a focusable appears or
+  disappears before the focused `text_input` / `textarea` / form field / named
+  slot, focus stays on that widget (like a browser element). Custom widgets
+  opt in with `ui.register_focusable_keyed(key)`; plain
+  `ui.register_focusable()` slots, buttons and other stateless widgets remain
+  positional. If the focused widget itself goes away, focus moves to the
+  nearest remaining slot on the next frame.
 
-**Check global shortcuts after rendering widgets.** `ui.key(..)` and
-`ui.key_code(..)` only see events nobody has consumed *yet*, and a focused
-`text_input` consumes the characters typed into it while it renders:
+**Focused text fields own their keys.** While a `text_input`, `textarea`,
+form field or open command palette has focus, `ui.key(..)`, `ui.key_code(..)`,
+`ui.key_mod(..)`, `ui.consume_key*(..)` and `ui.shortcut(..)` skip the keys it
+edits with: printable characters without Ctrl / Super / Meta, Backspace,
+Delete, Left, Right, Home and End (plus Enter, Up and Down for `textarea`).
+The rule does not depend on call order, so shortcut checks can sit anywhere in
+the closure:
 
 <!-- slt-check: {"name":"ix_shortcut_order","features":[],"context":"ui"} -->
 ```rust
 let mut search = TextInputState::with_placeholder("Search...");
 
-// Wrong: checked before the input renders, so typing "q" into the field
-// also triggers the shortcut.
-// if ui.key('q') { ui.quit(); }
-
-let _ = ui.text_input(&mut search);
-
-// Right: only keys the input did not consume reach this check.
-if ui.key('q') || ui.key_code(KeyCode::Esc) {
+// Safe before the input: typing "q" into the focused field inserts it and
+// does not quit. Esc and Ctrl chords still reach the checks.
+if ui.shortcut(KeyCode::Char('q'), KeyModifiers::NONE) || ui.key_code(KeyCode::Esc) {
     ui.quit();
 }
+if ui.shortcut(KeyCode::Char('s'), KeyModifiers::CONTROL) {
+    // save
+}
+
+let _ = ui.text_input(&mut search);
 ```
+
+Ownership is decided by the slot that holds focus as the frame starts (or a
+text slot focused earlier in the same frame). A click that moves focus to a
+button releases the keys in the same event batch; on an app's very first
+frame nothing owns them yet. `ui.shortcut` matches modifiers exactly (Shift is
+ignored for characters).
 
 To claim a key so nothing later sees it, use `ui.consume_key(c)` or
 `ui.consume_key_code(code)`. While a modal is open, `ui.key(..)` outside the
-modal returns `false`; `ui.raw_key_code(..)` and `ui.raw_key_mod(..)` ignore
-modal state for truly global shortcuts.
+modal returns `false`. `ui.raw_key(..)`, `ui.raw_key_code(..)` and
+`ui.raw_key_mod(..)` ignore both modal state and text focus for truly global
+shortcuts.
 
 Ctrl+C quits by default (`RunConfig::handle_ctrl_c(false)` hands it to your
 closure), and on Unix Ctrl+Z suspends cleanly (`handle_suspend(false)` turns
@@ -690,7 +728,11 @@ These are current behaviors, not misuse. Design around them for now.
 
 1. **Emoji width disagreements.** Some multiplexers and terminals measure ZWJ
    sequences, skin-tone modifiers, and VS16 emoji differently from SLT, which
-   can leave artifacts on that row.
+   can leave artifacts on that row. `RunConfig::width_conservative` /
+   `width_probe` resolve which clusters are uncertain, but the explicit cursor
+   reposition in the diff flush lands with #441. For CJK terminals set to wide
+   ambiguous characters, `RunConfig::ambiguous_wide(true)` already matches
+   `→±①` widths.
 2. **Missing primitives.** No disabled or active (pressed) widget states and
    no context-menu widget (use `right_clicked` plus your own overlay).
 3. **Off-screen selection text is not copied.** A selection that extends past

@@ -122,7 +122,14 @@ pub struct RunConfig {
     ///
     /// When `true`, enables disambiguated key events, key release events,
     /// and modifier-only key reporting on supporting terminals (kitty, Ghostty, WezTerm).
-    /// Terminals that don't support it silently ignore the request.
+    ///
+    /// On a directly attached terminal that answers startup queries, SLT asks
+    /// for support with `CSI ? u` first and pushes the protocol only when the
+    /// terminal confirms it ([`Capabilities::kitty_keyboard`](crate::Capabilities::kitty_keyboard)).
+    /// Where startup queries are skipped (Windows, zellij, unidentified PTYs)
+    /// the push follows the multiplexer policy alone; tmux and GNU screen never
+    /// receive it. `SLT_FORCE_KITTY_KEYBOARD=1` pushes regardless of the probe
+    /// and `SLT_DISABLE_KITTY_KEYBOARD=1` never pushes.
     /// Defaults to `false`.
     pub kitty_keyboard: bool,
     /// Whether to request modifier-only key events (bare Ctrl/Shift/Alt/Super
@@ -271,6 +278,29 @@ pub struct RunConfig {
     /// Ghostty, recent xterm). The default pointer is restored on exit, in the
     /// panic hook and on suspend. Since 0.26.0.
     pub pointer_shapes: bool,
+    /// Wrap `OSC 52` clipboard writes for tmux / GNU screen passthrough.
+    ///
+    /// See [`clipboard_passthrough`](Self::clipboard_passthrough). Defaults to
+    /// `false`.
+    pub clipboard_passthrough: bool,
+    /// Largest UTF-8 payload, in bytes, sent through `OSC 52`.
+    ///
+    /// See [`clipboard_max_bytes`](Self::clipboard_max_bytes). Defaults to
+    /// [`RunConfig::DEFAULT_CLIPBOARD_MAX_BYTES`].
+    pub clipboard_max_bytes: usize,
+    /// Treat East Asian Ambiguous characters (`→`, `±`, `①`) as two columns.
+    ///
+    /// See [`ambiguous_wide`](Self::ambiguous_wide). Defaults to `false`.
+    pub ambiguous_wide: bool,
+    /// Width-conservative flushing for emoji clusters terminals measure
+    /// differently. `None` (the default) enables it automatically under
+    /// tmux, GNU screen and zellij, or after a width probe mismatch.
+    ///
+    /// See [`width_conservative`](Self::width_conservative).
+    pub width_conservative: Option<bool>,
+    /// Measure representative emoji clusters with a startup cursor-position
+    /// probe. See [`width_probe`](Self::width_probe). Defaults to `false`.
+    pub width_probe: bool,
 }
 
 impl Default for RunConfig {
@@ -294,11 +324,21 @@ impl Default for RunConfig {
             tooltip_delay: Duration::from_millis(500),
             hover_timeout: None,
             pointer_shapes: false,
+            clipboard_passthrough: false,
+            clipboard_max_bytes: Self::DEFAULT_CLIPBOARD_MAX_BYTES,
+            ambiguous_wide: false,
+            width_conservative: None,
+            width_probe: false,
         }
     }
 }
 
 impl RunConfig {
+    /// Default [`clipboard_max_bytes`](Self::clipboard_max_bytes): 74,994
+    /// bytes, which keeps the base64 payload under 100,000 bytes, the limit
+    /// hterm and common OSC 52 helpers enforce.
+    pub const DEFAULT_CLIPBOARD_MAX_BYTES: usize = 74_994;
+
     /// Set the tick rate (input polling interval).
     pub fn tick_rate(mut self, rate: Duration) -> Self {
         self.tick_rate = rate;
@@ -553,6 +593,100 @@ impl RunConfig {
     /// ```
     pub fn pointer_shapes(mut self, enabled: bool) -> Self {
         self.pointer_shapes = enabled;
+        self
+    }
+
+    /// Wrap `OSC 52` clipboard writes so they pass through a multiplexer.
+    ///
+    /// Inside tmux the sequence is sent as `ESC P tmux; … ESC \` with every
+    /// inner `ESC` doubled, which requires `set -g allow-passthrough on`.
+    /// Inside GNU screen it is split into DCS chunks. Elsewhere the bytes are
+    /// unchanged. Off by default: passthrough bypasses the multiplexer's own
+    /// clipboard handling and its security settings. Without it, tmux needs
+    /// `set -g set-clipboard on` to forward copies to the outer terminal.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// let cfg = slt::RunConfig::default().clipboard_passthrough(true);
+    /// assert!(cfg.clipboard_passthrough);
+    /// ```
+    pub fn clipboard_passthrough(mut self, enabled: bool) -> Self {
+        self.clipboard_passthrough = enabled;
+        self
+    }
+
+    /// Set the largest UTF-8 payload, in bytes, sent through `OSC 52`.
+    ///
+    /// Larger copies are not written and surface as
+    /// [`ClipboardStatus::TooLarge`](crate::ClipboardStatus::TooLarge) through
+    /// [`Context::clipboard_status`](crate::Context::clipboard_status).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// let cfg = slt::RunConfig::default().clipboard_max_bytes(1 << 20);
+    /// assert_eq!(cfg.clipboard_max_bytes, 1 << 20);
+    /// ```
+    pub fn clipboard_max_bytes(mut self, bytes: usize) -> Self {
+        self.clipboard_max_bytes = bytes;
+        self
+    }
+
+    /// Treat East Asian Ambiguous characters as two columns wide.
+    ///
+    /// Match this to a CJK-locale terminal configured with "ambiguous width =
+    /// wide" so `→±①` lays out as six columns in the buffer, wrapping and
+    /// truncation. Defaults to `false` (one column, the Unicode default).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// let cfg = slt::RunConfig::default().ambiguous_wide(true);
+    /// assert!(cfg.ambiguous_wide);
+    /// ```
+    pub fn ambiguous_wide(mut self, enabled: bool) -> Self {
+        self.ambiguous_wide = enabled;
+        self
+    }
+
+    /// Force width-conservative flushing on or off.
+    ///
+    /// In conservative mode the flush positions the cursor explicitly after
+    /// every width-uncertain cluster (ZWJ sequences, skin-tone modifiers,
+    /// flags, VS16 and other non-BMP emoji) so a terminal that advances by a
+    /// different amount cannot shift the rest of the row. By default it is on
+    /// under tmux, GNU screen and zellij and after a
+    /// [`width_probe`](Self::width_probe) mismatch, and off otherwise.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// let cfg = slt::RunConfig::default().width_conservative(true);
+    /// assert_eq!(cfg.width_conservative, Some(true));
+    /// ```
+    pub fn width_conservative(mut self, enabled: bool) -> Self {
+        self.width_conservative = Some(enabled);
+        self
+    }
+
+    /// Measure emoji cluster widths at startup.
+    ///
+    /// Fullscreen runs on a directly attached terminal that answers startup
+    /// queries print a VS16, ZWJ, skin-tone and flag sample on the alternate
+    /// screen, read the cursor position (`CSI 6 n`) after each, and erase the
+    /// row. A class whose advance differs from SLT's measurement enables
+    /// width-conservative flushing. Skipped on Windows, under multiplexers,
+    /// in inline mode and when queries are disabled. Defaults to `false`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// let cfg = slt::RunConfig::default().width_probe(true);
+    /// assert!(cfg.width_probe);
+    /// ```
+    pub fn width_probe(mut self, enabled: bool) -> Self {
+        self.width_probe = enabled;
         self
     }
 }

@@ -31,6 +31,7 @@ For the canonical API surface, also check docs.rs and `src/lib.rs`.
 | `syntax` | Convenience: enables all per-language `syntax-*` bundles below |
 | `syntax-*` | Per-language syntax bundles such as `syntax-rust`, `syntax-python`, `syntax-typescript` |
 | `kitty-compress` | zlib compression for Kitty image protocol uploads |
+| `ratatui` | Render ratatui widgets inside SLT containers: `ContainerBuilder::ratatui` (closure over a ratatui `Rect` + `Buffer`) / `ratatui_widget(widget)` plus `From` conversions for `Color`, `Modifiers` and `Style`. Adds only `ratatui-core` 0.1 (ratatui 0.30), no ratatui backend; not part of `full`. Render-only — see `slt::ratatui_compat` for clipping and lossy style rules |
 | `pty-test` | Development-only in-process PTY backend contract tests; not part of `full` |
 | `full` | Convenience bundle: enables `crossterm`, `async`, `serde`, `theme-watch`, `image`, `qrcode`, `kitty-compress`, and `bidi` (does **not** include `syntax` — add language bundles separately) |
 
@@ -60,15 +61,33 @@ default. Reply collection is synchronous and nonblocking/pollable; after every
 responsive, partial, or silent deadline, no background stdin reader remains to
 consume application input.
 
-- Set `SLT_DISABLE_TERMINAL_QUERIES=1` to disable all terminal queries.
-- Set `SLT_FORCE_TERMINAL_QUERIES=1` to opt in on an otherwise skipped host.
-- Protocol-specific force/disable pairs are `SLT_FORCE_SYNC_OUTPUT` /
-  `SLT_DISABLE_SYNC_OUTPUT`, `SLT_FORCE_KITTY` / `SLT_DISABLE_KITTY`,
-  `SLT_FORCE_SIXEL` / `SLT_DISABLE_SIXEL`, `SLT_FORCE_ITERM` /
-  `SLT_DISABLE_ITERM`, and `SLT_FORCE_KITTY_KEYBOARD` /
-  `SLT_DISABLE_KITTY_KEYBOARD`.
-- Disable flags take precedence when both forms are set.
-- Zellij enables Sixel and Kitty keyboard by default; other multiplexer
+The startup probe sends DA1/DA2 (with the Kitty keyboard query `CSI ? u` in
+the same write), the Kitty graphics query, XTGETTCAP `Tc`, and DECRQM 2026.
+Its results feed color depth (a `Tc` reply selects 24-bit color), the Kitty
+keyboard push (pushed only after a `CSI ? u` reply), and the image ladder.
+The optional width probe (`RunConfig::width_probe(true)`) adds four cursor
+position reports on fullscreen direct terminals.
+
+| Variable | Effect |
+|----------|--------|
+| `NO_COLOR` | Any non-empty value disables color unless `RunConfig::color_depth` is set |
+| `COLORTERM` | `truecolor` / `24bit` selects 24-bit color |
+| `TERM` | `dumb` disables queries, color, and title / progress / status / cursor-shape sequences; `256color` selects 256 colors; identity (`xterm-kitty`, `xterm-ghostty`, `wezterm` select 24-bit color) |
+| `TERM_PROGRAM` / `TERM_PROGRAM_VERSION` | Identity: `iTerm.app`, `WezTerm`, `ghostty`, `vscode` select 24-bit color; `ghostty` and `iTerm.app` 3.6+ receive OSC 9;4 progress |
+| `WT_SESSION` / `ConEmuANSI=ON` | Windows Terminal / ConEmu: OSC 9;4 progress (Windows Terminal also 24-bit color) |
+| `SLT_DISABLE_TERMINAL_QUERIES` / `SLT_FORCE_TERMINAL_QUERIES` | Disable all terminal queries / opt in on an otherwise skipped host |
+| `SLT_DISABLE_SYNC_OUTPUT` / `SLT_FORCE_SYNC_OUTPUT` | Synchronized output |
+| `SLT_DISABLE_KITTY` / `SLT_FORCE_KITTY` | Kitty graphics |
+| `SLT_DISABLE_SIXEL` / `SLT_FORCE_SIXEL` | Sixel graphics |
+| `SLT_DISABLE_ITERM` / `SLT_FORCE_ITERM` | iTerm2 inline images |
+| `SLT_DISABLE_KITTY_KEYBOARD` / `SLT_FORCE_KITTY_KEYBOARD` | Kitty keyboard protocol; force also pushes without a `CSI ? u` reply |
+| `SLT_DISABLE_PROGRESS` / `SLT_FORCE_PROGRESS` | OSC 9;4 taskbar progress |
+| `SLT_DISABLE_PROGRAM_STATUS` / `SLT_FORCE_PROGRAM_STATUS` | OSC 7501 program status |
+
+- `SLT_*` flags accept `1`, `true`, `yes`, or `on`. Disable flags take
+  precedence when both forms are set.
+- Zellij enables Sixel and Kitty keyboard by default (the keyboard push is
+  policy-only there because queries are skipped); other multiplexer
   protocols remain conservative unless explicitly forced.
 
 See `docs/BACKENDS.md` for the full direct-terminal, multiplexer, SSH, and PTY

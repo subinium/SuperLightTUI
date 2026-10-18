@@ -615,8 +615,12 @@ Output bytes per frame:
   border write goes through the grapheme path (`set_grapheme_visual`) and
   re-normalizes its symbol. `build_tree`, flexbox `compute`,
   and `collect_all` together are about 1%. Layout is not the bottleneck.
-- **Full-collection widgets.** `ui.list` and `ui.table` do work and
-  allocate per item, not per visible row (see §2).
+- **Full-collection widgets (fixed in 0.26, #487).** At `15fd63a`
+  `ui.list` and `ui.table` did work and allocated per item, not per
+  visible row (see §2). They now build only the rows that fit: on the same
+  harness the 10k list takes ~255 µs (109 allocations, 56 KB per frame)
+  and the unpaged 1000×6 table ~600 µs (129 allocations, 60 KB) against
+  ratatui's ~645 µs and ~1,035 µs.
 
 Optimization work is tracked in the performance issues linked from the
 audit tracker. Until it lands, do not describe SLT as faster than ratatui.
@@ -669,10 +673,11 @@ The `dhat-heap.json` output opens in
 ## 7. Anti-patterns to avoid
 
 - **Calling widgets inside a `for` loop with thousands of items** — use
+  `ui.list(&mut state)` for plain rows or
   `ui.virtual_list(&mut state, visible_height, |ui, idx| {...})` from
-  `src/context/widgets/collections/list.rs` instead of
-  `ui.list(&mut state)`. `virtual_list` only renders rows in the visible
-  window; a 100k-item list pays for the visible 50 rows, not all 100k.
+  `src/context/widgets/collections/list.rs` for custom rows. Both only
+  render rows in the visible window; a 100k-item list pays for the
+  visible 50 rows, not all 100k.
 - **Heavy derivation on every frame** — cache results in
   `ui.use_memo(deps, |d| ...)` from `src/context/runtime.rs`. The
   closure runs only when `deps` changes by `PartialEq`.

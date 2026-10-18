@@ -122,10 +122,91 @@ pub(crate) fn base64_encode(input: &[u8]) -> String {
     out
 }
 
+/// Write a bare `OSC 52` clipboard sequence (no multiplexer wrapping, no
+/// size cap) and flush.
+#[cfg(test)]
 pub(crate) fn copy_to_clipboard(w: &mut impl Write, text: &str) -> io::Result<()> {
-    let encoded = base64_encode(text.as_bytes());
-    write!(w, "\x1b]52;c;{encoded}\x1b\\")?;
+    w.write_all(&osc52_sequence(text, None, false))?;
     w.flush()
+}
+
+/// Clipboard delivery options taken from [`crate::RunConfig`] (issue #446).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ClipboardOptions {
+    pub(crate) passthrough: bool,
+    pub(crate) max_bytes: usize,
+}
+
+impl Default for ClipboardOptions {
+    fn default() -> Self {
+        Self {
+            passthrough: false,
+            max_bytes: crate::RunConfig::DEFAULT_CLIPBOARD_MAX_BYTES,
+        }
+    }
+}
+
+/// GNU screen truncates string sequences; chunk the passthrough payload.
+pub(super) const SCREEN_DCS_CHUNK: usize = 76;
+
+/// Encode `text` as an `OSC 52` clipboard write, wrapped for multiplexer
+/// passthrough when `passthrough` is set and a tmux / screen session is
+/// detected. zellij and direct terminals always receive the bare sequence.
+pub(super) fn osc52_sequence(
+    text: &str,
+    multiplexer: Option<MultiplexerKind>,
+    passthrough: bool,
+) -> Vec<u8> {
+    let encoded = base64_encode(text.as_bytes());
+    match (passthrough, multiplexer) {
+        (true, Some(MultiplexerKind::Tmux)) => {
+            // `ESC P tmux; <inner, every ESC doubled> ESC \`
+            let inner = format!("\x1b]52;c;{encoded}\x1b\\");
+            let mut out = Vec::with_capacity(inner.len() + 12);
+            out.extend_from_slice(b"\x1bPtmux;");
+            for byte in inner.bytes() {
+                if byte == 0x1b {
+                    out.push(0x1b);
+                }
+                out.push(byte);
+            }
+            out.extend_from_slice(b"\x1b\\");
+            out
+        }
+        (true, Some(MultiplexerKind::Screen)) => {
+            // The inner OSC must end in BEL: an inner ST would close the DCS.
+            let inner = format!("\x1b]52;c;{encoded}\x07");
+            let mut out = Vec::with_capacity(inner.len() + inner.len() / 16 + 8);
+            for chunk in inner.as_bytes().chunks(SCREEN_DCS_CHUNK) {
+                out.extend_from_slice(b"\x1bP");
+                out.extend_from_slice(chunk);
+                out.extend_from_slice(b"\x1b\\");
+            }
+            out
+        }
+        _ => format!("\x1b]52;c;{encoded}\x1b\\").into_bytes(),
+    }
+}
+
+/// Write one clipboard payload and report the outcome instead of failing the
+/// frame (issue #446). Payloads over `options.max_bytes` are not written.
+pub(super) fn write_clipboard(
+    w: &mut impl Write,
+    text: &str,
+    options: ClipboardOptions,
+    multiplexer: Option<MultiplexerKind>,
+) -> crate::ClipboardStatus {
+    if text.len() > options.max_bytes {
+        return crate::ClipboardStatus::TooLarge {
+            bytes: text.len(),
+            max: options.max_bytes,
+        };
+    }
+    let bytes = osc52_sequence(text, multiplexer, options.passthrough);
+    match w.write_all(&bytes).and_then(|()| w.flush()) {
+        Ok(()) => crate::ClipboardStatus::Sent,
+        Err(error) => crate::ClipboardStatus::WriteFailed(error.kind()),
+    }
 }
 
 #[cfg(feature = "crossterm")]

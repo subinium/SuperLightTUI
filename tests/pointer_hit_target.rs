@@ -283,7 +283,7 @@ fn error_boundary_rollback_drops_the_panicking_subtrees_hit_flags() {
     // subtree leaked its flag to the fallback widget reusing the slot id.
     let mut tb = TestBackend::new(30, 4);
     let mut clicks = 0;
-    let mut view = |ui: &mut Context, clicks: &mut u32| {
+    let view = |ui: &mut Context, clicks: &mut u32| {
         ui.error_boundary_with(
             |ui| {
                 let _ = ui.overlay(|ui| {

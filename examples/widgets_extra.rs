@@ -277,10 +277,10 @@ fn render_feed(ui: &mut Context, state: &mut DemoState) {
                 // ListState::with_item_heights so a 4-row code block and a
                 // 1-row reply pack correctly into the viewport. Snapshot the
                 // cursor before the call — the closure borrows `feed` mutably.
-                let cursor = state.feed.selected;
+                let cursor = state.feed.selected_index();
                 let _ = ui.virtual_list_variable(&mut state.feed, 8, |ui, idx| {
                     let (text, _h) = FEED[idx];
-                    let selected = idx == cursor;
+                    let selected = Some(idx) == cursor;
                     let marker = if selected { "▸ " } else { "  " };
                     let color = if selected { Color::Cyan } else { Color::Reset };
                     // Multi-line bubbles render each row; this is the
@@ -292,7 +292,7 @@ fn render_feed(ui: &mut Context, state: &mut DemoState) {
                 });
                 ui.text(format!(
                     "selected bubble {} of {}",
-                    state.feed.selected + 1,
+                    state.feed.selected_view_index() + 1,
                     FEED.len()
                 ))
                 .dim();

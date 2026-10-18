@@ -47,11 +47,12 @@ const ALLOC_CEILINGS: &[AllocCeiling] = &[
         allocs: 80.0,
         bytes: 40_000.0,
     },
-    // (20_018 / 13_798_852) — every row is built each frame, see #487.
+    // (109 / 55_958) after #487 windowed the list to visible rows; was
+    // 20_018 / 13_798_852 when every row was built each frame.
     AllocCeiling {
         workload: Workload::List,
-        allocs: 25_000.0,
-        bytes: 17_000_000.0,
+        allocs: 160.0,
+        bytes: 80_000.0,
     },
     // (160 / 56_166)
     AllocCeiling {
@@ -59,17 +60,18 @@ const ALLOC_CEILINGS: &[AllocCeiling] = &[
         allocs: 240.0,
         bytes: 80_000.0,
     },
-    // (9_038 / 1_148_024)
+    // (129 / 60_222) after T10 (one String per row) and #487 (visible rows
+    // only); was 9_038 / 1_148_024.
     AllocCeiling {
         workload: Workload::Table,
-        allocs: 11_500.0,
-        bytes: 1_450_000.0,
+        allocs: 190.0,
+        bytes: 85_000.0,
     },
-    // (551 / 71_013)
+    // (131 / 60_156) after T10; was 551 / 71_013.
     AllocCeiling {
         workload: Workload::TablePaged,
-        allocs: 800.0,
-        bytes: 100_000.0,
+        allocs: 190.0,
+        bytes: 85_000.0,
     },
     // (285 / 168_254)
     AllocCeiling {

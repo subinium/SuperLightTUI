@@ -33,5 +33,5 @@ pub use feedback::{Gauge, LineGauge};
 pub use layout::GutterOpts;
 pub use overlay::Anchor;
 pub(super) use overlay::wrap_tooltip_text;
-pub use rich::CodeBlock;
+pub use rich::{CodeBlock, DiffView};
 pub use viz::TreemapItem;

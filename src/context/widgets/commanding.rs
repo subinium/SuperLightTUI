@@ -449,6 +449,9 @@ impl Context {
 
         state.last_selected = None;
         let interaction_id = self.next_interaction_id();
+        // Issue #453: an open palette owns typed keys, so `key()` shortcuts
+        // stay quiet while the user searches.
+        self.rollback.text_entry_claim = Some(crate::runtime::TextEntryKind::MultiLine);
 
         let filtered: Vec<usize> = state.filtered_indices_cached().to_vec();
         let sel = state.selected().min(filtered.len().saturating_sub(1));

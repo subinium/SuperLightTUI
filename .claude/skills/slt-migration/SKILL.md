@@ -22,7 +22,7 @@ If starting fresh (no existing TUI), use the `slt` skill instead.
 ## Two rules that break naive ports
 
 1. **The mouse is on by default; hover is opt-in.** ratatui apps enable capture with `EnableMouseCapture` (all motion). Since v0.26, `slt::run` turns the mouse on by itself (`MouseMode::Drag` locally, `MouseMode::Click` over SSH/mosh), so `Response.clicked` / `scroll_delta` and drags work without configuration. If the original app reacted to plain pointer moves (hover), port to `slt::run_with(RunConfig::default().mouse_mode(MouseMode::Hover), |ui| ...)`, or `hovered` only changes on clicks and drags. If the original never enabled capture and users rely on native terminal selection, use `MouseMode::Off`.
-2. **Check global shortcuts after rendering text inputs.** A ratatui `match key.code { Char('q') => quit, .. }` dispatched before the focused input sees the key. In SLT, render `text_input` / `textarea` first (they consume the keys they handle), then check `ui.key('q')`, or gate on the input's `Response.focused`.
+2. **Shortcuts vs focused inputs.** A ratatui `match key.code { Char('q') => quit, .. }` dispatched before the focused input sees the key. In SLT, `ui.key('q')` / `ui.shortcut(KeyCode::Char('q'), KeyModifiers::NONE)` skip the keys a focused `text_input` / `textarea` edits with, in any call order, so port the dispatch as plain shortcut checks. Use `ui.raw_key(c)` only when a key must fire even while typing.
 
 ## v0.20 removed APIs (do NOT migrate to these)
 
@@ -166,6 +166,18 @@ ui.widget(&mut label);
 
 Note: SLT's `Widget` trait is different from ratatui's. ratatui's `Widget::render(self, area, buf)` is a stateless paint into a `Buffer`. SLT's `Widget::ui(&mut self, ui)` is an immediate-mode call that returns a `Response`.
 
+### Incremental path — keep ratatui widgets (`ratatui` feature, v0.26+)
+
+When a rewrite is too big to do at once, or a third-party ratatui widget has no SLT equivalent, enable `superlighttui = { version = "0.26", features = ["ratatui"] }` and render the ratatui widget inside an SLT container. The feature depends only on `ratatui-core` 0.1 (ratatui 0.30), not on a ratatui backend, and is not part of `full`.
+
+```rust
+use ratatui_widgets::{block::Block, paragraph::Paragraph}; // or `ratatui::widgets`
+ui.container().h(5).ratatui_widget(Paragraph::new(text.clone()).block(Block::bordered()));
+ui.container().grow(1).ratatui(move |area, buf| sparkline.render(area, buf));
+```
+
+The closure is deferred (`'static`): move owned data in. It is render-only — input, focus and `StatefulWidget` state stay in SLT code. `slt::Color` / `Modifiers` / `Style` convert to and from the ratatui types with `From`; see `src/ratatui_compat.rs` for the lossy cases (blink variants, `HIDDEN`, `OVERLINE`). Port these regions to native SLT widgets later, one at a time.
+
 ### Layout mapping
 
 ratatui:
@@ -207,7 +219,7 @@ Constraint translation:
 
 | ratatui / your code | SLT |
 |---|---|
-| `ListState` | `slt::ListState` (`ListState::new(items)`, `set_items`, `set_filter`, `selected_item`, `visible_indices`) |
+| `ListState` | `slt::ListState` (`ListState::new(items)`, `set_items`, `set_filter`, `selected_item`, `selected_index`, `remove_selected`, `visible_indices`) |
 | `TableState` | `slt::TableState` (`set_rows`, `toggle_sort`, `sort_by`, `set_filter`, `next_page`, `prev_page`) |
 | `TabsState` | `slt::TabsState` (`new(vec!["Files", "Settings"])`, `selected_label`) |
 | `ScrollbarState` / manual offset | `slt::ScrollState` + `ui.scrollable(&mut state).col(...)` or `ui.scrollable_with_gutter(...)` |
@@ -269,9 +281,9 @@ Reserve explicit `&mut` parameters for **writes** (`&mut MyDocState`).
 | `paste` event | `if let Some(s) = ui.paste() { ... }` |
 | Sequence detection | `if ui.key_chord("gg") { ... }` |
 
-**Modal-aware**: `ui.key()`, `ui.key_code()`, `ui.key_mod()` are filtered when a modal is open. For global shortcuts that bypass modals, use `ui.raw_key_code()` / `ui.raw_key_mod()`.
+**Modal-aware**: `ui.key()`, `ui.key_code()`, `ui.key_mod()` are filtered when a modal is open, and skip the keys a focused text field edits with. For global shortcuts that bypass both, use `ui.raw_key()` / `ui.raw_key_code()` / `ui.raw_key_mod()`.
 
-**Consume**: `ui.consume_key(c)` / `ui.consume_key_code(code)` mark events handled so child widgets don't re-process. Useful for global shortcuts taking precedence over text input.
+**Consume**: `ui.consume_key(c)` / `ui.consume_key_code(code)` mark events handled so child widgets don't re-process. They never claim keys a focused text field edits with.
 
 ### Style mapping
 
@@ -384,7 +396,7 @@ textual is class-based with reactive state and CSS. SLT is functional with plain
 - **"I'm threading `&App` through every render fn."** — replace read-only sharing with `ui.provide(ctx, \|ui\| ...)` + `ui.use_context::<AppCtx>()`. Keep `&mut` for writes.
 - **"My ratatui Gauge has no label."** — use `ui.gauge(0.75)` (no label) or `ui.progress(0.75)` (returns `Response`).
 - **"Hover does nothing."** — the default mouse mode reports clicks, wheel and drags only: `slt::run_with(RunConfig::default().mouse_mode(MouseMode::Hover), ...)`. If clicks do nothing either, look for `.mouse(false)` / `MouseMode::Off`.
-- **"Typing `q` in a search box quits."** — the shortcut was checked before the input rendered. Move `ui.key('q')` after `ui.text_input(...)` or gate it on `!response.focused`.
+- **"Typing `q` in a search box quits."** — the shortcut uses `raw_key` / `raw_events()`, which ignore text focus. Use `ui.key('q')` or `ui.shortcut(..)`; they skip keys a focused input edits with.
 
 ## Migration workflow
 

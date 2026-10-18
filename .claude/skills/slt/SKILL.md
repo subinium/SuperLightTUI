@@ -14,10 +14,10 @@ Targets SLT v0.25.0. Verify every API against `src/` before using it.
    slt::run_with(slt::RunConfig::default().mouse_mode(slt::MouseMode::Hover), |ui| { /* ... */ })
    ```
    `MouseMode::Off` (or `.mouse(false)`) disables the mouse and keeps the terminal's native selection; `.mouse(true)` is a shorthand for `Hover`. Headless `TestBackend` tests inject mouse events directly regardless of the mode.
-2. **Check global shortcuts after rendering focused text inputs.** `ui.key('q')` sees every unconsumed key press. If you call it *before* `ui.text_input(...)` / `ui.textarea(...)` renders, typing `q` into the input also fires the shortcut. Render the inputs first (they consume the keys they handle), then check `ui.key(...)`, or gate the shortcut on the input not being focused.
+2. **Focused text fields own their keys.** While `text_input` / `textarea` / a form field / an open command palette has focus, `ui.key('q')`, `ui.key_code(..)`, `ui.key_mod(..)` and `ui.shortcut(..)` skip the keys it edits with (printable keys without Ctrl/Super/Meta, Backspace, Delete, arrows, Home, End; Enter/Up/Down for `textarea`), in any call order. Chords, Esc, Tab and F-keys still reach shortcuts; `ui.raw_key(c)` sees every press.
    ```rust
-   let r = ui.text_input(&mut search);       // consumes typed characters
-   if !r.focused && ui.key('q') { ui.quit(); } // checked after, and gated
+   if ui.shortcut(KeyCode::Char('q'), KeyModifiers::NONE) { ui.quit(); } // safe before the input
+   let _ = ui.text_input(&mut search);                                   // typing 'q' inserts it
    ```
 
 ## Mental model

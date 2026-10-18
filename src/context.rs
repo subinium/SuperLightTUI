@@ -49,7 +49,9 @@ fn slt_warn(msg: &str) {
 fn slt_warn(_msg: &str) {}
 
 mod widgets;
-pub use widgets::{Anchor, Breadcrumb, CodeBlock, Gauge, GutterOpts, LineGauge, TreemapItem};
+pub use widgets::{
+    Anchor, Breadcrumb, CodeBlock, DiffView, Gauge, GutterOpts, LineGauge, TreemapItem,
+};
 
 mod state;
 pub use state::*;
@@ -71,8 +73,8 @@ mod runtime;
 mod pointer;
 pub(crate) use pointer::*;
 
-mod cursor;
-pub use cursor::{CursorShape, PointerShape};
+mod pointer_shape;
+pub use pointer_shape::PointerShape;
 
 /// Issue #234: in-frame async task API (`spawn`/`poll`), gated behind `async`.
 #[cfg(feature = "async")]
@@ -85,6 +87,12 @@ pub use async_tasks::{TaskHandle, TaskOutcome};
 
 mod helpers;
 pub(crate) use helpers::*;
+
+mod terminal_meta;
+pub(crate) use terminal_meta::store_clipboard_status;
+pub use terminal_meta::{ClipboardStatus, CursorShape, ProgramState, ProgramStatus, Progress};
+#[cfg(feature = "crossterm")]
+pub(crate) use terminal_meta::{TerminalMeta, terminal_meta};
 
 #[cfg(all(test, feature = "async"))]
 mod async_tasks_tests;

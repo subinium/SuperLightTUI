@@ -56,6 +56,7 @@
 //! | `kitty-compress` | zlib-compress Kitty graphics protocol payloads |
 //! | `syntax` / `syntax-*` | Enable tree-sitter syntax highlighting (all bundled grammars, or one language) |
 //! | `full` | `crossterm`, `async`, `serde`, `theme-watch`, `image`, `qrcode`, `kitty-compress`, `bidi`. Does **not** include `syntax` or `pty-test`. |
+//! | `ratatui` | Render ratatui widgets inside SLT containers via `ContainerBuilder::ratatui` / `ratatui_widget` and `Color`/`Modifiers`/`Style` conversions (adds `ratatui-core` 0.1, no ratatui backend). Not part of `full`. Since 0.26.0. |
 //! | `pty-test` | Dev-only test harness: exposes `PtyBackend` / `PtyFrame`, which drive the real terminal flush pipeline into an in-process byte sink for escape-code assertions. Not for application use. |
 //!
 //! # Learn More
@@ -111,6 +112,9 @@ pub mod keymap;
 pub mod layout;
 /// Color palettes (Tailwind-style).
 pub mod palette;
+#[cfg(feature = "ratatui")]
+#[cfg_attr(docsrs, doc(cfg(feature = "ratatui")))]
+pub mod ratatui_compat;
 /// Rectangular region type used throughout SLT layout.
 pub mod rect;
 #[cfg(feature = "crossterm")]
@@ -125,6 +129,7 @@ mod terminal;
 pub mod test_utils;
 /// Widget state types (list, table, input, select, etc.).
 pub mod widgets;
+mod width;
 
 use std::io;
 use std::time::Duration;
@@ -132,7 +137,7 @@ use std::time::Duration;
 mod clock;
 mod runtime;
 
-pub use context::{CursorShape, PointerShape};
+pub use context::PointerShape;
 #[cfg(all(feature = "crossterm", feature = "async"))]
 #[cfg_attr(docsrs, doc(cfg(all(feature = "crossterm", feature = "async"))))]
 pub use runtime::{AsyncRunError, AsyncRunHandle, AsyncSender, run_async, run_async_with};
@@ -221,9 +226,11 @@ pub use cell::Cell;
 pub use chart::{Candle, ChartBuilder, ChartConfig, Dataset, LegendPosition, Marker};
 pub use context::{
     Anchor, Bar, BarChartConfig, BarDirection, BarGroup, Breadcrumb, CanvasContext, CanvasError,
-    CodeBlock, ContainerBuilder, Context, Gauge, GutterOpts, LineGauge, Memo, Response, State,
-    TreemapItem, Widget,
+    CodeBlock, ContainerBuilder, Context, DiffView, Gauge, GutterOpts, LineGauge, Memo, Response,
+    State, TreemapItem, Widget,
 };
+// Issues #446 / #468: terminal metadata and clipboard outcome types.
+pub use context::{ClipboardStatus, CursorShape, ProgramState, ProgramStatus, Progress};
 // Issue #234: opaque handle from `Context::spawn`, gated behind `async`.
 #[cfg(feature = "async")]
 #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
@@ -255,15 +262,16 @@ pub use widgets::validators;
 pub use widgets::{
     AlertLevel, ApprovalAction, BreadcrumbResponse, ButtonVariant, CalDate, CalendarSelect,
     CalendarState, ChordState, ColorPickerState, CommandPaletteState, ContextItem,
-    DEFAULT_CHORD_TIMEOUT_TICKS, DirectoryTreeState, FileEntry, FilePickerScanError,
-    FilePickerScanOperation, FilePickerScanStatus, FilePickerState, FormField, FormFieldResponse,
-    FormState, GaugeResponse, GridColumn, GutterResponse, HighlightRange, ListResponse, ListState,
-    ModeState, MultiSelectState, NumberInputState, PaginatorState, PaginatorStyle, PaletteCommand,
-    PickerMode, RadioState, RichLogEntry, RichLogState, SchedulerState, ScreenState, ScrollState,
-    SelectState, SliderOpts, SpinnerPreset, SpinnerState, SplitPaneResponse, SplitPaneState,
-    StaticOutput, StreamingMarkdownState, StreamingTextState, TableColumn, TableState, TabsState,
-    TextInputState, TextareaState, ToastLevel, ToastMessage, ToastState, ToolApprovalState,
-    TreeNode, TreeState, Trend, ValidateTrigger, Validator,
+    DEFAULT_CHORD_TIMEOUT_TICKS, DiffColors, DiffKeys, DiffLayout, DiffParseError, DiffResponse,
+    DiffState, DirectoryTreeState, FileEntry, FilePickerScanError, FilePickerScanOperation,
+    FilePickerScanStatus, FilePickerState, FormField, FormFieldResponse, FormState, GaugeResponse,
+    GridColumn, GutterResponse, HighlightRange, HunkAction, HunkDecision, HunkId, ListResponse,
+    ListState, ModeState, MultiSelectState, NumberInputState, PaginatorState, PaginatorStyle,
+    PaletteCommand, PickerMode, RadioState, RichLogEntry, RichLogState, SchedulerState,
+    ScreenState, ScrollState, SelectState, SliderOpts, SpinnerPreset, SpinnerState,
+    SplitPaneResponse, SplitPaneState, StaticOutput, StreamingMarkdownState, StreamingTextState,
+    TableColumn, TableState, TabsState, TextInputState, TextareaState, ToastLevel, ToastMessage,
+    ToastState, ToolApprovalState, TreeNode, TreeState, Trend, ValidateTrigger, Validator,
 };
 
 /// Rendering backend for SLT.
@@ -340,33 +348,6 @@ pub trait Backend {
     #[doc(hidden)]
     fn owns_terminal_session(&self) -> bool {
         false
-    }
-
-    /// Write a raw control sequence (cursor or pointer shape) for a backend
-    /// that owns a terminal session; the built-in terminals queue it with the
-    /// frame bytes. The default writes to process stdout.
-    #[doc(hidden)]
-    fn write_terminal_sequence(&mut self, sequence: &str) -> io::Result<()> {
-        use std::io::Write as _;
-        let mut stdout = io::stdout();
-        stdout.write_all(sequence.as_bytes())?;
-        stdout.flush()
-    }
-
-    /// Write `text` to the system clipboard (OSC 52) for a backend that owns
-    /// a terminal session. The built-in terminals write through their own
-    /// output stream; the default writes to process stdout.
-    #[doc(hidden)]
-    fn write_clipboard(&mut self, text: &str) -> io::Result<()> {
-        #[cfg(feature = "crossterm")]
-        {
-            terminal::copy_to_clipboard(&mut io::stdout(), text)
-        }
-        #[cfg(not(feature = "crossterm"))]
-        {
-            let _ = text;
-            Ok(())
-        }
     }
 }
 

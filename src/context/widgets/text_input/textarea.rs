@@ -1,5 +1,137 @@
 use super::*;
-use crate::widgets::{TextareaNavigation, grapheme_cursor_after};
+use crate::event::MouseEvent;
+use crate::widgets::{TextareaNavigation, grapheme_cursor_after, word_range_at};
+
+/// Issue #465: text position under a mouse cell, using the previous frame's
+/// layout (scroll offset, soft wrap and the caret glyph that shifted the
+/// cells after it).
+fn textarea_pos_at(
+    state: &TextareaState,
+    vlines: Option<&[TextareaVLine]>,
+    rect: Rect,
+    x: u32,
+    y: u32,
+) -> (usize, usize) {
+    let total = vlines
+        .map_or(state.lines.len(), <[TextareaVLine]>::len)
+        .max(1);
+    let vrow = if y < rect.y {
+        state.scroll_offset.saturating_sub(1)
+    } else {
+        state.scroll_offset + (y - rect.y) as usize
+    }
+    .min(total - 1);
+    let (row, start, count) = match vlines {
+        Some(map) => {
+            let line = &map[vrow];
+            (line.logical_row, line.char_start, line.char_count)
+        }
+        None => (vrow, 0, grapheme_count(&state.lines[vrow])),
+    };
+    let mut cell = x.saturating_sub(rect.x) as usize;
+    if let Some((glyph_row, glyph_col)) = state.caret_glyph
+        && glyph_row == vrow
+    {
+        let glyph_cell: usize = state.lines[row]
+            .graphemes(true)
+            .skip(start)
+            .take(glyph_col)
+            .map(|cluster| cluster_width(cluster).max(1) as usize)
+            .sum();
+        if cell == glyph_cell {
+            return (row, start + glyph_col);
+        }
+        if cell > glyph_cell {
+            cell -= 1;
+        }
+    }
+    let mut used = 0;
+    let mut col = 0;
+    for cluster in state.lines[row].graphemes(true).skip(start).take(count) {
+        let width = cluster_width(cluster).max(1) as usize;
+        if cell < used + width {
+            break;
+        }
+        used += width;
+        col += 1;
+    }
+    (row, start + col)
+}
+
+/// Issue #465: mouse selection for a focused `textarea`. Returns `true` when
+/// the event belongs to the text area.
+fn textarea_pointer(
+    state: &mut TextareaState,
+    mouse: &MouseEvent,
+    rect: Rect,
+    vlines: Option<&[TextareaVLine]>,
+    now: crate::clock::Instant,
+) -> bool {
+    match mouse.kind {
+        MouseKind::Down(MouseButton::Left) => {
+            if !rect.contains(mouse.x, mouse.y) {
+                state.pointer.dragging = false;
+                return false;
+            }
+            let pos = textarea_pos_at(state, vlines, rect, mouse.x, mouse.y);
+            match state.pointer.register_click(now, (mouse.x, mouse.y)) {
+                1 => {
+                    let cursor = (state.cursor_row, state.cursor_col);
+                    let anchor = if mouse.modifiers.contains(KeyModifiers::SHIFT) {
+                        state.anchor.unwrap_or(cursor)
+                    } else {
+                        pos
+                    };
+                    state.set_selection(anchor, pos);
+                    state.pointer.dragging = true;
+                }
+                2 => {
+                    let word = word_range_at(&state.lines[pos.0], pos.1);
+                    state.set_selection((pos.0, word.start), (pos.0, word.end));
+                    state.pointer.dragging = false;
+                }
+                _ => {
+                    let len = grapheme_count(&state.lines[pos.0]);
+                    state.set_selection((pos.0, 0), (pos.0, len));
+                    state.pointer.dragging = false;
+                }
+            }
+            state.last_was_char_insert = false;
+            true
+        }
+        MouseKind::Drag(MouseButton::Left) if state.pointer.dragging => {
+            let pos = textarea_pos_at(state, vlines, rect, mouse.x, mouse.y);
+            let anchor = state.anchor.unwrap_or((state.cursor_row, state.cursor_col));
+            state.set_selection(anchor, pos);
+            true
+        }
+        MouseKind::Up(MouseButton::Left) if state.pointer.dragging => {
+            state.pointer.dragging = false;
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Issue #465: the selected grapheme range of one visual segment, relative
+/// to the segment start.
+fn segment_selection(
+    selection: Option<&std::ops::Range<(usize, usize)>>,
+    row: usize,
+    start: usize,
+    count: usize,
+) -> Option<std::ops::Range<usize>> {
+    let range = selection?;
+    let ((r1, c1), (r2, c2)) = (range.start, range.end);
+    if row < r1 || row > r2 {
+        return None;
+    }
+    let from = if row == r1 { c1 } else { 0 };
+    let to = if row == r2 { c2 } else { usize::MAX };
+    let lo = from.max(start);
+    let hi = to.min(start + count);
+    (lo < hi).then(|| lo - start..hi - start)
+}
 
 fn current_navigation(state: &TextareaState) -> Option<TextareaNavigation> {
     state.navigation.filter(|nav| {
@@ -84,7 +216,7 @@ fn cluster_is_alphanumeric(cluster: &str) -> bool {
 /// Columns are **grapheme-cluster** indices. Word boundary: a run of
 /// one-or-more alphanumeric clusters. Leading non-alphanumeric clusters before
 /// the cursor are skipped first, then the run of alphanumerics is consumed.
-fn prev_word_col(line: &str, col: usize) -> usize {
+pub(super) fn prev_word_col(line: &str, col: usize) -> usize {
     let clusters: Vec<&str> = line.graphemes(true).collect();
     let mut pos = col.min(clusters.len());
     while pos > 0 && !cluster_is_alphanumeric(clusters[pos - 1]) {
@@ -99,7 +231,7 @@ fn prev_word_col(line: &str, col: usize) -> usize {
 /// Move a logical column index forward past the end of the next word.
 ///
 /// Columns are **grapheme-cluster** indices (see [`prev_word_col`]).
-fn next_word_col(line: &str, col: usize) -> usize {
+pub(super) fn next_word_col(line: &str, col: usize) -> usize {
     let clusters: Vec<&str> = line.graphemes(true).collect();
     let mut pos = col.min(clusters.len());
     while pos < clusters.len() && !cluster_is_alphanumeric(clusters[pos]) {
@@ -133,9 +265,20 @@ impl Context {
             .cursor_col
             .min(grapheme_count(&state.lines[state.cursor_row]));
 
-        let focused = self.register_focusable();
+        let focused = self.register_text_entry_focusable(
+            crate::runtime::TextEntryKind::MultiLine,
+            state.focus_key(),
+        );
+        let focus_slot = self.rollback.last_focusable_id;
         let wrap_w = state.wrap_width.unwrap_or(u32::MAX);
         let wrapping = state.wrap_width.is_some();
+        // Issue #465: `begin_widget_interaction` below takes the next
+        // interaction slot; its previous-frame rect locates the rows.
+        let box_rect = self
+            .prev_hit_map
+            .get(self.rollback.interaction_count)
+            .copied()
+            .filter(|rect| !rect.is_empty());
 
         if state.navigation.is_some_and(|nav| {
             nav.row != state.cursor_row
@@ -166,6 +309,8 @@ impl Context {
 
         if focused {
             let mut consumed_indices = Vec::new();
+            let mut clipboard: Option<String> = None;
+            let mut pointer_captured = false;
             for (i, event) in self
                 .events
                 .iter()
@@ -174,10 +319,28 @@ impl Context {
             {
                 if let Event::Paste(text) = event {
                     let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
-                    if state.insert_text(&normalized, false) {
+                    if !normalized.is_empty()
+                        && state.replace_selection_or_insert(&normalized, false)
+                    {
                         vlines = None;
                     }
                     consumed_indices.push(i);
+                    continue;
+                }
+                if let Event::Mouse(mouse) = event {
+                    if let Some(rect) = box_rect {
+                        let map = wrapping.then(|| {
+                            vlines
+                                .get_or_insert_with(|| {
+                                    textarea_build_visual_lines(&state.lines, wrap_w)
+                                })
+                                .as_slice()
+                        });
+                        if textarea_pointer(state, mouse, rect, map, self.frame_instant) {
+                            consumed_indices.push(i);
+                            pointer_captured = true;
+                        }
+                    }
                     continue;
                 }
                 let Event::Key(key) = event else {
@@ -192,15 +355,79 @@ impl Context {
                 ) {
                     vlines = None;
                 }
+                let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+                let command = key.modifiers.contains(KeyModifiers::CONTROL)
+                    || key.modifiers.contains(KeyModifiers::SUPER);
+                let word = key.modifiers.contains(KeyModifiers::CONTROL)
+                    || key.modifiers.contains(KeyModifiers::ALT);
+                let before = (state.cursor_row, state.cursor_col);
+                let selection = state.selection();
+                // Issue #465: movement keys extend the selection with Shift
+                // and drop it otherwise (after the match below).
+                let movement = matches!(
+                    key.code,
+                    KeyCode::Left
+                        | KeyCode::Right
+                        | KeyCode::Up
+                        | KeyCode::Down
+                        | KeyCode::Home
+                        | KeyCode::End
+                );
+                // Plain Left/Right with a selection collapse it to its edge.
+                let collapse = match (&key.code, &selection) {
+                    (KeyCode::Left, Some(range)) if !shift && !word => Some(range.start),
+                    (KeyCode::Right, Some(range)) if !shift && !word => Some(range.end),
+                    _ => None,
+                };
                 match key.code {
+                    _ if collapse.is_some() => {
+                        if let Some(edge) = collapse {
+                            (state.cursor_row, state.cursor_col) = edge;
+                        }
+                        state.last_was_char_insert = false;
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Char('a' | 'A') if command && !state.ctrl_a_disabled => {
+                        state.select_all();
+                        state.last_was_char_insert = false;
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Char('c' | 'C') if command && !shift => {
+                        // Without a selection Ctrl+C stays an app shortcut.
+                        if let Some(text) = state.selected_text() {
+                            clipboard = Some(text);
+                            consumed_indices.push(i);
+                        }
+                    }
+                    KeyCode::Char('x' | 'X') if command && !shift => {
+                        if let Some(text) = state.selected_text() {
+                            clipboard = Some(text);
+                            state.delete_selection();
+                            consumed_indices.push(i);
+                        }
+                    }
+                    KeyCode::Char('z' | 'Z') if command && shift => {
+                        state.redo();
+                        state.anchor = None;
+                        state.last_was_char_insert = false;
+                        consumed_indices.push(i);
+                    }
                     KeyCode::Char('z') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         state.undo();
+                        state.anchor = None;
                         state.last_was_char_insert = false;
                         consumed_indices.push(i);
                     }
                     KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         state.redo();
+                        state.anchor = None;
                         state.last_was_char_insert = false;
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Char('k')
+                        if key.modifiers.contains(KeyModifiers::CONTROL)
+                            && state.delete_selection() =>
+                    {
                         consumed_indices.push(i);
                     }
                     KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -247,11 +474,14 @@ impl Context {
                     }
                     KeyCode::Char(ch) if !has_global_shortcut_modifier(key.modifiers) => {
                         let mut encoded = [0; 4];
-                        state.insert_text(ch.encode_utf8(&mut encoded), true);
+                        state.replace_selection_or_insert(ch.encode_utf8(&mut encoded), true);
                         consumed_indices.push(i);
                     }
                     KeyCode::Enter => {
-                        state.insert_text("\n", false);
+                        state.replace_selection_or_insert("\n", false);
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Backspace | KeyCode::Delete if state.delete_selection() => {
                         consumed_indices.push(i);
                     }
                     KeyCode::Backspace => {
@@ -373,6 +603,16 @@ impl Context {
                     }
                     _ => {}
                 }
+                if movement && collapse.is_none() {
+                    let after = (state.cursor_row, state.cursor_col);
+                    if shift {
+                        if after != before || state.anchor.is_some() {
+                            state.anchor.get_or_insert(before);
+                        }
+                    } else {
+                        state.anchor = None;
+                    }
+                }
                 let history_navigation = matches!(key.code, KeyCode::Char('z' | 'y'))
                     && key.modifiers.contains(KeyModifiers::CONTROL);
                 if !matches!(key.code, KeyCode::Up | KeyCode::Down) && !history_navigation {
@@ -380,7 +620,23 @@ impl Context {
                 }
             }
             self.consume_indices(consumed_indices);
+            if let Some(text) = clipboard {
+                self.copy_to_clipboard(text);
+            }
+            if pointer_captured {
+                self.text_pointer_capture = true;
+            }
+        } else {
+            state.pointer.dragging = false;
         }
+        let mut chords = crate::runtime::CHORD_HISTORY | crate::runtime::CHORD_KILL_LINE;
+        if !state.ctrl_a_disabled {
+            chords |= crate::runtime::CHORD_SELECT_ALL;
+        }
+        if state.selection().is_some() {
+            chords |= crate::runtime::CHORD_COPY_CUT;
+        }
+        self.set_focus_slot_chords(focus_slot, chords);
 
         let vlines = wrapping
             .then(|| vlines.unwrap_or_else(|| textarea_build_visual_lines(&state.lines, wrap_w)));
@@ -421,20 +677,72 @@ impl Context {
                 group_name: None,
             })));
 
+        let selection = state.selection();
+        let selected_style = self.theme.text_selection_style();
+        state.caret_glyph = focused.then_some((cursor_vrow, cursor_vcol));
         for vi in 0..visible_rows as usize {
             let actual_vi = state.scroll_offset + vi;
-            let seg_text = if let Some(map) = &vlines {
+            let (seg_text, seg_selection) = if let Some(map) = &vlines {
                 if let Some(vl) = map.get(actual_vi) {
                     let line = &state.lines[vl.logical_row];
                     let start = byte_index_for_grapheme(line, vl.char_start);
                     let end = start + byte_index_for_grapheme(&line[start..], vl.char_count);
-                    &line[start..end]
+                    (
+                        &line[start..end],
+                        segment_selection(
+                            selection.as_ref(),
+                            vl.logical_row,
+                            vl.char_start,
+                            vl.char_count,
+                        ),
+                    )
                 } else {
-                    ""
+                    ("", None)
                 }
             } else {
-                state.lines.get(actual_vi).map_or("", String::as_str)
+                match state.lines.get(actual_vi) {
+                    Some(line) => (
+                        line.as_str(),
+                        segment_selection(selection.as_ref(), actual_vi, 0, grapheme_count(line)),
+                    ),
+                    None => ("", None),
+                }
             };
+
+            if let Some(sel) = seg_selection {
+                // Issue #465: split the row into unselected / selected runs,
+                // keeping the caret glyph in an unselected run.
+                let caret = (actual_vi == cursor_vrow && focused).then_some(cursor_vcol);
+                let mut runs: Vec<(String, bool)> = Vec::with_capacity(4);
+                let mut cursor = None;
+                let push = |runs: &mut Vec<(String, bool)>, text: &str, selected: bool| match runs
+                    .last_mut()
+                {
+                    Some((run, flag)) if *flag == selected => run.push_str(text),
+                    _ => runs.push((text.to_string(), selected)),
+                };
+                for (col, cluster) in seg_text.graphemes(true).enumerate() {
+                    if caret == Some(col) {
+                        push(&mut runs, "", false);
+                        cursor = Some((runs.len() - 1, grapheme_count(&runs[runs.len() - 1].0)));
+                        push(&mut runs, "▎", false);
+                    }
+                    push(&mut runs, cluster, sel.contains(&col));
+                }
+                if caret.is_some() && cursor.is_none() {
+                    push(&mut runs, "", false);
+                    cursor = Some((runs.len() - 1, grapheme_count(&runs[runs.len() - 1].0)));
+                    push(&mut runs, "▎", false);
+                }
+                self.text_runs_with_cursor(
+                    &runs,
+                    Style::new().fg(self.theme.text),
+                    selected_style,
+                    cursor,
+                    false,
+                );
+                continue;
+            }
 
             let mut rendered = String::with_capacity(seg_text.len() + 3);
             let mut cursor_offset = None;

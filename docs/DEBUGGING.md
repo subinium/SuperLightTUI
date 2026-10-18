@@ -146,10 +146,12 @@ events at all.
 
 ### 7. A shortcut fires while typing into an input
 
-`ui.key('q')` returns `true` for any matching event not consumed *so far in
-the frame*. If the check runs before a focused `text_input`, it sees the
-keystroke before the input consumes it, so typing `q` quits the app. Move
-global shortcut checks after the widgets that render in the same frame.
+Since 0.26 a focused `text_input` / `textarea` / form field keeps the keys it
+edits with, so `ui.key('q')` stays `false` while the user types into it, in
+either call order. If a shortcut still fires, check that it is not
+`ui.raw_key(..)` / `raw_events()` (those ignore text focus), and that the input
+actually had focus when the frame started: on an app's very first frame
+nothing has registered focus yet.
 
 ## Layout debugging checklist
 
@@ -172,8 +174,126 @@ If a custom widget behaves strangely in overlays, inspect both `focused` and whe
 ## Clipboard and terminal caveats
 
 - `read_clipboard()` depends on OSC 52 support in the terminal.
-- `copy_to_clipboard(...)` writes OSC 52 escape sequences through the active terminal backend.
-- Kitty keyboard support is best-effort: unsupported terminals silently ignore it.
+- `copy_to_clipboard(...)` writes OSC 52 through the built-in terminal backend after the frame. It never prints to stderr or fails the frame; check `ui.clipboard_status()` on the next frame: `Sent` (written, not necessarily received: OSC 52 has no acknowledgement), `TooLarge { bytes, max }` (over `RunConfig::clipboard_max_bytes`, default 74,994 bytes, nothing written), or `WriteFailed(kind)`.
+- Inside tmux, the default `set-clipboard external` drops OSC 52. Use `set -g set-clipboard on`, or `RunConfig::clipboard_passthrough(true)` with `set -g allow-passthrough on` (GNU screen gets DCS-chunked passthrough). Measured results for tmux 3.5a are in [TERMINAL_COMPATIBILITY.md](TERMINAL_COMPATIBILITY.md).
+- Kitty keyboard: on a direct terminal that answers startup queries, the protocol is pushed only after a `CSI ? u` reply; `ui.capabilities().kitty_keyboard` reports it. Elsewhere it is best-effort and unsupported terminals ignore it. `SLT_FORCE_KITTY_KEYBOARD=1` skips the confirmation.
+- Title, progress, program status, and cursor-shape sequences are suppressed for `TERM=dumb`; `SLT_FORCE_PROGRESS=1` sends OSC 9;4 to terminals SLT does not recognize as progress hosts.
+
+## Hot reload (experimental)
+
+SLT re-invokes one closure every frame, so [Subsecond](https://docs.rs/subsecond)
+(the Dioxus hot-patching runtime) can swap that closure's code while the
+terminal session and hook state stay alive. SLT needs no feature flag or
+library code for this; the wiring lives in your app crate. Treat it as a
+debug-build convenience, not a supported API.
+
+Requirements: `dioxus-cli` 0.7 (`cargo install dioxus-cli --version 0.7.10 --locked`,
+about 4 minutes on an M-series Mac), and `subsecond` plus `dioxus-devtools`
+0.7.10 in your app (MIT OR Apache-2.0, they build on SLT's MSRV 1.88). Patching
+works only in debug builds, and Subsecond patches only the crate that holds
+`main`. Edits to SLT or to other workspace crates are not applied.
+
+```toml
+[dependencies]
+subsecond = { version = "0.7.10", optional = true }
+dioxus-devtools = { version = "0.7.10", optional = true }
+libc = { version = "0.2", optional = true }
+
+[features]
+hot = ["dep:subsecond", "dep:dioxus-devtools", "dep:libc"]
+```
+
+```rust,ignore
+use slt::Context;
+
+fn app(ui: &mut Context) {
+    let count = ui.use_state(|| 0u64);
+    *count.get_mut(ui) += 1;
+    let n = *count.get(ui);
+    ui.text(format!("frames: {n}"));
+}
+
+fn main() -> std::io::Result<()> {
+    #[cfg(feature = "hot")]
+    {
+        attach_tty();
+        dioxus_devtools::connect_subsecond();
+    }
+    slt::run(|ui| {
+        #[cfg(feature = "hot")]
+        subsecond::HotFn::current(app as fn(&mut Context)).call((ui,));
+        #[cfg(not(feature = "hot"))]
+        app(ui);
+    })
+}
+
+/// `dx serve` pipes the app's stdout, so point stdin/stdout at the
+/// terminal named by `SLT_TTY` (for example another tmux pane).
+#[cfg(feature = "hot")]
+fn attach_tty() {
+    use std::os::fd::IntoRawFd;
+    let Ok(path) = std::env::var("SLT_TTY") else {
+        return;
+    };
+    let tty = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .expect("SLT_TTY must name a terminal device");
+    let fd = tty.into_raw_fd();
+    // SAFETY: `fd` is an open descriptor we own; dup2 only replaces 0 and 1.
+    unsafe {
+        libc::dup2(fd, 0);
+        libc::dup2(fd, 1);
+    }
+}
+```
+
+Run it with the UI in a second terminal of the same size:
+
+```sh
+# terminal B (the UI): print its device, then leave it idle
+tty && sleep 100000
+# terminal A (dx): pass terminal B's device
+SLT_TTY=/dev/ttys002 dx serve --hotpatch --features hot
+```
+
+Gotchas, all measured on the setup below:
+
+- **Use `HotFn::current(app as fn(&mut Context))`, not `subsecond::call(|| app(ui))`.**
+  The closure form applies the patch (dx logs it and patch handlers run) but
+  keeps rendering the old code. A closure that captures only `ui` is one pointer
+  wide, so Subsecond treats it as a function pointer and looks the wrong address
+  up in its jump table. Passing `app` as a function pointer looks up `app` itself.
+- **`dx serve` pipes stdout.** Without the `SLT_TTY` redirect, `slt::run` exits
+  with `stdout is not a terminal`. The terminal size still comes from dx's
+  controlling terminal, so keep both terminals the same size.
+- **A panic ends the session.** dx does not relaunch a crashed app on the next
+  save. Press `r` in dx to rebuild and relaunch. Hook state is lost.
+
+| Edit while running | Result |
+|---|---|
+| Text, styles, constants, layout in `app` | Applied on the next frame; `use_state` values kept |
+| New helper function or container called from `app` | Applied; state kept |
+| New `use_state` appended after existing hooks | Applied; new slot initialized, old slots kept |
+| `use_state` inserted before existing hooks | Panic: `use_state type mismatch at hook index N` |
+| `use_state` inserted before a `use_state_named` hook | Applied; named value kept |
+| Fields added to a struct stored in `use_state` | Panic: type mismatch (observed: its `TypeId` changed) |
+| Unrelated edit with a tip-crate struct in `use_state` | Applied; struct value kept |
+| Code in `main` or outside `app` (`RunConfig`, setup) | Not applied until restart |
+
+Timings: 237 to 794 ms from save to applied patch, and the new code renders on
+the next tick. The first `dx serve` build took 34.5 s and later relaunches took
+0.5 to 2.7 s. The dev binary is 20 MB and each patch dylib about 300 KB.
+Enabling `hot` grows the app's normal dependency graph from 31 to 113 unique
+crates (`dioxus-devtools` pulls `dioxus-core`, `dioxus-signals`,
+`tungstenite`). Default builds are unaffected because the dependencies are
+optional and the calls are behind `cfg`.
+
+To survive hook insertions, use `use_state_named(...)`, which keys by id rather
+than position. Measured on dioxus-cli 0.7.10, subsecond 0.7.10, Rust 1.98, and
+macOS 26.5 on arm64. Linux and Windows are listed as supported by Subsecond but
+were not tested here.
 
 ## Related docs
 

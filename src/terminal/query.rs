@@ -155,9 +155,64 @@ pub(super) fn decrpm_reply_complete(bytes: &[u8]) -> bool {
 /// `c` rather than BEL / ST. Drains up to two `c`-terminated CSI replies
 /// (DA1 + DA2) within the timeout so a combined `CSI c CSI > c` query yields
 /// both answers in one string.
+///
+/// The Kitty keyboard progressive-enhancement query (`CSI ? u`, issue #448)
+/// rides in front of DA1 in the same write: a supporting terminal answers
+/// `CSI ? <flags> u` before its DA1 reply, and a terminal that ignores the
+/// query still ends the read through DA1/DA2, so the extra query never adds a
+/// timeout.
 #[cfg(feature = "crossterm")]
 pub(super) fn read_da_response(timeout: Duration) -> Option<String> {
-    read_stdin_reply("\x1b[c\x1b[>c", timeout, da_reply_complete())
+    read_stdin_reply("\x1b[?u\x1b[c\x1b[>c", timeout, da_reply_complete())
+}
+
+/// Parse the Kitty keyboard protocol reply (`CSI ? <flags> u`) out of a
+/// combined probe response, returning the currently active flags.
+///
+/// Only a complete `ESC [ ? <digits> u` sequence counts; malformed input
+/// (missing digits, non-digit bytes, wrong final byte) is rejected. The reply
+/// may appear anywhere before the DA1 sentinel.
+#[cfg(feature = "crossterm")]
+pub(super) fn parse_kitty_keyboard_reply(response: &str) -> Option<u32> {
+    let mut search = response;
+    while let Some(pos) = search.find("\x1b[?") {
+        let body = &search[pos + 3..];
+        let digits = body.bytes().take_while(u8::is_ascii_digit).count();
+        if digits > 0 && body.as_bytes().get(digits) == Some(&b'u') {
+            return body[..digits].parse().ok();
+        }
+        search = body;
+    }
+    None
+}
+
+/// Parse a cursor-position report (`CSI <row> ; <col> R`), returning the
+/// one-based `(row, col)` of the last complete report in `response`.
+#[cfg(feature = "crossterm")]
+pub(super) fn parse_cursor_position_report(response: &str) -> Option<(u32, u32)> {
+    let mut found = None;
+    let mut search = response;
+    while let Some(pos) = search.find("\x1b[") {
+        let body = &search[pos + 2..];
+        if let Some(end) = body.find(|c: char| !(c.is_ascii_digit() || c == ';'))
+            && body.as_bytes()[end] == b'R'
+            && let Some((row, col)) = body[..end].split_once(';')
+            && let (Ok(row), Ok(col)) = (row.parse::<u32>(), col.parse::<u32>())
+        {
+            found = Some((row, col));
+        }
+        search = body;
+    }
+    found
+}
+
+/// Completion predicate for a cursor-position report.
+#[cfg(feature = "crossterm")]
+pub(super) fn cpr_reply_complete(bytes: &[u8]) -> bool {
+    std::str::from_utf8(bytes)
+        .ok()
+        .and_then(parse_cursor_position_report)
+        .is_some()
 }
 
 /// Parse a DA1 reply (`CSI ? <attrs> c`). Attribute `4` indicates Sixel
@@ -165,18 +220,24 @@ pub(super) fn read_da_response(timeout: Duration) -> Option<String> {
 /// same string is ignored here.
 #[cfg(feature = "crossterm")]
 pub(super) fn parse_da1(response: &str, caps: &mut Capabilities) {
-    // DA1 reply: ESC [ ? <n> ; <n> ; ... c  (no `>` after `[`).
+    // DA1 reply: ESC [ ? <n> ; <n> ; ... c  (no `>` after `[`). Only a
+    // parameter run made of digits and `;` that ends in `c` is a DA1 reply, so
+    // a preceding Kitty keyboard reply (`ESC [ ? 4 u`) is never mistaken for
+    // attribute `4`.
     let mut search = response;
     while let Some(pos) = search.find("\x1b[?") {
         let body = &search[pos + 3..];
-        let Some(end) = body.find('c') else { break };
-        let attrs = &body[..end];
-        for attr in attrs.split(';') {
-            if attr.trim() == "4" {
-                caps.sixel = true;
+        let end = body
+            .find(|c: char| !(c.is_ascii_digit() || c == ';'))
+            .unwrap_or(body.len());
+        if body.as_bytes().get(end) == Some(&b'c') {
+            for attr in body[..end].split(';') {
+                if attr == "4" {
+                    caps.sixel = true;
+                }
             }
         }
-        search = &body[end + 1..];
+        search = &body[end..];
     }
 }
 

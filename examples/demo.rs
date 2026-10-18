@@ -122,8 +122,7 @@ impl Default for DemoState {
         );
         table.page_size = 3;
 
-        let mut password = TextInputState::with_placeholder("Password");
-        password.masked = true;
+        let password = TextInputState::with_placeholder("Password").masked(true);
 
         let mut v11_autocomplete = TextInputState::with_placeholder("Try: hel / dev / rust");
         v11_autocomplete.set_suggestions(vec![
@@ -290,6 +289,7 @@ impl Default for DemoState {
                 .field(
                     FormField::new("Password")
                         .placeholder("********")
+                        .masked(true)
                         .validate(|v| {
                             if v.len() >= 6 {
                                 Ok(())
@@ -1954,7 +1954,7 @@ fn render_v013(
                     debug_input.value.push('!');
                 }
                 if ui.button("Clear").clicked {
-                    debug_input.value.clear();
+                    debug_input.clear();
                 }
             });
             ui.text(format!("Debug: {debug_input:?}")).dim().wrap();

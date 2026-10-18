@@ -1,40 +1,12 @@
-//! Text cursor shape (DECSCUSR) and pointer shape (OSC 22) requests (#452).
+//! Mouse pointer shape (OSC 22) requests (#452).
 //!
-//! Both are per-frame requests: a frame that does not ask for a shape gets
-//! the terminal default again. The runtime writes an escape only when the
-//! wanted shape changes, and the session restores the defaults on exit, in
-//! the panic hook and on suspend, but only if a shape was ever written.
+//! The shape follows the hovered slot each frame. It travels with the other
+//! terminal metadata (#468): the emitter writes OSC 22 only when the shape
+//! changes and the session restores the default pointer on exit, in the
+//! panic hook and on suspend, only if a shape was ever written. The text
+//! cursor shape is [`Context::set_cursor_shape`].
 
 use super::*;
-
-/// Text cursor shape requested with [`Context::set_cursor_shape`].
-///
-/// Written as DECSCUSR (`CSI n SP q`), which xterm, kitty, WezTerm, Ghostty,
-/// iTerm2, Alacritty, foot, Windows Terminal and tmux understand. The shape
-/// only matters while the text cursor is visible (a focused text input).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CursorShape {
-    /// Full-cell block.
-    Block,
-    /// Underline.
-    Underline,
-    /// Vertical bar (I-beam), the usual shape for text entry.
-    Bar,
-}
-
-impl CursorShape {
-    /// DECSCUSR parameter for this shape.
-    pub(crate) fn decscusr(self, blink: bool) -> u8 {
-        match (self, blink) {
-            (Self::Block, true) => 1,
-            (Self::Block, false) => 2,
-            (Self::Underline, true) => 3,
-            (Self::Underline, false) => 4,
-            (Self::Bar, true) => 5,
-            (Self::Bar, false) => 6,
-        }
-    }
-}
 
 /// Mouse pointer shape requested with [`ContainerBuilder::pointer_shape`].
 ///
@@ -90,33 +62,6 @@ impl PointerShape {
             Self::Help => "help",
             Self::Move => "move",
         }
-    }
-}
-
-impl Context {
-    /// Request a text cursor shape for this frame.
-    ///
-    /// The shape applies while the text cursor is visible (a focused text
-    /// input). Call it every frame you want the shape; a frame without a
-    /// request returns the cursor to the terminal's default shape. The
-    /// runtime writes DECSCUSR only when the wanted shape changes and restores
-    /// the default (`CSI 0 SP q`) on exit, in the panic hook and on suspend.
-    /// Headless backends ignore it. Since 0.26.0.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// # use slt::{CursorShape, TextInputState};
-    /// # let mut input = TextInputState::new();
-    /// # slt::TestBackend::new(30, 3).render(|ui| {
-    /// let r = ui.text_input(&mut input);
-    /// if r.focused {
-    ///     ui.set_cursor_shape(CursorShape::Bar, true);
-    /// }
-    /// # });
-    /// ```
-    pub fn set_cursor_shape(&mut self, shape: CursorShape, blink: bool) {
-        self.pointer.cursor_request = Some((shape, blink));
     }
 }
 

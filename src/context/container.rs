@@ -682,7 +682,7 @@ impl CanvasContext {
                     if col >= cols {
                         break;
                     }
-                    let width = UnicodeWidthStr::width(grapheme).max(1);
+                    let width = crate::width::str_width(grapheme).max(1);
                     if width > cols - col {
                         break;
                     }
@@ -1968,7 +1968,7 @@ impl<'a> ContainerBuilder<'a> {
                         continue;
                     }
                     let symbol = cell.normalized_symbol();
-                    if UnicodeWidthStr::width(symbol.as_str()) as u32 > copy_width - dx {
+                    if crate::width::str_width(symbol.as_str()) as u32 > copy_width - dx {
                         continue;
                     }
                     let x = rect.x.saturating_add(dx);
