@@ -38,7 +38,7 @@ class NativeSmokeTests(unittest.TestCase):
                 patch.object(smoke.subprocess, "run", side_effect=command), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             smoke.main()
-            registry.assert_called_once_with("0.24.0", 60)
+            registry.assert_called_once_with("0.24.0", 60, packages=("superlighttui",))
         return calls
 
     def test_exact_consumer_enables_and_runs_the_native_suite(self):

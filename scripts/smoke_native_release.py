@@ -22,7 +22,8 @@ def main():
         parser.error("native PTY verification requires Unix")
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", args.version):
         parser.error("use an exact X.Y.Z version")
-    verify_registry(args.version, 60)
+    # Only superlighttui is published while slt-wasm is deferred (#367).
+    verify_registry(args.version, 60, packages=("superlighttui",))
     root = Path(__file__).resolve().parents[1]
     with tempfile.TemporaryDirectory(prefix="slt-native-registry-smoke-") as directory:
         consumer = Path(directory)
