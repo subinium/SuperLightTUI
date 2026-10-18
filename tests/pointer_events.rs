@@ -90,6 +90,19 @@ fn two_click_release_pairs_in_one_frame_toggle_both() {
         headers_view(ui, &mut app)
     })
     .expect("frame");
+    // One press per frame: the second click is carried to the next frame so
+    // it is hit-tested against geometry that reflects the first one.
+    assert_eq!(app.toggles, 1);
+    assert!(
+        state.has_pending_input(),
+        "second press queued, not dropped"
+    );
+    while state.has_pending_input() {
+        slt::frame_owned(&mut backend, &mut state, &config, Vec::new(), &mut |ui| {
+            headers_view(ui, &mut app)
+        })
+        .expect("frame");
+    }
     assert_eq!(app.toggles, 2);
     assert_eq!(app.open, [false, true, false, true]);
 }

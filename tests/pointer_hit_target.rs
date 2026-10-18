@@ -143,6 +143,10 @@ fn right_and_double_clicks_follow_the_winner_rule() {
         .click(x, y)
         .build();
     tb.run_with_events(double, |ui| nested_view(ui, false, &mut n));
+    // The second press runs on the next frame (one press per frame).
+    while tb.has_pending_input() {
+        tb.render(|ui| nested_view(ui, false, &mut n));
+    }
     assert_eq!((n.inner_double, n.outer_double), (1, 0));
 
     // With bubbling the ancestor also sees right and double clicks.

@@ -8,8 +8,11 @@
   (the single slot a press at the pointer would hit) and
   `ContainerBuilder::bubble_clicks()` to let an ancestor also receive clicks
   from its descendants (#439).
-- Pointer event model (#442): every press in a frame is kept (two clicks in
-  one batch activate two widgets), and `Response` gains `pressed`, `released`,
+- Pointer event model (#442): no press is dropped any more. Presses that
+  arrive in one input batch are dispatched one per frame, like sequential DOM
+  events, so each is hit-tested against the layout the previous press
+  produced (two clicks in one batch activate two widgets). `Response` gains
+  `pressed`, `released`,
   `drag_started`, `dragging`, `drag_delta`, `middle_clicked` and `modifiers`.
   A press captures the pointer for its target until the release.
   `RunConfig::click_on_release(bool)` (default `false`) makes `clicked` fire

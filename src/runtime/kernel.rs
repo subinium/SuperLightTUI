@@ -104,21 +104,33 @@ pub(crate) fn input_frame(state: &mut FrameState, mut events: Vec<Event>) -> Vec
         matches!(event, Event::Key(key) if key.kind == event::KeyEventKind::Press
             && matches!(key.code, event::KeyCode::Tab | event::KeyCode::BackTab))
     }
+    // #442: at most one mouse press per frame. A press can change what
+    // renders (a header click inserts a body), which shifts the positional
+    // interaction slots the next press would be hit-tested against. Later
+    // presses, and everything after them, are carried to the following
+    // frame so each one meets geometry that reflects the previous press.
+    fn press(event: &Event) -> bool {
+        matches!(event, Event::Mouse(mouse) if matches!(mouse.kind, event::MouseKind::Down(_)))
+    }
     if !state.pending_input.is_empty() {
         state.pending_input.extend(events.drain(..));
         let mut navigated = false;
+        let mut pressed = false;
         while let Some(event) = state.pending_input.front() {
             let is_navigation = navigation(event);
-            if navigated && !is_navigation {
+            let is_press = press(event);
+            if (navigated && !is_navigation) || (pressed && is_press) {
                 break;
             }
             navigated |= is_navigation;
+            pressed |= is_press;
             if let Some(event) = state.pending_input.pop_front() {
                 events.push(event);
             }
         }
         return events;
     }
+    let mut split = events.len();
     if let Some(first) = events.iter().position(navigation) {
         let end = first
             + events[first..]
@@ -127,8 +139,16 @@ pub(crate) fn input_frame(state: &mut FrameState, mut events: Vec<Event>) -> Vec
                 .count();
         // Keep consecutive navigation keys together, but do not let a later
         // character/activation edit the widget that is about to lose focus.
+        split = end;
+    }
+    if let Some(first) = events.iter().position(press)
+        && let Some(second) = events[first + 1..].iter().position(press)
+    {
+        split = split.min(first + 1 + second);
+    }
+    if split < events.len() {
         // Moving events preserves large paste payloads without cloning them.
-        state.pending_input.extend(events.drain(end..));
+        state.pending_input.extend(events.drain(split..));
     }
     events
 }

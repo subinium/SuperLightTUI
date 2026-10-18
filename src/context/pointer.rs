@@ -1,8 +1,9 @@
 //! Pointer model: per-press hit-target resolution (#439) and press /
 //! release / drag gestures with pointer capture (#442).
 //!
-//! Every mouse press in a frame is kept (not only the last one) and resolved
-//! independently to a single *winner* slot: the topmost, innermost
+//! Presses are never dropped (the frame kernel dispatches at most one press
+//! per frame and queues the rest), and each is resolved to a single *winner*
+//! slot: the topmost, innermost
 //! interaction slot whose previous-frame rect contains the press. Responses
 //! report `clicked` / `right_clicked` / `double_clicked` only for that winner,
 //! so a popup button no longer also clicks the container behind it and a

@@ -99,8 +99,14 @@ keeps toggles and selection immediate. `RunConfig::default().click_on_release(tr
 switches to browser-style clicks: `clicked` fires on the frame the button is
 released inside the same widget that was pressed, and dragging off the widget
 before letting go cancels the click. Keyboard activation is the same in both
-modes. Every press in a frame is kept, so two quick clicks on two headers that
-arrive in one batch toggle both.
+modes. No press is dropped: when several presses arrive in one input batch
+(a slow frame, an SSH burst) SLT dispatches them one per frame, the way a
+browser dispatches events one after another, so each press is hit-tested
+against the layout the previous one produced. Two quick clicks on two headers
+toggle both, and if the first click expands a block above the second header,
+the second click lands on whatever is under the pointer after that change.
+Custom `slt::frame` loops must render again while `AppState::has_pending_input()`
+is true; the built-in run loops do this immediately.
 
 Callback-style chaining is available when it reads better:
 

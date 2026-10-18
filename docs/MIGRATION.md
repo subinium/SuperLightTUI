@@ -25,8 +25,10 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
   `Response` has new public fields (`clicked_any`, `hovered_top`, `pressed`,
   `released`, `drag_started`, `dragging`, `drag_delta`, `middle_clicked`,
   `modifiers`): code that builds a `Response { .. }` literal must add
-  `..Response::default()`. Several presses in one frame are now all
-  delivered instead of only the last one.
+  `..Response::default()`. Several presses in one input batch are no longer
+  collapsed into the last one: they are dispatched one per frame, so custom
+  `slt::frame` loops must keep rendering while `AppState::has_pending_input()`
+  is true (as they already must for queued Tab navigation).
 - **Wheel chaining (#440).** A nested scrollable at its end now passes the
   wheel to the enclosing scrollable. Add `.overscroll_contain()` to an inner
   region (popups, pickers) that must keep the wheel. A wheel event that no

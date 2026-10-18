@@ -330,8 +330,10 @@ pub struct Response {
     /// also click the container drawn behind it, and a clickable row inside a
     /// clickable card sets `clicked` on the row only. An ancestor opts back in
     /// with [`ContainerBuilder::bubble_clicks`]; [`clicked_any`](Self::clicked_any)
-    /// keeps the raw "press landed inside my rect" meaning. Every press in a
-    /// frame is kept, so two clicks on two widgets in one batch activate both.
+    /// keeps the raw "press landed inside my rect" meaning. No press is
+    /// dropped: when several arrive in one input batch they are dispatched one
+    /// per frame, like sequential DOM events, so each is hit-tested against
+    /// the layout the previous press produced.
     ///
     /// `clicked` fires on the mouse **press** by default. Widgets that act on
     /// a press (selection, toggles) feel immediate this way, and it matches
