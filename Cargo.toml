@@ -76,7 +76,11 @@ workspace = true
 name = "slt"
 
 [dependencies]
-crossterm = { version = "0.28", features = ["bracketed-paste"], optional = true }
+# Public dependency: re-exported as `slt::crossterm` and used by
+# `event::from_crossterm`. Default features are off only to drop 0.29's new
+# `derive-more` proc-macro (syn + derive_more) from default builds; the
+# remaining set equals crossterm 0.28's defaults.
+crossterm = { version = "0.29", default-features = false, features = ["bracketed-paste", "events", "windows"], optional = true }
 unicode-width = "0.2"
 unicode-segmentation = "1"
 smallvec = "1"
@@ -85,10 +89,15 @@ serde = { version = "1", features = ["derive"], optional = true }
 toml = { version = "1.1", optional = true }
 notify = { version = "8.2", optional = true }
 image = { version = "0.25", optional = true, default-features = false, features = ["png", "jpeg"] }
-compact_str = { version = "0.9.0", default-features = false }
+# Public dependency: `Cell::symbol` is a `CompactString`.
+compact_str = { version = "0.10", default-features = false }
 unicode-bidi = { version = "0.3", optional = true }
 flate2 = { version = "1", optional = true }
 qrcode = { version = "0.14", optional = true, default-features = false }
+# Pinned to 0.26: tree-sitter-highlight 0.27 (and tree-sitter-language
+# 0.1.9) declare `rust-version = "1.90"`, above SLT's MSRV of 1.88, and would
+# break every `syntax-*` feature on 1.88. Revisit when the MSRV reaches 1.90
+# (0.27 also changes `Highlighter::highlight` to five arguments; #475).
 tree-sitter-highlight = { version = "0.26", optional = true }
 tree-sitter-rust = { version = "0.24", optional = true }
 tree-sitter-python = { version = "0.25", optional = true }
