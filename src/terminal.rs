@@ -408,6 +408,12 @@ impl crate::Backend for Terminal {
     fn owns_terminal_session(&self) -> bool {
         true
     }
+
+    fn write_clipboard(&mut self, text: &str) -> io::Result<()> {
+        // Route OSC 52 through the session's own writer so it is ordered with
+        // the frame bytes (and captured by the PTY harness sink).
+        copy_to_clipboard(&mut self.stdout, text)
+    }
 }
 
 impl InlineTerminal {
@@ -763,6 +769,10 @@ impl crate::Backend for InlineTerminal {
     fn owns_terminal_session(&self) -> bool {
         true
     }
+
+    fn write_clipboard(&mut self, text: &str) -> io::Result<()> {
+        copy_to_clipboard(&mut self.stdout, text)
+    }
 }
 
 impl Drop for Terminal {
@@ -787,7 +797,9 @@ impl Drop for InlineTerminal {
 }
 
 mod selection;
-pub(crate) use selection::{SelectionState, apply_selection_overlay, extract_selection_text};
+pub(crate) use selection::{
+    SelectionState, apply_selection_overlay, extract_selection_text, track_selection,
+};
 #[cfg(test)]
 pub(crate) use selection::{find_innermost_rect, normalize_selection};
 

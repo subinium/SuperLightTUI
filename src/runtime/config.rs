@@ -145,6 +145,17 @@ pub struct RunConfig {
     /// go cancels the click, like the browser `click` event. Keyboard
     /// activation is unaffected. Since 0.26.0.
     pub click_on_release: bool,
+    /// Whether SLT's built-in text selection is active while the mouse is
+    /// captured.
+    ///
+    /// When `true` (the default), dragging across text highlights it and the
+    /// release copies it to the clipboard over OSC 52. Drags that a widget
+    /// handles (split handles, scrollbar thumbs, anything that consumes the
+    /// press) never start a selection. Set to `false` for apps with their own
+    /// drag or selection model; nothing is highlighted or copied then. The
+    /// terminal's native selection is still reachable with the emulator's
+    /// bypass modifier (usually Shift-drag). Since 0.26.0.
+    pub text_selection: bool,
 }
 
 impl Default for RunConfig {
@@ -164,6 +175,7 @@ impl Default for RunConfig {
             handle_suspend: true,
             async_message_budget: 100,
             click_on_release: false,
+            text_selection: true,
         }
     }
 }
@@ -325,6 +337,22 @@ impl RunConfig {
     /// ```
     pub fn click_on_release(mut self, enabled: bool) -> Self {
         self.click_on_release = enabled;
+        self
+    }
+
+    /// Enable or disable SLT's built-in text selection and copy-on-release.
+    ///
+    /// See [`RunConfig::text_selection`]. Since 0.26.0.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::RunConfig;
+    /// let cfg = RunConfig::default().mouse(true).text_selection(false);
+    /// assert!(!cfg.text_selection);
+    /// ```
+    pub fn text_selection(mut self, enabled: bool) -> Self {
+        self.text_selection = enabled;
         self
     }
 }

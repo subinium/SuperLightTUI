@@ -252,6 +252,13 @@ if ui.mouse_up().is_some() {
 // Last known pointer position: ui.mouse_pos().
 ```
 
+Drags a widget handles never start a text selection: a press consumed by a
+split handle, a scrollbar thumb, or any other widget keeps SLT's selection
+overlay idle until the release, so dragging a control never highlights text
+or overwrites the clipboard. Apps with their own drag or selection model can
+turn the built-in selection off entirely with
+`RunConfig::default().text_selection(false)`.
+
 `SplitPaneState::dragging` and `ScrollState::dragging` tell you when a
 built-in handle or scrollbar thumb is being held. Both end on release, on
 terminal focus loss, on resize, and on button-less motion, so a release lost
@@ -604,13 +611,10 @@ Notes:
 
 These are current behaviors, not misuse. Design around them for now.
 
-1. **Text selection can start during handle drags.** Dragging a scrollbar
-   thumb or a split handle may also activate the built-in selection overlay
-   and copy text on release.
-2. **Emoji width disagreements.** Some multiplexers and terminals measure ZWJ
+1. **Emoji width disagreements.** Some multiplexers and terminals measure ZWJ
    sequences, skin-tone modifiers, and VS16 emoji differently from SLT, which
    can leave artifacts on that row.
-3. **Missing primitives.** No disabled or active (pressed) widget states, no
+2. **Missing primitives.** No disabled or active (pressed) widget states, no
    context-menu widget (use `right_clicked` plus your own overlay), and no
    cursor-shape API.
 

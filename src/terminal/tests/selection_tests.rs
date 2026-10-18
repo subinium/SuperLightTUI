@@ -124,6 +124,7 @@ fn selection_state_clear_resets() {
         current: Some((3, 4)),
         widget_rect: Some(Rect::new(0, 0, 10, 10)),
         active: true,
+        ..SelectionState::default()
     };
     sel.clear();
     assert_eq!(sel.anchor, None);
@@ -142,6 +143,7 @@ fn extract_selection_text_single_line() {
         current: Some((4, 0)),
         widget_rect: Some(area),
         active: true,
+        ..SelectionState::default()
     };
     let text = extract_selection_text(&buf, &sel, &[]);
     assert_eq!(text, "Hello");
@@ -159,6 +161,7 @@ fn extract_selection_text_multi_line() {
         current: Some((3, 2)),
         widget_rect: Some(area),
         active: true,
+        ..SelectionState::default()
     };
     let text = extract_selection_text(&buf, &sel, &[]);
     assert_eq!(text, "one\nLine two\nLine");
@@ -176,6 +179,7 @@ fn extract_selection_text_clamped_to_widget() {
         current: Some((20, 5)),
         widget_rect: Some(widget),
         active: true,
+        ..SelectionState::default()
     };
     let text = extract_selection_text(&buf, &sel, &[]);
     assert_eq!(text, "ABCDEFGHIJ\nKLMNOPQRST");
@@ -190,6 +194,7 @@ fn extract_selection_text_inactive_returns_empty() {
         current: Some((5, 2)),
         widget_rect: Some(area),
         active: false,
+        ..SelectionState::default()
     };
     assert_eq!(extract_selection_text(&buf, &sel, &[]), "");
 }
@@ -204,6 +209,7 @@ fn apply_selection_overlay_reverses_cells() {
         current: Some((3, 0)),
         widget_rect: Some(area),
         active: true,
+        ..SelectionState::default()
     };
     apply_selection_overlay(&mut buf, &sel, &[]);
     assert!(!buf.get(0, 0).style.modifiers.contains(Modifiers::REVERSED));
@@ -261,6 +267,7 @@ fn extract_selection_text_skips_border_cells() {
         current: Some((39, 2)),
         widget_rect: Some(area),
         active: true,
+        ..SelectionState::default()
     };
     let text = extract_selection_text(&buf, &sel, &content_map);
     // Should NOT contain border characters (│, ╭, ╮, etc.)
@@ -294,6 +301,7 @@ fn apply_selection_overlay_skips_border_cells() {
         current: Some((19, 0)),
         widget_rect: Some(area),
         active: true,
+        ..SelectionState::default()
     };
     apply_selection_overlay(&mut buf, &sel, &content_map);
     // Border cells at x=0 and x=19 should NOT be reversed

@@ -27,7 +27,7 @@ version, and the output of the diagnostics below is very welcome.
 | 256 colors | `TERM` containing `256color` | Environment only | Downsampled to the 16 ANSI colors |
 | No color | `NO_COLOR` set to any non-empty value | Environment (wins over everything else) | n/a: no color codes are emitted |
 | Mouse (click, hover, wheel, drag) | SGR mouse reporting | Opt-in: `RunConfig::default().mouse(true)`. Enables all-motion tracking | Keyboard focus (Tab) and activation (Enter/Space) still work |
-| Text selection + copy | Mouse on, OSC 52 | Built in while the mouse is on; copies on release | Native terminal selection (mouse off, or the terminal's bypass modifier) |
+| Text selection + copy | Mouse on, OSC 52 | Built in while the mouse is on; copies on release. Widget drags (split handles, scrollbar thumbs) never select. `RunConfig::text_selection(false)` turns it off | Native terminal selection (mouse off, or the terminal's bypass modifier) |
 | Clipboard write | OSC 52 | `ui.copy_to_clipboard(..)` always emits it | Silently ignored by the terminal |
 | Hyperlinks | OSC 8 | `ui.link(..)` always emits it, and also opens the URL with the local system opener on click or Enter | Plain styled text; the local opener still runs |
 | Bracketed paste | Bracketed paste mode | Always requested | Pasted text arrives as individual key presses |

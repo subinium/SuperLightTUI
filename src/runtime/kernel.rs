@@ -323,33 +323,15 @@ pub(crate) fn run_frame_kernel(
     #[cfg(not(feature = "crossterm"))]
     let _clipboard_text = ctx.clipboard_text.take();
 
+    // #438: widget-consumed presses and drags never start a text selection.
     #[cfg(feature = "crossterm")]
-    let mut should_copy_selection = false;
-    #[cfg(feature = "crossterm")]
-    for ev in &ctx.events {
-        if let Event::Mouse(mouse) = ev {
-            match mouse.kind {
-                event::MouseKind::Down(event::MouseButton::Left) => {
-                    state.selection.mouse_down(
-                        mouse.x,
-                        mouse.y,
-                        &state.layout_feedback.prev_content_map,
-                    );
-                }
-                event::MouseKind::Drag(event::MouseButton::Left) => {
-                    state.selection.mouse_drag(
-                        mouse.x,
-                        mouse.y,
-                        &state.layout_feedback.prev_content_map,
-                    );
-                }
-                event::MouseKind::Up(event::MouseButton::Left) => {
-                    should_copy_selection = state.selection.active;
-                }
-                _ => {}
-            }
-        }
-    }
+    let should_copy_selection = terminal::track_selection(
+        &mut state.selection,
+        &ctx.events,
+        &ctx.consumed,
+        &state.layout_feedback.prev_content_map,
+        config.text_selection,
+    );
 
     state.focus.focus_index = ctx.focus_index;
     state.focus.prev_focus_count = ctx.rollback.focus_count;
@@ -633,7 +615,7 @@ pub(crate) fn run_frame(
             &state.layout_feedback.prev_content_map,
         );
         if !text.is_empty() {
-            terminal::copy_to_clipboard(&mut io::stdout(), &text)?;
+            term.write_clipboard(&text)?;
         }
         state.selection.clear();
     }
@@ -644,7 +626,7 @@ pub(crate) fn run_frame(
     #[cfg(feature = "crossterm")]
     if terminal_side_effects && let Some(text) = kernel.clipboard_text {
         #[allow(clippy::print_stderr)]
-        if let Err(e) = terminal::copy_to_clipboard(&mut io::stdout(), &text) {
+        if let Err(e) = term.write_clipboard(&text) {
             eprintln!("[slt] failed to copy to clipboard: {e}");
         }
     }

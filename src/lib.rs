@@ -334,6 +334,22 @@ pub trait Backend {
     fn owns_terminal_session(&self) -> bool {
         false
     }
+
+    /// Write `text` to the system clipboard (OSC 52) for a backend that owns
+    /// a terminal session. The built-in terminals write through their own
+    /// output stream; the default writes to process stdout.
+    #[doc(hidden)]
+    fn write_clipboard(&mut self, text: &str) -> io::Result<()> {
+        #[cfg(feature = "crossterm")]
+        {
+            terminal::copy_to_clipboard(&mut io::stdout(), text)
+        }
+        #[cfg(not(feature = "crossterm"))]
+        {
+            let _ = text;
+            Ok(())
+        }
+    }
 }
 
 /// Opaque per-session state that persists between frames.

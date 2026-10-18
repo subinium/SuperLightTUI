@@ -23,6 +23,9 @@
   when content above the viewport changes height; `ScrollState::stick_to_bottom`
   (field, plus the `stick_to_bottom(bool)` builder) follows appended content
   while the view is at the end. Focus reveal wins on the frame focus moves.
+- `RunConfig::text_selection(bool)` (default `true`) turns SLT's built-in
+  text selection and copy-on-release off for apps with their own drag or
+  selection model (#438).
 
 ### Changed
 
@@ -57,6 +60,12 @@
 
 ### Fixed
 
+- Dragging a split handle, a scrollbar thumb, or any widget that consumes the
+  press no longer highlights text or overwrites the clipboard over OSC 52
+  (#438). The selection tracker skips consumed events, and a consumed press
+  keeps it idle until the release even when later drags leave the widget.
+  Clipboard writes now go through the terminal backend's own output stream,
+  ordered with the frame bytes.
 - Nested scrollables chain the wheel (#440): once an inner scrollable reaches
   its end, further wheel events over it scroll the enclosing scrollable
   instead of being swallowed. Each event goes to the innermost region on its

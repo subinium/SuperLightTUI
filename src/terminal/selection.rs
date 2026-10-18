@@ -6,6 +6,64 @@ pub(crate) struct SelectionState {
     pub current: Option<(u32, u32)>,
     pub widget_rect: Option<Rect>,
     pub active: bool,
+    /// A widget consumed the press of the current gesture (#438): the
+    /// selection stays idle until the matching release, even when later drag
+    /// events leave the widget and are not consumed individually.
+    pub captured: bool,
+}
+
+/// Feed this frame's left-button events to the built-in text selection.
+///
+/// Events a widget consumed never start or extend a selection (#438), and a
+/// consumed press keeps the tracker idle for the whole gesture. With
+/// `enabled == false` (`RunConfig::text_selection(false)`) the tracker is off
+/// and any selection is cleared. Returns whether the frame ended a selection
+/// that should be copied.
+pub(crate) fn track_selection(
+    selection: &mut SelectionState,
+    events: &[crate::event::Event],
+    consumed: &[bool],
+    content_map: &[(Rect, Rect)],
+    enabled: bool,
+) -> bool {
+    use crate::event::{Event, MouseButton, MouseKind};
+    if !enabled {
+        if selection.active || selection.anchor.is_some() || selection.captured {
+            selection.clear();
+        }
+        return false;
+    }
+    let mut should_copy = false;
+    for (i, event) in events.iter().enumerate() {
+        let Event::Mouse(mouse) = event else {
+            continue;
+        };
+        let taken = consumed.get(i).copied().unwrap_or(false);
+        match mouse.kind {
+            MouseKind::Down(MouseButton::Left) => {
+                if taken {
+                    // A widget owns this gesture: drop any stale selection.
+                    selection.clear();
+                    selection.captured = true;
+                } else {
+                    selection.captured = false;
+                    selection.mouse_down(mouse.x, mouse.y, content_map);
+                }
+            }
+            MouseKind::Drag(MouseButton::Left) if !taken && !selection.captured => {
+                selection.mouse_drag(mouse.x, mouse.y, content_map);
+            }
+            MouseKind::Up(MouseButton::Left) => {
+                if selection.captured || taken {
+                    selection.captured = false;
+                } else {
+                    should_copy = selection.active;
+                }
+            }
+            _ => {}
+        }
+    }
+    should_copy
 }
 
 impl SelectionState {
@@ -197,6 +255,7 @@ mod tests {
             current: Some(current),
             widget_rect: Some(rect),
             active: true,
+            ..SelectionState::default()
         }
     }
 
