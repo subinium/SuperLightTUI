@@ -1,0 +1,33 @@
+[package]
+name = "slt-ratatui-compare"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Matched-harness SLT vs ratatui comparison benchmark (issue #482). Not published."
+license = "MIT"
+
+# Standalone root: this crate is listed in the main workspace's
+# `workspace.exclude`, and the empty table below keeps cargo from walking up
+# to the parent manifest. Its own Cargo.lock keeps ratatui's dependency tree
+# (crossterm 0.29, lru, ...) out of `cargo audit` / `cargo deny check` /
+# `cargo hack` runs against `superlighttui`.
+[workspace]
+
+[dependencies]
+superlighttui = { path = "../.." }
+# Pinned on purpose. Bump deliberately and re-record the README baseline.
+# `unstable-backend-writer` exposes `CrosstermBackend::writer` / `writer_mut`
+# so the sink can be cleared and measured between frames.
+ratatui = { version = "=0.30.2", features = ["unstable-backend-writer"] }
+# Same major as superlighttui; used to skip wide-glyph covered cells when
+# extracting ratatui text for the equivalence check.
+unicode-width = "0.2"
+
+[features]
+# Installs the counting global allocator in the binary for `alloc` mode.
+# The integration test installs it unconditionally.
+count-alloc = []
+
+[profile.release]
+# Symbols for `sample` / `perf` / Instruments profiles of the release binary.
+debug = 1
