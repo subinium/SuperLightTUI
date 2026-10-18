@@ -16,6 +16,7 @@ use crossterm::style::{Attribute, Print, ResetColor, SetAttribute};
 use crossterm::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate};
 use crossterm::{cursor, execute, queue, terminal};
 
+#[cfg(test)]
 use unicode_width::UnicodeWidthStr;
 
 use crate::buffer::{Buffer, KittyPlacement};
@@ -298,11 +299,11 @@ impl Terminal {
         if sync_guard {
             queue!(self.stdout, BeginSynchronizedUpdate)?;
         }
-        let redrawn_sprixel_rows =
-            previous_only_sprixel_rows(&self.current, &self.previous, |placement| {
-                self.graphics_support
-                    .should_emit_sprixel(sprixel_protocol(&placement.seq))
-            });
+        // Issue #491: image passes run only once an image was placed.
+        let graphics = graphics_passes();
+        let redrawn_sprixel_rows = graphics.map_or_else(RedrawnRows::new, |passes| {
+            (passes.redrawn_rows)(&self.current, &self.previous, self.graphics_support)
+        });
         let width_policy = self.width_policy();
         let cells_changed = flush_buffer_diff_rows(
             &mut self.stdout,
@@ -317,23 +318,31 @@ impl Terminal {
 
         // Kitty graphics: structured image management with IDs and compression.
         // Full-screen mode has no row offset (issue #206).
-        if self.graphics_support.should_emit_kitty() {
-            self.kitty_mgr
-                .flush(&mut self.stdout, &self.current.kitty_placements, 0)?;
+        if let Some(passes) = graphics
+            && self.graphics_support.should_emit_kitty()
+        {
+            (passes.kitty)(
+                &mut self.kitty_mgr,
+                &mut self.stdout,
+                &self.current.kitty_placements,
+                0,
+            )?;
         }
 
         // Generic raw passthrough sequences (non-sprixel) — simple diff.
         flush_raw_sequences(&mut self.stdout, &self.current, &self.previous, 0)?;
 
         // Sprixels (sixel / iTerm2) — per-cell damage-tracked re-blit (#265).
-        flush_sprixels_checked_with_rows(
-            &mut self.stdout,
-            &self.current,
-            &self.previous,
-            0,
-            self.graphics_support,
-            &redrawn_sprixel_rows,
-        )?;
+        if let Some(passes) = graphics {
+            (passes.sprixels)(
+                &mut self.stdout,
+                &self.current,
+                &self.previous,
+                0,
+                self.graphics_support,
+                &redrawn_sprixel_rows,
+            )?;
+        }
 
         if sync_guard {
             queue!(self.stdout, EndSynchronizedUpdate)?;
@@ -420,6 +429,11 @@ impl Terminal {
     /// `color_depth` selects the SGR encoding (truecolor vs 256-color etc.)
     /// exercised by the flush, mirroring [`Terminal::new`]'s argument.
     pub(crate) fn with_sink(width: u32, height: u32, color_depth: ColorDepth) -> Self {
+        // Unit tests push placements into the buffers directly, bypassing
+        // the placement methods that install the image passes (#491). PTY
+        // tests (`pty-test`, own process) go through the widgets instead.
+        #[cfg(test)]
+        enable_graphics_passes();
         let area = Rect::new(0, 0, width, height);
         let (current, previous) = buffer_pair(area);
         Self {
@@ -629,11 +643,11 @@ impl InlineTerminal {
                 .min(rows.saturating_sub(sat_u16(self.height)));
         }
         let row_offset = self.start_row as u32;
-        let redrawn_sprixel_rows =
-            previous_only_sprixel_rows(&self.current, &self.previous, |placement| {
-                self.graphics_support
-                    .should_emit_sprixel(sprixel_protocol(&placement.seq))
-            });
+        // Issue #491: image passes run only once an image was placed.
+        let graphics = graphics_passes();
+        let redrawn_sprixel_rows = graphics.map_or_else(RedrawnRows::new, |passes| {
+            (passes.redrawn_rows)(&self.current, &self.previous, self.graphics_support)
+        });
         let width_policy = self.width_policy();
         let cells_changed = flush_buffer_diff_rows(
             &mut self.stdout,
@@ -651,23 +665,31 @@ impl InlineTerminal {
         // `Vec<KittyPlacement>` copy — `KittyImageManager::flush` applies the
         // offset arithmetically at point of use and stores post-offset y in
         // `prev_placements` for the next frame's diff.
-        if self.graphics_support.should_emit_kitty() {
-            self.kitty_mgr
-                .flush(&mut self.stdout, &self.current.kitty_placements, row_offset)?;
+        if let Some(passes) = graphics
+            && self.graphics_support.should_emit_kitty()
+        {
+            (passes.kitty)(
+                &mut self.kitty_mgr,
+                &mut self.stdout,
+                &self.current.kitty_placements,
+                row_offset,
+            )?;
         }
 
         // Generic raw passthrough sequences (non-sprixel) — simple diff.
         flush_raw_sequences(&mut self.stdout, &self.current, &self.previous, row_offset)?;
 
         // Sprixels (sixel / iTerm2) — per-cell damage-tracked re-blit (#265).
-        flush_sprixels_checked_with_rows(
-            &mut self.stdout,
-            &self.current,
-            &self.previous,
-            row_offset,
-            self.graphics_support,
-            &redrawn_sprixel_rows,
-        )?;
+        if let Some(passes) = graphics {
+            (passes.sprixels)(
+                &mut self.stdout,
+                &self.current,
+                &self.previous,
+                row_offset,
+                self.graphics_support,
+                &redrawn_sprixel_rows,
+            )?;
+        }
 
         if sync_guard {
             queue!(self.stdout, EndSynchronizedUpdate)?;
@@ -774,13 +796,13 @@ impl InlineTerminal {
 }
 
 fn scrollback_rows(text: &str, width: u32) -> Vec<String> {
-    use unicode_segmentation::UnicodeSegmentation;
+    use crate::width::UnicodeSegmentation;
     let width = width.max(1) as usize;
     let mut rows = Vec::new();
     let mut row = String::new();
     let mut used = 0;
     for grapheme in text.graphemes(true) {
-        let cells = UnicodeWidthStr::width(grapheme);
+        let cells = crate::width::unicode_width(grapheme);
         if used > 0 && used + cells > width {
             rows.push(std::mem::take(&mut row));
             used = 0;
@@ -800,6 +822,8 @@ fn scrollback_rows(text: &str, width: u32) -> Vec<String> {
 #[cfg(test)]
 impl InlineTerminal {
     fn with_sink(width: u16, viewport_rows: u16, height: u32, anchor_row: u16) -> Self {
+        // See `Terminal::with_sink`.
+        enable_graphics_passes();
         let area = Rect::new(0, 0, width as u32, height);
         let (current, previous) = buffer_pair(area);
         let start_row = anchor_row.min(viewport_rows.saturating_sub(sat_u16(height)));

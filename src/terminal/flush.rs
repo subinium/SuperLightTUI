@@ -182,7 +182,7 @@ pub(super) fn flush_buffer_diff_rows(
             let char_width = if symbol.len() == 1 {
                 1
             } else {
-                UnicodeWidthStr::width(&*symbol).max(1) as u32
+                crate::width::unicode_width(&symbol).max(1) as u32
             };
             // #441: a wide emoji cluster (VS16, ZWJ, skin tone, flag) is drawn
             // one or two columns depending on the terminal. Never trust its

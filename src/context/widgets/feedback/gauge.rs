@@ -376,7 +376,7 @@ fn compose_bar(
     if let LabelMode::Centered(label) = mode
         && !label.is_empty()
     {
-        let label_w = UnicodeWidthStr::width(label);
+        let label_w = crate::width::unicode_width(label);
         if label_w + 2 <= width_usize {
             // Build the bar then overlay the centered label.
             let mut cells: Vec<String> = Vec::with_capacity(width_usize);

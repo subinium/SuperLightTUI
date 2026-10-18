@@ -603,7 +603,7 @@ impl RowText {
                 continue;
             }
             let symbol = crate::cell::normalize_cell_symbol(grapheme);
-            let cells = UnicodeWidthStr::width(symbol.as_str());
+            let cells = crate::width::unicode_width(symbol.as_str());
             if self.col + cells > self.width {
                 self.full = true;
                 break;

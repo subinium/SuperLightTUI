@@ -832,8 +832,9 @@ Other comparisons:
 - **Dependencies and size.** A default-feature build resolves 26 unique
   normal dependencies against 67 for ratatui 0.30.2 + crossterm. Binary
   size and build time do **not** follow: the stripped release hello-world
-  is about 2.1× larger (see [Binary size](#binary-size)) and a cold release
-  build is about 1.6× slower.
+  is about 2.1× larger (1.6× with the size profile; a dashboard-class app
+  1.7× and 1.5×, see [Binary size](#binary-size)) and a cold release build
+  is about 1.6× slower.
 
 **Where the remaining time goes (macOS `sample`, 0.26):**
 
@@ -862,67 +863,168 @@ Other comparisons:
 
 ### Binary size
 
-Hello-world from #491 (`slt::run` + `ui.text` + `ui.key('q')`; ratatui:
-`ratatui::run` + `render_widget(&str)` + `event::read`), each in its own crate
-with the default `[profile.release]` (no LTO, `opt-level = 3`,
-`panic = "unwind"`), then `strip`. Apple M3 Pro, aarch64 macOS, rustc 1.98.0.
-Reproduce with `bash bench/ratatui-compare/size.sh` and re-record this table
-on every release.
+Two programs, each written for both libraries and built as its own crate by
+`bash bench/ratatui-compare/size.sh` (re-record these tables on every
+release):
 
-| Program (stripped bytes) | v0.25.0 | 0.26 base (`0a8cf43`) | 0.26 (#491) |
-|---|---|---|---|
-| SLT, default (`crossterm`, `bidi`) | 1,063,944 | 1,198,888 | **1,164,360** |
-| SLT, `default-features = false, features = ["crossterm"]` | 996,128 | 1,147,544 | **1,096,520** |
-| ratatui 0.30.2, default | 553,376 | 553,376 | 553,384 |
-| SLT default / ratatui | 1.92x | 2.17x | **2.10x** |
+- **hello**: the #491 hello-world (`slt::run` + `ui.text` + `ui.key('q')`;
+  ratatui: `ratatui::run` + `render_widget(&str)` + `event::read`).
+- **dashboard**: header, separator, a 200-row list and a 100x3 table with
+  selection, a gauge that follows the list, Tab between list and table,
+  Up/Down/j/k, `q` to quit. The ratatui version handles the same keys with
+  its own `ListState` / `TableState` and a focus enum; SLT's widgets do that
+  themselves and also take mouse clicks.
 
-Of the 0.25 → 0.26 growth (+134,944 B default), the accessible output mode
-(#469) accounts for ~32 KiB of `.text` plus a second ~16 KiB frame-kernel
-copy (removed below). The rest was not attributed commit by commit.
+Each is built under two profiles, applied equally to both libraries: the
+default `[profile.release]` (no LTO, `opt-level = 3`, 16 codegen units,
+`panic = "unwind"`) followed by `strip`, and the **size profile** below.
+Apple M3 Pro, aarch64 macOS, rustc 1.98.0, ratatui 0.30.2 with default
+features. Stripped bytes:
 
-**Composition** (default build after #491; `cargo bloat --release --crates`
-and per symbol, `size -m` for sections; cargo-bloat attribution is
+| Program | Library | release, 0.26 base `4ef8ae2` | release, 0.26 | size profile, base | size profile, 0.26 |
+|---|---|---|---|---|---|
+| hello | SLT default (`crossterm`, `bidi`) | 1,232,400 | **1,165,744** | 704,976 | **688,320** |
+| hello | SLT `crossterm` only | 1,164,744 | **1,097,880** | 671,800 | **655,160** |
+| hello | ratatui | 553,384 | 553,384 | 421,568 | 421,568 |
+| dashboard | SLT default | 1,367,208 | **1,267,480** | 754,800 | **738,160** |
+| dashboard | SLT `crossterm` only | 1,299,520 | **1,216,144** | 721,648 | **704,992** |
+| dashboard | ratatui | 759,976 | 759,976 | 504,824 | 504,824 |
+
+| SLT default / ratatui | release, base | release, 0.26 | size profile, base | size profile, 0.26 |
+|---|---|---|---|---|
+| hello | 2.22x | **2.11x** | 1.67x | **1.63x** |
+| dashboard | 1.79x | **1.67x** | 1.50x | **1.46x** |
+
+The hello-world measures SLT's fixed cost, the runtime that every `slt::run`
+program links (see "Why SLT stays larger" below). Widgets add less in SLT
+than in ratatui: going from hello to the dashboard adds ~102 KB to SLT and
+~207 KB to ratatui in the release profile, so the ratio shrinks as an app
+grows. On arm64 macOS `__TEXT` is padded to 16 KiB pages, so stripped sizes
+move in 16 KiB steps; a change of a few KB of code can show as 0 or 16 KiB.
+
+#### Getting a small binary
+
+The size profile is an application setting; a library cannot set it for its
+users. Put it in the application's `Cargo.toml`, either as the release
+profile or as a separate one (`cargo build --profile size`):
+
+```toml
+[profile.size]
+inherits = "release"
+opt-level = "z"     # optimize for size
+lto = "fat"         # whole-program dead-code and duplicate removal
+codegen-units = 1   # one unit, so generic and inline copies are shared
+panic = "abort"     # no unwind tables or landing pads
+strip = true        # drop symbols
+```
+
+On the hello-world it removes 41% (1,165,744 → 688,320 B), on the dashboard
+42% (1,267,480 → 738,160 B). Trade-offs: `opt-level = "z"` is slower code (measure your own frame
+times; `opt-level = "s"` is a middle ground), fat LTO and one codegen unit
+make release builds slower, and `panic = "abort"` turns every panic into
+process exit: SLT's panic hook still restores the terminal first (it is
+abort-aware), but `ui.error_boundary` can no longer recover a panicking
+subtree. Disabling the `bidi` default feature
+(`default-features = false, features = ["crossterm"]`) saves another
+~33-68 KB, and SLT then does not reorder right-to-left text.
+
+**Composition** (default hello after round 2, on `1a6569a`; `cargo bloat --release
+--crates` and per symbol, `size -m` for sections; cargo-bloat attribution is
 approximate):
 
-| Part | SLT | ratatui |
-|---|---|---|
-| `.text` total | 755 KiB | 320 KiB |
-| — `slt` crate / `ratatui_core` + `crossterm` | 399 KiB | 14 + 31 KiB |
-| — std backtrace symbolization (gimli, addr2line, demangle) | 142 KiB | 141 KiB |
-| — drop glue (std + slt) | 55 KiB | 8 KiB |
-| — `hashbrown` + SipHash, slice sort instances | 23 + 21 KiB | ~0 |
-| — `unicode-bidi` / `-segmentation` / `-width` | 11 / 8 / 8 KiB | 0 / 1 / 1 KiB |
-| `__eh_frame` + `__gcc_except_tab` (unwind tables) | 101 + 24 KiB | 47 + 10 KiB |
-| `__const` read-only data (Unicode tables, vtables) | 93 KiB | 50 KiB |
+| Part | SLT default | SLT `crossterm` only | ratatui |
+|---|---|---|---|
+| `.text` total | 754 KiB | 723 KiB | 320 KiB |
+| — `slt` crate / `ratatui_core` + `crossterm` | 406 KiB | 384 KiB | 14 + 31 KiB |
+| — `std` (backtrace symbolization ~142 KiB in both, drop glue, fmt) | 301 KiB | 301 KiB | ~241 KiB |
+| — `unicode-bidi` (plus ~19 KiB of tables) | 11 KiB | — | — |
+| `__eh_frame` + `__gcc_except_tab` (unwind tables) | 105 + 25 KiB | | 47 + 10 KiB |
+| `__const` read-only data (Unicode tables, vtables) | 78 KiB | | 50 KiB |
 
-The `crossterm`-only build drops `unicode-bidi` (code plus ~19 KiB of
-tables); everything else is the same.
+Largest SLT symbols (default hello): `run_frame_kernel` 18.6 KiB,
+`accessible::Session::run` 10.3 KiB, `Context::new` 8.6 KiB,
+`event::reply::Replay::decode` 6.3 KiB, `width::unicode_str_width` (the one
+copy of both width walks) 6.0 KiB, `terminal::flush::flush_buffer_diff_rows`
+5.9 KiB, `layout::tree::build_children` 5.8 KiB, `layout::render::render_inner`
+5.7 KiB. By area: layout 91 KiB (tree 29, render 22, flexbox 15, focus 12),
+accessible mode 36 KiB, `context::core` 31 KiB, buffer 27 KiB, frame kernel
+23 KiB, terminal replies and probes (`event::reply`, `terminal::query`,
+`terminal::capabilities`) 35 KiB, SLT's own input parser (`event::native`)
+20 KiB, flush 13 KiB.
+`serde`, `image`, tree-sitter and the syntax tables are absent with default
+features, and since this change so are the Kitty, Sixel and iTerm2 flush
+passes unless the program draws an image.
 
-Largest SLT symbols (default build): `run_frame_kernel` 19.9 KiB,
-`accessible::Session::run` 10.2 KiB, `event::reply::Replay::decode` 6.3 KiB,
-`terminal::flush::flush_buffer_diff_rows` 6.2 KiB, `width::str_width`
-6.0 KiB (plus three 3.1 KiB copies), `Context::new` 5.7 KiB,
-`layout::render::render_inner` 5.0 KiB, `unicode_bidi::BidiInfo::new`
-4.7 KiB. By module: `runtime::accessible` 32 KiB, `runtime::kernel` 24 KiB,
-`layout::tree` 21 KiB, `layout::render` 20 KiB, `event::native` 20 KiB and
-`event::reply` 18 KiB (SLT's own input parser; `crossterm` itself
-contributes 6 KiB), `context::core` 17 KiB, inlined `Graphemes::next`
-copies 17 KiB, `str_width` and its inlined `unicode-width` walks 31 KiB,
-`layout::flexbox` 15 KiB, `buffer` 12 KiB. `serde`, `image`, tree-sitter and
-the syntax tables are absent with default features.
+**Why SLT stays larger.** ratatui links only what the program calls: a
+`&str` render pulls 14 KiB of `ratatui_core`, and the app's own loop does
+the rest. `slt::run` is the whole runtime, and most of it is reached through
+run-time switches, not calls the app makes: input parsing for every
+protocol SLT negotiates, the terminal probes and their reply parser, layout
+and focus, the accessible output mode (`SLT_ACCESSIBLE`), the F12 debug
+overlay and Ctrl+F12 inspector, mouse selection, Ctrl+Z suspend, the panic
+hook, title / progress and clipboard delivery. A static linker keeps
+everything that is reachable, so these stay in every binary; removing them
+would remove default behaviour. What #491 changed is code that was
+duplicated, or reachable only through an API the program may never call.
 
-**Why SLT stays about 2x ratatui.** ratatui links only what the program
-calls: a `&str` render pulls 14 KiB of `ratatui_core`. `slt::run` reaches
-the whole runtime through run-time switches (layout, input parser, focus,
-overlays, notifications, tooltips, debug overlay, inspector, accessible mode,
-terminal probes, kitty/sixel image passes), so a hello-world already
-contains the code a full app uses. That code, its drop glue and its unwind
-tables make up most of the ~611 KB difference; #491 only removed
-duplication.
+**Reductions in #491, round 2** (stripped bytes, default features, release
+profile; steps measured on `1a6569a`, each on top of the previous one;
+totals against the final base `4ef8ae2`, whose other changes since
+`1a6569a` add ~6 KiB of code and one 16 KiB page to the reduced
+hello-world; examples are built from this repository,
+`cargo build --release --example ...`):
 
-**Reductions in #491** (stripped bytes, same toolchain, each step measured on
-top of the previous one; `codegen-units = 16` reshuffles duplicate copies
-between steps, so per-step numbers carry some partition noise):
+| Change | hello | dashboard | `examples/demo` | `examples/widgets_tour` |
+|---|---|---|---|---|
+| Base `1a6569a` | 1,232,400 | 1,367,208 | 2,354,688 | 1,585,224 |
+| One out-of-line `Graphemes::next` (`crate::width::UnicodeSegmentation`) | −49,568 | | | |
+| Image passes installed by the first placement | −17,184 | | | |
+| One out-of-line `unicode-width` walk (`str_width`, `unicode_width`) | −16,448 | | | |
+| Subtotal on `1a6569a` | 1,149,200 (−6.8%) | 1,250,904 (−8.5%) | 2,172,408 (−7.7%) | 1,435,888 (−9.4%) |
+| Final base `4ef8ae2` | 1,232,400 | 1,367,208 | 2,354,720 | 1,585,240 |
+| **Final** | **1,165,744 (−5.4%)** | **1,267,480 (−7.3%)** | **2,172,384 (−7.7%)** | **1,435,864 (−9.4%)** |
+
+- `unicode_segmentation::Graphemes::next` and the `unicode-width` string
+  walk are `#[inline]` upstream, so every codegen unit that segmented or
+  measured text carried its own copy (five and four in the hello-world,
+  many more in apps that use widgets) plus inlined copies inside callers.
+  Crate-local wrappers keep one out-of-line copy each. Calls were already
+  out of line at the per-grapheme sites; `str_width` measures printable
+  ASCII inline (one column per byte, as the tables give) before calling
+  the walk, so the round-1 objection (ASCII cells paying for a call) no
+  longer applies. Tests compare both wrappers with the upstream crates.
+- `Terminal::flush` and `InlineTerminal::flush` reach the Kitty upload pass
+  and the Sixel / iTerm2 damage tracker only through a table that
+  `Buffer::kitty_place` / `Buffer::sprixel_place` install. Before the first
+  placement no buffer holds one and each pass is a no-op on empty lists
+  (a test checks this on a terminal that forces every protocol), so the
+  output bytes are unchanged. Programs that draw an image link the passes
+  as before.
+- Tried and reverted: making `accessible::Session` non-generic over the app
+  closure. It adds 108 B to single-closure apps and only helps apps that
+  call several `run*` entry points.
+
+Frame time (`bench/ratatui-compare`, `time slt`, six interleaved runs of
+the base and the round-2 binary, median of medians): on `1a6569a` every
+workload is between −2.9% and +0.5% of the base; against the final base
+`4ef8ae2` between −1.1% and +1.0% (dashboard sink 10.5 → 10.4 µs, list
+23.6 → 23.6, table 57.2 → 57.2, nested 161.9 → 161.2, idle 10.5 → 10.4).
+
+**Target (set from the round-2 profile): met.** The profile showed about
+45 KiB of standalone duplicate or image-only functions in the default
+hello-world (five `Graphemes::next` copies, four width walks, the image
+passes and their hash tables), plus copies inlined into callers that
+cargo-bloat does not separate. Target: at least 5% off the 0.26 base on the same toolchain
+for both the hello-world (≤ 1,170,780 B) and the dashboard
+(≤ 1,298,848 B) in the default release profile, with no feature or API
+removed and no workload slower by more than 2%. Result against the final
+base: hello −5.4% (1,165,744 B), dashboard −7.3% (1,267,480 B), frame time
+within ±1.1%. The hello margin is one page: a few KiB of new runtime code
+can cross it. The round-1 absolute number (1,140,000 B) is not met
+(25,744 B away); the base grew by 34 KB between the rounds with the v0.26
+frame-path work.
+
+**Round 1** (on `0a8cf43`, same toolchain):
 
 | Change | hello (issue) | `examples/hello` | `examples/demo` | `examples/widgets_tour` |
 |---|---|---|---|---|
@@ -931,9 +1033,6 @@ between steps, so per-step numbers carry some partition noise):
 | `run_frame_kernel` takes `&mut dyn FnMut` (one copy, not one per run mode) | −17,584 | −17,600 | −17,552 | −17,536 |
 | Debug bar formats ms / fps with integers (no float formatting) | −17,032 | −17,032 | −16,552 | −48 |
 | **Total** | **−34,536 (−2.9%)** | **−51,096 (−4.2%)** | **−627,496 (−23.3%)** | **−248,336 (−14.5%)** |
-
-The `crossterm`-only hello-world went from 1,147,544 to 1,096,520 B
-(−51,024, −4.4%).
 
 - `finish` was monomorphized once per `.col(..)` / `.row(..)` closure, each
   copy carrying the whole ~4 KB container body: 122 copies, ~520 KB of
@@ -948,44 +1047,16 @@ The `crossterm`-only hello-world went from 1,147,544 to 1,096,520 B
   near 2^32, 2^40 and 2^48 µs against `format!`, including decimal ties).
   Apps that format floats themselves (charts, gauges) still link it.
 
-Frame time (`bench/ratatui-compare`, `time slt`, three interleaved runs of
-the base and the #491 binary, median of medians): every SLT workload is
-within ±2% of the base (dashboard mem 97.1 → 97.6 µs, sink 190.7 → 189.2 µs;
-nested mem 852.8 → 855.2 µs, sink 1033.5 → 1028.7 µs; list, table, one-cell
-and idle likewise), inside run-to-run spread.
+**Follow-ups** (measured, not landed):
 
-**Target (set from this profile): not met.** The profile attributed about
-80 KB of the default hello-world to duplication (second kernel copy, float
-formatting for the debug bar, per-unit copies of `str_width` and
-`Graphemes::next`). The target was 1,140,000 B stripped (≥ 5% under the
-0.26 base) without removing features or slowing frames; #491 reached
-1,164,360 B. The rejected step:
-
-- Un-inlining `width::str_width` saved another 16.6 KB in hello-world and
-  49.7 KB in `demo`, but cost ~5% (≈5 µs) on every 200x60 in-memory
-  workload (dashboard, one-cell, idle), reproducibly across interleaved runs.
-  Keeping the default walk inline and moving only the ambiguous-wide walk out
-  of line saved 16.5 KB and cost the same. Reverted. A size-neutral version
-  needs the per-grapheme callers (`buffer`, `layout::render`) to measure
-  ASCII runs in bulk instead of calling `str_width` per cell.
-
-**Follow-ups** (measured, not landed; the call sites are in files under
-concurrent change):
-
-- `unicode_segmentation::Graphemes::next` is copied into 4 codegen units
-  (~10 KiB duplicate in hello, ~24 KiB in `demo`): `buffer`, `cell`,
-  `layout::{tree,render,focus}`. A crate-local wrapper with one out-of-line
-  `next` would keep a single copy. `next` is already an out-of-line call at
-  those sites, but measure frame time as for `str_width` above.
-- Direct `UnicodeWidthStr::width` calls (`terminal::flush`,
-  `terminal::effects`, tooltips) keep inlined copies of the width table walk.
-- `accessible::Session<I, F>` (~16 KiB) is generic over the app closure; only
-  apps that call `run` with several closure types duplicate it.
-
-**User options** (not SLT's result): `lto = true`, `codegen-units = 1`,
-`opt-level = "z"`, `panic = "abort"` and `strip = true` in the application's
-`[profile.release]` remove most cross-unit duplication and landing pads;
-measure them on the application rather than this hello-world.
+- Tooltips (~4-5 KiB in a hello-world) are emitted by the frame kernel from
+  a list only `.tooltip()` fills; the same install-on-use table would drop
+  them from apps without tooltips, but the hooks live in `context/core.rs`
+  and `context/runtime.rs`, which change often.
+- Title / progress / status emission (~6.5 KiB) and the width probe
+  (~2 KiB) are driven by public `RunConfig` fields (`title`, `width_probe`),
+  so a field assignment must keep working without a registration call;
+  they stay linked.
 
 ## 6. Detecting regressions
 

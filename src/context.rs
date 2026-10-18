@@ -28,8 +28,10 @@ use crate::widgets::{
     TextareaState, ToastLevel, ToastState, ToolApprovalState, TreeState, ValidateTrigger,
     color_hex_label, parse_hex_color,
 };
-use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use crate::width::UnicodeSegmentation;
+use unicode_width::UnicodeWidthChar;
+#[cfg(test)]
+use unicode_width::UnicodeWidthStr;
 
 fn slt_assert(condition: bool, msg: &str) {
     if !condition {

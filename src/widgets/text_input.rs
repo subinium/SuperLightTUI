@@ -5,7 +5,7 @@
 
 use super::*;
 
-use unicode_segmentation::UnicodeSegmentation as _;
+use crate::width::UnicodeSegmentation as _;
 
 mod code_editor;
 pub use code_editor::*;

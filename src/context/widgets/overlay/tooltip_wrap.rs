@@ -17,7 +17,7 @@ pub(in crate::context) fn wrap_tooltip_text(text: &str, max_width: usize) -> Vec
 
         for word in paragraph.split_whitespace() {
             for chunk in split_word_for_width(word, max_width) {
-                let chunk_width = UnicodeWidthStr::width(chunk.as_str());
+                let chunk_width = crate::width::unicode_width(chunk.as_str());
 
                 if current.is_empty() {
                     current = chunk;

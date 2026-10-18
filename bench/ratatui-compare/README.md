@@ -92,15 +92,30 @@ cargo run --release --features count-alloc -- alloc [filter] # allocations + req
 cargo run --release -- bytes [filter]                        # first/steady bytes, one-cell and idle frame dump
 cargo run --release -- show [filter] [--dump]                # text equivalence (exit 1 on mismatch)
 cargo test                                                   # deterministic gate (debug and release agree)
-bash size.sh                                                 # stripped hello-world size, SLT vs ratatui (#491)
+bash size.sh                                                 # stripped hello / dashboard sizes, SLT vs ratatui (#491)
 ```
 
-`size.sh` builds the #491 hello-world programs as separate crates under
-`target/size` with the default release profile and prints a markdown table
-for docs/internals/performance.md ("Binary size"). Re-record it on every release.
-`SLT_HELLO_MAX_BYTES=<n>` makes it exit 1 when the stripped default SLT
-binary is larger; gate only on large deltas, since toolchain and linker
-updates move the numbers by a few KB.
+`size.sh` builds two programs for each library as separate crates under
+`target/size` and prints markdown tables for docs/internals/performance.md
+("Binary size"). Re-record them on every release.
+
+- **hello**: the #491 hello-world (`slt::run` + `ui.text` + `ui.key('q')`;
+  ratatui: `ratatui::run` + `render_widget(&str)` + `event::read`).
+- **dashboard**: header, separator, a 200-row list and a 100x3 table, both
+  with selection, a gauge that follows the list, Tab to move focus,
+  Up/Down/j/k to move the selection and `q` to quit. The ratatui version
+  handles the same keys itself with `ListState`, `TableState` and a focus
+  enum (SLT's widgets do it on their own, and also take mouse clicks).
+
+Each program is built for SLT with default features, SLT with only
+`crossterm`, and ratatui 0.30.2, under two profiles applied equally: the
+default `[profile.release]` (then `strip`) and a `size` profile
+(`opt-level = "z"`, `lto = "fat"`, `codegen-units = 1`, `panic = "abort"`,
+`strip = true`). `SLT_HELLO_MAX_BYTES=<n>` makes it exit 1 when the stripped
+default SLT hello (release profile) is larger; gate only on large deltas,
+since toolchain and linker updates move the numbers by a few KB and macOS
+arm64 pads `__TEXT` to 16 KiB pages, so a few KB of code can move the file
+by 0 or 16 KiB.
 
 `filter` is a substring of the case name (`<workload>/<slt|ratatui>/<mem|sink>`),
 for example `sink`, `d_nested` or `slt/sink`. Every report starts with host,
@@ -277,7 +292,7 @@ Out of scope for this change, still open on #482:
   `PtyBackend` builds a new `Terminal` per render, so every frame is a full
   redraw).
 - Prototype modes not ported: `live`, `sizes`, `micro`, `loop`. The
-  hello-world binary-size probe is `size.sh` (#491).
+  binary-size probe (hello and dashboard, two profiles) is `size.sh` (#491).
 - No CI job (gate on PRs, timing artifact on main), and
   docs/internals/performance.md is updated by hand from this output, not
   generated.

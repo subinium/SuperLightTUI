@@ -640,7 +640,7 @@ impl Context {
             let content_w = tooltip
                 .lines
                 .iter()
-                .map(|l| UnicodeWidthStr::width(l.as_str()) as u32)
+                .map(|l| crate::width::unicode_width(l.as_str()) as u32)
                 .max()
                 .unwrap_or(0);
             let box_w = content_w.saturating_add(4).min(area_w);

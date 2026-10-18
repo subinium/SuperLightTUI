@@ -613,7 +613,7 @@ pub(super) fn apply_ansi_to_screen_with(
     bytes: &[u8],
     width_of: &dyn Fn(&str) -> usize,
 ) {
-    use unicode_segmentation::UnicodeSegmentation;
+    use crate::width::UnicodeSegmentation;
 
     let put_text = |screen: &mut [Vec<String>], text: &str, row: usize, col: &mut usize| {
         for grapheme in text.graphemes(true) {

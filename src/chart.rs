@@ -568,7 +568,7 @@ impl ChartRenderer {
                 let mut cursor = 0usize;
 
                 for (segment, style) in row.segments {
-                    let width = unicode_width::UnicodeWidthStr::width(segment.as_str());
+                    let width = crate::width::unicode_width(segment.as_str());
                     line.push_str(&segment);
                     if let Some(color) = style.fg {
                         spans.push((cursor, cursor + width, color));

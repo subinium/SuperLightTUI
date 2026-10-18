@@ -1,7 +1,7 @@
 //! Single terminal cell — the smallest unit of the render buffer.
 
+use crate::width::UnicodeSegmentation;
 use compact_str::CompactString;
-use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthChar;
 
 use crate::style::Style;

@@ -249,7 +249,7 @@ impl Context {
         for row in &stripped_rows {
             for (i, cell) in row.iter().enumerate() {
                 if i < col_count {
-                    col_widths[i] = col_widths[i].max(UnicodeWidthStr::width(cell.as_str()));
+                    col_widths[i] = col_widths[i].max(crate::width::unicode_width(cell.as_str()));
                 }
             }
         }
@@ -271,7 +271,7 @@ impl Context {
                 for (i, w) in col_widths.iter().enumerate() {
                     let raw = hdr.get(i).map(String::as_str).unwrap_or("");
                     let display_text = Self::md_strip(raw);
-                    let cell_w = UnicodeWidthStr::width(display_text.as_str());
+                    let cell_w = crate::width::unicode_width(display_text.as_str());
                     let padding: String = " ".repeat(w.saturating_sub(cell_w));
                     ui.styled(" ", bold_style);
                     ui.styled(&display_text, bold_style);
@@ -298,7 +298,7 @@ impl Context {
                 for (i, w) in col_widths.iter().enumerate() {
                     let raw = row.get(i).map(String::as_str).unwrap_or("");
                     let display_text = Self::md_strip(raw);
-                    let cell_w = UnicodeWidthStr::width(display_text.as_str());
+                    let cell_w = crate::width::unicode_width(display_text.as_str());
                     let padding: String = " ".repeat(w.saturating_sub(cell_w));
                     ui.styled(" ", text_style);
                     Self::render_md_inline_into(ui, raw, text_style, bold_style, code_style);

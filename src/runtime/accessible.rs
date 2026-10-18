@@ -26,7 +26,7 @@
 use std::io;
 
 #[cfg(any(feature = "crossterm", test))]
-use unicode_segmentation::UnicodeSegmentation;
+use crate::width::UnicodeSegmentation;
 
 #[cfg(any(feature = "crossterm", test))]
 use super::FrameState;

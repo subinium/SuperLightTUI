@@ -145,7 +145,7 @@ impl Context {
         for i in 0..visible_count {
             let abs = state.offset + i;
             let label = gutter_fn(abs);
-            let w = UnicodeWidthStr::width(label.as_str());
+            let w = crate::width::unicode_width(label.as_str());
             if w > gutter_w {
                 gutter_w = w;
             }
@@ -161,7 +161,7 @@ impl Context {
                 for i in 0..visible_count {
                     let abs = state.offset + i;
                     let label = gutter_fn(abs);
-                    let label_w = UnicodeWidthStr::width(label.as_str());
+                    let label_w = crate::width::unicode_width(label.as_str());
                     let pad = gutter_w.saturating_sub(label_w);
                     let mut padded = String::with_capacity(label.len() + pad + 1);
                     for _ in 0..pad {

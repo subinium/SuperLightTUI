@@ -108,14 +108,14 @@ impl Context {
     pub fn definition_list(&mut self, items: &[(&str, &str)]) -> Response {
         let max_key_width = items
             .iter()
-            .map(|(k, _)| UnicodeWidthStr::width(*k))
+            .map(|(k, _)| crate::width::unicode_width(k))
             .max()
             .unwrap_or(0);
 
         let _ = self.col(|ui| {
             for (key, value) in items {
                 ui.line(|ui| {
-                    let key_display_w = UnicodeWidthStr::width(*key);
+                    let key_display_w = crate::width::unicode_width(key);
                     let pad = max_key_width.saturating_sub(key_display_w);
                     let mut padded = String::with_capacity(key.len() + pad);
                     padded.extend(std::iter::repeat_n(' ', pad));
@@ -144,7 +144,7 @@ impl Context {
     /// ```
     pub fn divider_text(&mut self, label: &str) -> Response {
         let w = self.width();
-        let label_len = UnicodeWidthStr::width(label) as u32;
+        let label_len = crate::width::unicode_width(label) as u32;
         // Reserve `label_len + 2` for the label and its single-space padding on
         // each side, then split the remaining width evenly. On odd widths the
         // right separator is one cell longer (no asymmetry that's visible).

@@ -11,7 +11,6 @@ use super::popover::place_popover;
 use super::*;
 use crate::widgets::{MenuBarState, MenuCursor, MenuItem, MenuState, level_items, step_selectable};
 use smallvec::SmallVec;
-use unicode_width::UnicodeWidthStr;
 
 /// Glyph marking an entry that opens a submenu.
 const SUBMENU_MARK: &str = "▸";
@@ -39,11 +38,11 @@ impl MenuColumns {
         for item in items.iter().filter(|item| !item.is_separator()) {
             columns.label = columns
                 .label
-                .max(UnicodeWidthStr::width(item.label.as_str()) as u32);
+                .max(crate::width::unicode_width(item.label.as_str()) as u32);
             if let Some(hint) = &item.shortcut {
                 columns.shortcut = columns
                     .shortcut
-                    .max(UnicodeWidthStr::width(hint.as_str()) as u32);
+                    .max(crate::width::unicode_width(hint.as_str()) as u32);
             }
             columns.submenu |= item.has_submenu();
         }
@@ -70,11 +69,11 @@ impl MenuColumns {
         let mut row = String::with_capacity(inner + 8);
         row.push(' ');
         row.push_str(&item.label);
-        let label_width = UnicodeWidthStr::width(item.label.as_str());
+        let label_width = crate::width::unicode_width(item.label.as_str());
         row.extend(std::iter::repeat_n(' ', self.label as usize - label_width));
         if self.shortcut > 0 {
             let hint = item.shortcut.as_deref().unwrap_or("");
-            let hint_width = UnicodeWidthStr::width(hint);
+            let hint_width = crate::width::unicode_width(hint);
             row.extend(std::iter::repeat_n(
                 ' ',
                 2 + self.shortcut as usize - hint_width,
@@ -540,7 +539,7 @@ impl Context {
         let mut spans: SmallVec<[Rect; 8]> = SmallVec::new();
         let mut x = bar_rect.x;
         for (title, _) in &state.menus {
-            let width = UnicodeWidthStr::width(title.as_str()) as u32 + 2;
+            let width = crate::width::unicode_width(title.as_str()) as u32 + 2;
             spans.push(Rect::new(x, bar_rect.y, width, 1));
             x = x.saturating_add(width);
         }

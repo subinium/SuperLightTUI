@@ -2,8 +2,7 @@
 //! renderers.
 
 use super::*;
-use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
+use crate::width::UnicodeSegmentation;
 
 pub(super) struct GridSpec<'a> {
     pub(super) x_ticks: &'a [f64],
@@ -91,7 +90,7 @@ pub(super) fn overlay_legend_row(
 ) -> Vec<String> {
     let (symbol, name, color) = item;
     let text = format!("{symbol} {name}");
-    let mut cells = vec![String::new(); cols.min(UnicodeWidthStr::width(text.as_str()))];
+    let mut cells = vec![String::new(); cols.min(crate::width::unicode_width(text.as_str()))];
     let end = write_text_cells(&mut cells, 0, &text);
     cells.truncate(end);
     plot_styles[..end].fill(axis_style);
@@ -198,7 +197,7 @@ pub(super) fn map_value_to_cell(
 
 pub(super) fn center_text(text: &str, width: usize) -> String {
     let text = clip_text_cells(text, width);
-    let text_width = UnicodeWidthStr::width(text.as_str());
+    let text_width = crate::width::unicode_width(text.as_str());
     let left = (width - text_width) / 2;
     let right = width - text_width - left;
     format!("{}{}{}", " ".repeat(left), text, " ".repeat(right))
@@ -211,7 +210,7 @@ pub(crate) fn clip_text_cells(text: &str, max_cols: usize) -> String {
     let mut result = String::new();
     let mut width = 0usize;
     for grapheme in text.graphemes(true) {
-        let grapheme_width = UnicodeWidthStr::width(grapheme);
+        let grapheme_width = crate::width::unicode_width(grapheme);
         if width.saturating_add(grapheme_width) > max_cols {
             break;
         }
@@ -225,7 +224,7 @@ pub(crate) fn write_text_cells(cells: &mut [String], start: usize, text: &str) -
     let mut cursor = start;
     let mut last_origin: Option<usize> = None;
     for grapheme in text.graphemes(true) {
-        let width = UnicodeWidthStr::width(grapheme);
+        let width = crate::width::unicode_width(grapheme);
         if width == 0 {
             if let Some(origin) = last_origin {
                 cells[origin].push_str(grapheme);
@@ -265,7 +264,7 @@ pub(crate) fn truncate_label(text: &str, max_cols: usize) -> String {
     if max_cols == 0 {
         return String::new();
     }
-    let total = UnicodeWidthStr::width(text);
+    let total = crate::width::unicode_width(text);
     if total <= max_cols {
         return text.to_string();
     }
@@ -276,7 +275,7 @@ pub(crate) fn truncate_label(text: &str, max_cols: usize) -> String {
     let mut result = String::new();
     let mut width = 0usize;
     for grapheme in text.graphemes(true) {
-        let cw = UnicodeWidthStr::width(grapheme);
+        let cw = crate::width::unicode_width(grapheme);
         if width + cw > target {
             break;
         }
