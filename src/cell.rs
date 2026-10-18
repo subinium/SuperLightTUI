@@ -204,15 +204,16 @@ impl PartialEq for Cell {
 
 #[inline]
 fn symbol_eq(a: &CompactString, b: &CompactString) -> bool {
-    const INLINE_COMPARE_BYTES: usize = 8;
     let (a, b) = (a.as_bytes(), b.as_bytes());
     if a.len() != b.len() {
         return false;
     }
-    if a.len() <= INLINE_COMPARE_BYTES {
-        a.iter().zip(b).all(|(x, y)| x == y)
-    } else {
-        a == b
+    match a.len() {
+        0 => true,
+        1 => a[0] == b[0],
+        2 => a[0] == b[0] && a[1] == b[1],
+        3 => a[0] == b[0] && a[1] == b[1] && a[2] == b[2],
+        _ => a == b,
     }
 }
 
