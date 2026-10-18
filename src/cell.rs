@@ -352,6 +352,8 @@ pub(crate) mod test_strategies {
             1 => prop::sample::select(vec![
                 "世", "界", "한", "ｱ", "👩\u{200D}💻", "❤\u{FE0F}", "🇰🇷", "\u{1100}\u{1161}\u{11A8}",
                 "e\u{301}", "क\u{094D}\u{0937}",
+                // Prepend (GB9b): joins the following ASCII letter.
+                "\u{0600}", "\u{0D4E}", "\u{110BD}",
             ])
             .prop_map(str::to_string),
             1 => prop::sample::select(vec![

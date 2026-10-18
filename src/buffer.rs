@@ -100,11 +100,34 @@ pub(crate) fn needs_bidi_reorder(s: &str) -> bool {
         return false;
     }
     s.chars().any(|ch| {
-        matches!(
-            unicode_bidi::bidi_class(ch),
-            R | AL | RLE | RLO | RLI | LRE | LRO | LRI | FSI | PDI | PDF
-        )
+        may_trigger_bidi(ch)
+            && matches!(
+                unicode_bidi::bidi_class(ch),
+                R | AL | RLE | RLO | RLI | LRE | LRO | LRI | FSI | PDI | PDF
+            )
     })
+}
+
+/// Cheap prefilter for [`needs_bidi_reorder`]: `false` only for code points
+/// whose bidi class is never R, AL or an explicit embedding, override or
+/// isolate, so their binary-searched class lookup can be skipped.
+///
+/// Covers the text that dominates terminal UIs (ASCII, Latin, Greek,
+/// Cyrillic, general punctuation, box drawing, CJK, Hangul). An exhaustive
+/// test checks every scalar against `unicode_bidi::bidi_class`.
+#[cfg(feature = "bidi")]
+#[inline]
+fn may_trigger_bidi(ch: char) -> bool {
+    match ch as u32 {
+        // ASCII through Armenian.
+        0..=0x058F => false,
+        // General punctuation: only RLM, the embeddings/overrides and the
+        // isolates qualify.
+        0x2000..=0x206F => matches!(ch as u32, 0x200F | 0x202A..=0x202E | 0x2066..=0x2069),
+        // Letterlike symbols through CJK, Yi and Hangul syllables.
+        0x2070..=0xD7FF => false,
+        _ => true,
+    }
 }
 
 /// Reorder one logical-order line into visual (display) order per UAX #9.
@@ -1134,7 +1157,48 @@ impl Buffer {
         } else {
             s
         };
+        // Mostly-ASCII text with a few non-ASCII glyphs (table rules, list
+        // markers, dashes): write the standalone ASCII runs in bulk and only
+        // segment the stretches between them. A standalone byte is bounded by
+        // grapheme breaks on both sides (see `standalone_ascii`), so the
+        // stretches segment exactly as they would inside the whole string.
+        let bytes = s.as_bytes();
         let mut x = x;
+        let mut i = 0;
+        while i < bytes.len() {
+            if x >= self.area.right() {
+                break;
+            }
+            let start = i;
+            if standalone_ascii(bytes, i) {
+                i += 1;
+                while i < bytes.len() && standalone_ascii(bytes, i) {
+                    i += 1;
+                }
+                self.set_printable_ascii(x, y, &s[start..i], style, link, clip);
+                x = x.saturating_add((i - start) as u32);
+                continue;
+            }
+            i += 1;
+            while i < bytes.len() && !standalone_ascii(bytes, i) {
+                i += 1;
+            }
+            x = self.set_graphemes(x, y, &s[start..i], style, link, clip);
+        }
+    }
+
+    /// The per-grapheme write loop of [`Self::set_string_inner`] for a
+    /// stretch of `s` that starts and ends on grapheme boundaries. Returns the
+    /// column after the last written grapheme.
+    fn set_graphemes(
+        &mut self,
+        mut x: u32,
+        y: u32,
+        s: &str,
+        style: Style,
+        link: Option<&compact_str::CompactString>,
+        clip: Option<Rect>,
+    ) -> u32 {
         for grapheme in s.graphemes(true) {
             if x >= self.area.right() {
                 break;
@@ -1163,6 +1227,7 @@ impl Buffer {
             let width = self.set_grapheme_normalized(x, y, symbol, width, style, link, clip);
             x = x.saturating_add(width);
         }
+        x
     }
 
     /// Write a printable-ASCII string: one width-1 cell per byte, clipped to
@@ -1874,6 +1939,24 @@ pub(crate) fn row_diff_range(
         .rposition(|(a, b)| a != b)
         .unwrap_or(first);
     Some((lo + first, lo + last + 1))
+}
+
+/// Whether `bytes[i]` is a printable-ASCII byte that forms its own extended
+/// grapheme cluster, with a break before and after it.
+///
+/// Under UAX #29 two ASCII code points never join except CR LF, and no ASCII
+/// code point is Prepend, Extend, ZWJ, SpacingMark or a regional indicator.
+/// So a printable byte is standalone when its neighbors are ASCII (or the
+/// string ends): a non-ASCII predecessor could be Prepend (GB9b) and a
+/// non-ASCII successor could be Extend/ZWJ/SpacingMark (GB9, GB9a). A run
+/// break between two standalone bytes also resets the regional-indicator and
+/// emoji-ZWJ state (GB11-GB13), so a stretch between standalone bytes
+/// segments the same on its own as inside the whole string.
+#[inline]
+fn standalone_ascii(bytes: &[u8], i: usize) -> bool {
+    is_printable_ascii_byte(bytes[i])
+        && (i == 0 || bytes[i - 1].is_ascii())
+        && bytes.get(i + 1).is_none_or(u8::is_ascii)
 }
 
 /// Overwrite every cell of `cells` with `blank` (a space with no hyperlink).
@@ -3367,6 +3450,27 @@ mod tests {
                 after.sort_unstable();
                 prop_assert_eq!(before, after);
             }
+        }
+    }
+}
+
+#[cfg(all(test, feature = "bidi"))]
+mod bidi_prefilter_tests {
+    use super::may_trigger_bidi;
+    use unicode_bidi::BidiClass::{AL, FSI, LRE, LRI, LRO, PDF, PDI, R, RLE, RLI, RLO};
+
+    #[test]
+    fn prefilter_never_skips_a_bidi_trigger() {
+        for ch in (0..=u32::from(char::MAX)).filter_map(char::from_u32) {
+            let triggers = matches!(
+                unicode_bidi::bidi_class(ch),
+                R | AL | RLE | RLO | RLI | LRE | LRO | LRI | FSI | PDI | PDF
+            );
+            assert!(
+                !triggers || may_trigger_bidi(ch),
+                "U+{:04X} has a bidi-triggering class but is prefiltered out",
+                ch as u32
+            );
         }
     }
 }
