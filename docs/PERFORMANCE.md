@@ -30,41 +30,73 @@ which is called once per tick by `run_with` / `run_inline_with` /
 
 The figures below are **actual `cargo bench` results**, not targets. Each is
 the criterion median for the named bench in `benches/benchmarks.rs`. The
-phase budgets in the table above are still per-phase targets; these are
-end-to-end whole-pipeline measurements (closure → build → compute → collect
-→ render → diff, and for `flush/*` the ANSI emit into an in-memory sink).
+phase budgets in the table above are still per-phase targets.
 
-> Measured on: Apple M3 Pro, macOS 26.4, rustc 1.95.0, `--release`
-> (criterion default profile), 2026-05-29.
->
-> **Indicative only.** These numbers were captured on a developer machine
-> while other compiles were running concurrently, so they carry scheduler
-> noise (note the wide animation interval). Treat them as a
-> sanity-check order of magnitude, not a contract. Re-run
-> `cargo bench --bench benchmarks` on a *quiet* machine before quoting them
-> in a release announcement, and re-measure on your own hardware (the
-> commands are in [§3](#3-measuring-performance)).
+What each bench covers matters:
 
-| Bench | Terminal size | Measured (median) | Notes |
+- `full_render_*`, `full_render_dims/*`, `animation/*` and
+  `dashboard_200x60/slt` go through `TestBackend::render`, which runs
+  `Buffer::reset` + the frame kernel (closure → `build_tree` → `compute` →
+  `collect_all` → `render`) into an in-memory buffer. They do **not** diff
+  against a previous frame, hash rows, or emit ANSI (`src/test_utils.rs`).
+- `buffer_diff_200x50` is the cell diff alone; `flush/*` is
+  `flush_buffer_diff` (diff + ANSI emit) into a `Vec<u8>` sink on prepared
+  buffers, with no layout or render work.
+
+No single bench measures a full production frame. The matched-harness
+numbers in [§5](#vs-ratatui-matched-harness) do.
+
+> **Two columns, two revisions.** "pre-v0.23" is the table this guide
+> shipped with (Apple M3 Pro, macOS 26.4, rustc 1.95.0, 2026-05-29). It
+> matches pre-v0.23 code, not the current release. "HEAD" is `15fd63a`
+> (v0.25.0), Apple M3 Pro, rustc 1.98.0, 2026-10. Both were captured on a
+> busy developer machine, so treat them as order of magnitude, not a
+> contract. Re-run `cargo bench --bench benchmarks` on a quiet machine
+> before quoting them, and re-measure on your own hardware
+> ([§3](#3-measuring-performance)).
+
+| Bench | Terminal size | pre-v0.23 (median) | HEAD `15fd63a` (median) | Notes |
+|---|---|---|---|---|
+| `full_render_dims/80x24` | 80×24 | ~18 µs | ~67 µs | small dashboard, no diff/flush |
+| `full_render_dims/120x40` | 120×40 | ~37 µs | ~65 µs | header + 20 rows + progress |
+| `full_render_dims/300x100` | 300×100 | ~189 µs | ~247 µs | ultra-wide, no diff/flush |
+| `dashboard_200x60/slt` | 200×60 | ~81 µs | ~117 µs | see §5 |
+| `buffer_diff_200x50` | 200×50 | ~48 µs | not re-measured | cell diff only (no emit) |
+| `flush/full_redraw_200x60` | 200×60 | ~309 µs | ~503 µs | full ANSI emit into `Vec<u8>` |
+| `flush/full_redraw_300x100` | 300×100 | ~784 µs | not re-measured | ultra-wide full ANSI emit |
+| `flush/static_200x60` | 200×60 | — | ~0.12 µs | clean rows only, see caveat below |
+| `animation/churn_200x60` | 200×60 | ~92 µs | not re-measured | changing content + sparkline |
+
+**Regression since v0.23.** A same-session A/B of `3eb59a9` (pre-v0.23)
+against `15fd63a` on the same host measured:
+
+| Bench | `3eb59a9` | `15fd63a` | Change |
 |---|---|---|---|
-| `full_render_dims/80x24` | 80×24 | ~18 µs | small dashboard baseline |
-| `full_render_120x40` | 120×40 | ~37 µs | header + 20 rows + progress |
-| `full_render_dims/300x100` | 300×100 | ~189 µs | ultra-wide full render |
-| `buffer_diff_200x50` | 200×50 | ~48 µs | cell-diff only (no emit) |
-| `flush/full_redraw_200x60` | 200×60 | ~309 µs | full ANSI emit into `Vec<u8>` |
-| `flush/full_redraw_300x100` | 300×100 | ~784 µs | ultra-wide full ANSI emit |
-| `animation/churn_200x60` | 200×60 | ~92 µs | per-frame changing content + sparkline |
+| `full_render_dims/120x40` | 39.0 µs | 65.1 µs | +67% |
+| `dashboard_200x60/slt` | 90.4 µs | 116.7 µs | +29% |
+| `flush/full_redraw_200x60` | 358 µs | 503 µs | +41% |
 
-What to read from these: at 120×40 the framework build→diff cost is well
-under 0.1 ms, leaving the 16.6 ms budget effectively untouched. Even the
-ultra-wide 300×100 *render* path stays in the low-hundreds-of-µs range. The
-**flush** path is an order of magnitude heavier than the render path —
-`full_redraw_300x100` is the single largest committed cost here — because it
-walks every changed cell and emits SGR/ANSI bytes. That is exactly the path
-the sibling flush-allocation issue targets, and these committed figures are
-its before/after baseline. The `flush/full_redraw_*` numbers are *full
-redraws* (every cell dirty), which is the pathological case; steady-state
-frames touch a small fraction of cells (see `flush/sparse_change_*`).
+This is a real slowdown, not noise. A large share of it is fixed per-frame
+cost: `Buffer::reset` on a 200×60 buffer takes ~70–75 µs, against ~10 µs
+for ratatui's `Buffer::reset`. That is why the 80×24 and 120×40 renders now
+cost about the same. Optimization work is tracked in the performance issues
+linked from the audit tracker.
+
+**`flush/static_200x60` caveat.** This bench flushes two identical buffers
+whose rows are already *clean*, so the per-row hash skip (#171) short-circuits
+every row and the bench reports ~0.12 µs. Production frames never hit that
+path. `Buffer::reset()` marks every row dirty (`src/buffer.rs:1257`), so every
+real frame, idle ones included, recomputes all row hashes before any skip. In
+the matched harness an idle 200×60 dashboard still costs ~219 µs per frame,
+and ~170 µs of that is the flush step (row-hash refresh + diff + swap +
+reset). Do not quote the static bench as the idle-frame cost.
+
+What to read from these: every committed bench is well inside a 16.6 ms
+frame. The **flush** path is several times heavier than the render path,
+because it walks every cell and emits SGR/ANSI bytes. The
+`flush/full_redraw_*` numbers are *full redraws* (every cell dirty), the
+worst case for output volume; steady-state frames emit few bytes (see
+`flush/sparse_change_*`). They still pay the row-hash and reset cost above.
 
 ## 2. Allocation budget
 
@@ -180,7 +212,29 @@ roughly 12.7 MB history-related difference did **not** disappear: undo remains
 whole-document snapshots capped by count, not a byte-bounded or delta history.
 Do not infer retained-memory improvement from the lower per-frame requests.
 
-The steady-state render path targets zero unnecessary heap allocations.
+### Steady-state allocations: target vs measured
+
+The goal is zero unnecessary heap allocations on the steady-state render
+path. **The goal is not met.** In the release-mode harness from
+[§5](#vs-ratatui-matched-harness) (counting global allocator, SLT `15fd63a`,
+counted after warm-up, per frame):
+
+| Workload | SLT calls / requested bytes | ratatui 0.30.2 calls / requested bytes |
+|---|---|---|
+| Dashboard 200×60 (static, idle, or one changing cell) | 54 / 27.7 KB | 74 / 6.3 KB |
+| 10k-item `ui.list`, 100×50 | 20,018 / 13.8 MB | 20,056 / 4.16 MB |
+| 10k items via `ui.virtual_list`, 100×50 | 160 / 56 KB | — |
+| `ui.table` 1000×6, 200×60 | 9,038 / 1.15 MB | 13,082 / 2.60 MB |
+| `ui.table` 1000×6, `page_size = 57` | 551 / 71 KB | — |
+| 60 nested bordered boxes, 240×80 | 285 / 168 KB | 273 / 46 KB |
+
+Calls include reallocations. Requested bytes are allocation sizes, not RSS.
+SLT makes fewer allocation calls than ratatui on the dashboard and the table,
+but it requests 3.3–4.4× more bytes per frame on the dashboard, the full
+list, and the nested layout. Full-collection widgets scale with item count, not
+with what is visible. The reuse below removes specific allocations; it does
+not make the frame allocation-free.
+
 What we reuse, and where:
 
 | Per-frame allocation | Status | Issue / version |
@@ -201,8 +255,8 @@ v0.18.2 (#64) so the `Command` enum stays ≤ 128 bytes — small `Command`s
 (text, style change) don't pay for the fat container variants on every
 push.
 
-**Target**: no unnecessary heap allocations on the steady-state render
-path. New widget contributions should justify any frame-rate-path
+**Target (not yet met, see the table above)**: no unnecessary heap
+allocations on the steady-state render path. New widget contributions should justify any frame-rate-path
 allocation in the PR description; reviewers should push back on
 `String::from`, `format!`, `Vec::new` inside the `frame()` body unless the
 allocation is one-shot or amortized.
@@ -461,54 +515,118 @@ unchanged by the C++ query fix.
 
 | Framework | Render model | Per-frame allocations | Profiler |
 |---|---|---|---|
-| **SLT (TUI)** | Immediate-mode, `Buffer` diff vs prev frame | Target 0 (steady state) | F12 overlay + `cargo bench` |
+| **SLT (TUI)** | Immediate-mode, `Buffer` diff vs prev frame | Reuses command/collection buffers, but still allocates every frame (54 calls / 27.7 KB on a 200×60 dashboard; scales with item count). Zero is a goal, not met | F12 overlay + `cargo bench` |
 | **React** | Virtual DOM diff, retained components | Many (props, vnodes, fibers) | React DevTools Profiler |
 | **Flutter** | Retained widget tree, RenderObject layout | Few (per-build only) | Flutter DevTools Timeline |
 | **iOS UIKit** | Retained view hierarchy, Auto Layout solver | Few (constraint solver only) | Instruments |
-| **ratatui** | Immediate-mode, full re-render every frame | Many (widget value types) | manual `Instant::elapsed` |
+| **ratatui** | Immediate-mode, `Buffer` diff vs prev frame | Per-widget value types (74 calls / 6.3 KB on the same dashboard; scales with item count) | manual `Instant::elapsed` |
 
-SLT is closest to ratatui in render model — both rebuild the widget
-tree every frame and diff the resulting `Buffer` against the previous
-one. The difference is alloc-reuse: SLT recycles `commands`,
-`FrameData`, flexbox scratch, and group names across frames, where most
-ratatui apps allocate fresh widget value types each `Frame::render`.
-For typical TUIs, both are limited by terminal flush bandwidth (one
-syscall per ANSI command was ~10× the framework cost until #172
-introduced 64 KiB `BufWriter`).
+SLT is closest to ratatui in render model. Both rebuild the UI every frame
+and diff the resulting `Buffer` against the previous one. SLT recycles
+`commands`, `FrameData`, flexbox scratch, and group names across frames,
+but that reuse does not give it a smaller allocation footprint: it makes
+fewer allocation calls than ratatui on the dashboard and table workloads,
+yet requests 3.3–4.4× more bytes per frame on the dashboard, full list,
+and nested workloads (see
+[§2](#steady-state-allocations-target-vs-measured)). Terminal write and
+emulator parse time were not measured here. At 60 FPS both frameworks use a
+small fraction of the 16.6 ms budget on these workloads.
 
-### vs ratatui (reference)
+### vs ratatui (matched harness)
 
-`benches/benchmarks.rs` ships a `dashboard_200x60/slt` bench that renders a
-representative dashboard — a bold header, 20 text rows, and a progress/gauge
-— at 200×60 into the **in-memory `TestBackend`**, so the sample is SLT's
-build → layout → render → diff cost only (the OS-level flush syscall is
-excluded by construction).
+**Why the old figure was wrong.** Earlier versions of this guide compared
+`dashboard_200x60/slt` (~81 µs) with ratatui 0.29 `Terminal::draw` on
+ratatui's `TestBackend` (~183 µs) and concluded SLT was "roughly half"
+ratatui's cost. That comparison was unequal. SLT's `TestBackend::render`
+runs reset + the frame kernel with **no diff and no flush**
+(`src/test_utils.rs`), while ratatui's `Terminal::draw` diffs the buffer and
+calls the backend on every frame. The old description of the SLT bench as
+"build → layout → render → diff" was also wrong. Do not quote that figure.
 
-A one-off head-to-head against ratatui 0.29 rendering the *same* logical
-dashboard via `ratatui::backend::TestBackend` + `Terminal::draw` measured:
+**Method.** A standalone release-mode harness (not committed to this repo)
+drives both frameworks through their real per-frame path into a `Vec<u8>`:
 
-| Framework | Per-frame (median) |
-|---|---|
-| **SLT** (`dashboard_200x60/slt`) | ~81 µs |
-| **ratatui 0.29** (reference, not bench-linked) | ~183 µs |
+- **SLT**: `slt::frame_owned` with a custom `Backend` whose `flush` mirrors
+  `Terminal::flush` (synchronized-output markers, row-hash refresh,
+  `flush_buffer_diff`, buffer swap, `reset`/`reset_with_bg` as `run_with`
+  configures it). Kitty/sixel passes are no-ops for this content.
+- **ratatui 0.30.2** (crossterm 0.29): `Terminal<CrosstermBackend<Vec<u8>>>`
+  and `Terminal::draw`.
+- Same logical UI, terminal size, and selected row for both. `Instant`
+  loop, at least 200 warm-up frames and 0.3 s, then at least 300 samples;
+  median and p95 per frame; 3 runs.
+- Apple M3 Pro, macOS, rustc 1.98.0, SLT `15fd63a` (v0.25.0), 2026-10.
+  The host was busy, so absolute numbers carry noise; the ratios held
+  across runs.
 
-- **Why ratatui is not a `[dev-dependencies]` entry**: ratatui 0.29 pulls a
-  transitively advisory `lru 0.12` (RUSTSEC-2026-0002) that would fail the
-  release `cargo audit` gate for a benchmark-only comparison. The ratatui
-  figure above is therefore a **recorded reference measurement** (ratatui
-  0.29, same HW and method) rather than a CI-regenerated number; only the SLT
-  arm is shipped as a live bench.
-- **Methodology**: identical widget count and terminal size; both rendered
-  into the framework's own in-memory test backend; criterion median,
-  reference HW above; same caveats apply (indicative, re-measure on a quiet
-  machine).
-- **What it shows, and what it doesn't**: on this small static dashboard,
-  SLT's per-frame cost is roughly half of ratatui's. This is a single
-  workload, not a sweep — the two render models are close enough (both
-  immediate-mode, both diff a `Buffer`) that the result will shift with
-  widget mix, terminal size, and the exact ratatui widgets chosen. It is a
-  starting data point, not a definitive ranking. To reproduce:
-  `cargo bench --bench benchmarks -- dashboard_200x60`.
+| Workload | SLT median (p95) | ratatui median (p95) | SLT / ratatui |
+|---|---|---|---|
+| Dashboard, 200×60 | 215 µs (235) | 107 µs (117) | 2.0× |
+| 10k-item list, 100×50, `ui.list` | 1,832 µs | 648 µs | 2.8× |
+| 10k-item list, 100×50, `ui.virtual_list` | 258 µs | — | — |
+| Table 1000×6, 200×60, `ui.table` | 1,032 µs | 591 µs | 1.7× |
+| Table 1000×6, 200×60, `page_size = 57` | 643 µs | — | — |
+| 60 nested bordered boxes, 240×80 | 1,255 µs | 358 µs | 3.5× |
+| Dashboard, one cell changes per frame | 221 µs | 108 µs | 2.0× |
+| Dashboard, idle (nothing changes) | 219 µs | 108 µs | 2.0× |
+| Dashboard, in-memory `TestBackend` (old, unequal harness) | 115 µs | 106 µs | 1.1× |
+
+**Result: SLT is currently about 1.7–3.5× slower per frame than ratatui on
+matched workloads (2× on the dashboard).** The last row reruns the old
+in-memory setup at HEAD: SLT without diff against ratatui with diff. Even
+with that head start SLT is slightly slower. On the matched dashboard, most
+of the gap is the flush step (~165–185 µs mean for SLT vs ~86–90 µs for
+ratatui).
+
+Output bytes per frame:
+
+| Workload | SLT | ratatui |
+|---|---|---|
+| Full redraw, dashboard 200×60 | 1,008 | 1,268 |
+| Full redraw, 10k list 100×50 | 2,309 | 3,873 |
+| Full redraw, table 200×60 | 5,292 | 6,488 |
+| Idle frame | 16 | 25 |
+| One changed cell | 44 | 32 |
+
+**Where SLT wins:**
+
+- **Output bytes.** Full redraws emit 18–40% fewer bytes, and idle frames
+  emit only the 16-byte synchronized-output pair. One-cell updates emit
+  *more* (44 vs 32) because SLT writes a redundant SGR reset.
+- **Dependencies.** A default-feature build resolves 26 unique normal
+  dependencies against 67 for ratatui 0.30.2 + crossterm. Binary size and
+  build time do **not** follow: a stripped release hello-world is 1,039 KiB
+  vs 540 KiB (1.9× larger), and a cold release build is about 1.6× slower.
+- **Viewport-limited widgets.** `ui.virtual_list` over 10k items (258 µs)
+  is faster than ratatui's `List` built from all 10k items (648 µs). This is
+  not like-for-like, since a ratatui app can slice its items to the viewport
+  too. Paging the table (`page_size = 57`, 643 µs) closes most of the gap
+  but is still slower than ratatui's full table (591 µs).
+
+**Root causes (macOS `sample` profiles):**
+
+- **Buffer reset.** `Buffer::reset` costs ~70–75 µs at 200×60 against
+  ~10 µs for ratatui, and runs every frame.
+- **Row hashing.** `reset()` dirties every row, so every flush recomputes
+  every row hash. `recompute_line_hashes` is 42.5% of the dashboard sink
+  profile, idle frames included.
+- **Cell writes.** In the nested-boxes workload, `Buffer::set_char` is 78%
+  of the profile and `normalize_cell_symbol` alone is 62%: each single-char
+  border write goes through the grapheme path (`set_grapheme_visual`) and
+  re-normalizes its symbol. `build_tree`, flexbox `compute`,
+  and `collect_all` together are about 1%. Layout is not the bottleneck.
+- **Full-collection widgets.** `ui.list` and `ui.table` do work and
+  allocate per item, not per visible row (see §2).
+
+Optimization work is tracked in the performance issues linked from the
+audit tracker. Until it lands, do not describe SLT as faster than ratatui.
+
+- **Why ratatui is not a `[dev-dependencies]` entry**: ratatui 0.29 pulled
+  the advisory `lru 0.12` (RUSTSEC-2026-0002), which would fail the release
+  `cargo audit` gate. ratatui 0.30.2 resolves `lru 0.18.5`, so that reason
+  may no longer apply, but no in-repo comparison bench exists yet. Only the
+  SLT `dashboard_200x60/slt` arm ships, and it measures the in-memory kernel
+  only: `cargo bench --bench benchmarks -- dashboard_200x60`.
 
 ## 6. Detecting regressions
 
