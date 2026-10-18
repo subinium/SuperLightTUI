@@ -56,6 +56,10 @@
   and from 9,038 to 129 allocations (matched harness, `bench/ratatui-compare`).
 - Table rows are built into one `String` each, with no per-cell `String`, and
   the header and rule no longer clone labels or join per-column strings.
+- `ListState::set_items` / `clear_items` release view-index, prefix-sum and
+  item-height buffers sized for a much larger previous list (#416): replacing
+  100k items with 10 now retains under 1 KB instead of ~1.6 MB.
+  `TableState::set_rows` already released them; filter changes keep capacity.
 
 ### Security
 

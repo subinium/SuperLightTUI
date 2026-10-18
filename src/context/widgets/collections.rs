@@ -257,7 +257,7 @@ mod v026_list_table_viewport_tests {
         let mut harness = Resizable {
             state: crate::FrameState::default(),
         };
-        let mut render = |ui: &mut Context, list: &mut ListState, table: &mut TableState| {
+        let render = |ui: &mut Context, list: &mut ListState, table: &mut TableState| {
             ui.text("header");
             let _ = ui.row(|ui| {
                 let _ = ui.container().grow(1).col(|ui| {

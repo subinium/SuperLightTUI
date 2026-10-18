@@ -568,10 +568,28 @@ impl ListState {
         self.item_search_cache = self.items.iter().map(|item| item.to_lowercase()).collect();
         if let Some(heights) = self.item_heights.as_mut() {
             heights.resize(self.items.len(), 1);
+            release_excess_capacity(heights);
         }
         self.heights_dirty = true;
         self.viewport_offset = self.viewport_offset.min(self.items.len().saturating_sub(1));
         self.rebuild_view();
+        // Bulk replacement (`set_items` / `clear_items`) is the only path that
+        // can shrink the list by orders of magnitude, so release index buffers
+        // sized for the old data here (#416). Filter changes keep capacity to
+        // avoid reallocating on every keystroke.
+        release_excess_capacity(&mut self.view_indices);
+        // `heights_dirty` is set, so the prefix sum is rebuilt before any read.
+        self.row_prefix.clear();
+        release_excess_capacity(&mut self.row_prefix);
+    }
+}
+
+/// Shrink `buf` when its capacity is far above its length, so a collection
+/// replaced by a much smaller one does not keep the old index buffers alive.
+fn release_excess_capacity<T>(buf: &mut Vec<T>) {
+    const SLACK: usize = 64;
+    if buf.capacity() > buf.len().saturating_mul(2).saturating_add(SLACK) {
+        buf.shrink_to(buf.len());
     }
 }
 
@@ -3017,6 +3035,31 @@ mod v026_selection_index_tests {
         table.set_filter("zzz");
         assert!(!table.set_selected_index(7));
         assert_eq!(table.selected_index(), None);
+    }
+
+    #[test]
+    fn set_items_to_a_smaller_list_releases_index_buffers() {
+        // #416: replacing 10k items with 2 used to keep ~10k-entry
+        // view/prefix/height buffers alive for the life of the state.
+        let mut list = ListState::new((0..10_000).map(|i| i.to_string()).collect::<Vec<_>>())
+            .with_item_heights(vec![2; 10_000]);
+        list.ensure_row_prefix();
+        list.set_items(vec!["a", "b"]);
+        assert!(list.view_indices.capacity() <= 66, "view kept its capacity");
+        assert!(list.row_prefix.capacity() <= 66, "prefix kept its capacity");
+        assert!(
+            list.item_heights
+                .as_ref()
+                .is_some_and(|h| h.capacity() <= 66),
+            "heights kept their capacity"
+        );
+        assert_eq!(list.visible_indices(), [0, 1]);
+        list.ensure_row_prefix();
+        assert_eq!(list.row_prefix(), [0, 2, 4]);
+        // Filter churn keeps capacity (no reallocation per keystroke).
+        let mut big = ListState::new((0..1_000).map(|i| i.to_string()).collect::<Vec<_>>());
+        big.set_filter("999");
+        assert!(big.view_indices.capacity() >= 1_000);
     }
 
     proptest::proptest! {
