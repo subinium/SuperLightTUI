@@ -72,8 +72,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: bash scripts/api_audit.sh --strict
-      - run: python3 scripts/check_doc_examples_test.py --toolchain stable --compile-negative
-      - run: python3 scripts/check_doc_examples.py --toolchain stable
+      - name: Doc snippet checker self-test (unmarked fence, E0599, discarded must_use)
+        run: python3 scripts/check_doc_examples_test.py --toolchain stable --compile-negative
+      # No paths: README.md, docs/**/*.md and both skill trees. Every Rust fence
+      # must be classified; maintained ones compile with #![deny(warnings)].
+      - name: Compile every maintained doc snippet (warnings denied)
+        run: python3 scripts/check_doc_examples.py --toolchain stable
       - run: python3 -m unittest discover -s scripts -p smoke_wasm_release_test.py
       - run: python3 -m unittest discover -s scripts -p smoke_native_release_test.py
 

@@ -107,6 +107,7 @@ typos
 
 # 7. Public API/documentation contract
 bash scripts/api_audit.sh --strict
+python3 scripts/check_doc_examples.py   # compiles every maintained doc snippet, warnings denied
 
 # 8. No-default-features (catches missing #[cfg] gates)
 cargo check -p superlighttui --no-default-features
@@ -133,7 +134,7 @@ cargo deny check
 | Clippy | `cargo clippy --all-features -- -D warnings` | Yes |
 | Test | `cargo test --all-features` | Yes |
 | Typos | `typos` | Yes |
-| API Audit | `bash scripts/api_audit.sh --strict` | Yes |
+| API Audit | `bash scripts/api_audit.sh --strict` + `python3 scripts/check_doc_examples.py` | Yes |
 | Check (no-default) | `cargo check -p superlighttui --no-default-features` | Yes |
 | Check (WASM) | `cargo check -p slt-wasm --target wasm32-unknown-unknown` | Yes |
 | Feature Combinations | `cargo hack check --each-feature --no-dev-deps` | Yes |
@@ -330,6 +331,32 @@ src/
 ├── palette.rs                  # 256-color palette definitions
 └── test_utils.rs               # TestBackend, EventBuilder for headless testing
 ```
+
+## Documentation Map
+```
+docs/
+├── README.md            # Index — must link every maintained page (tests/docs_contract.rs)
+├── guide/NN-*.md        # Learning path, read in order: quick start → state (canonical
+│                        #   previous-frame rule) → patterns → interaction → overlays →
+│                        #   theming → animation → testing → runtime modes → browser →
+│                        #   terminal compatibility
+├── coming-from/         # web.md, ratatui.md
+├── reference/           # widgets, state, cookbook, examples, features, migration,
+│                        #   debugging, ai-guide, complete-reference (condensed AI map)
+├── internals/           # design-principles (API rules + naming), architecture,
+│                        #   custom-backends, performance, rustdoc-guide, demo-guide
+├── archive/             # Dated snapshots, not maintained
+├── README.{ko,ja,es,zh-CN}.md  # Translated summaries; English is authoritative
+└── <OLD_NAME>.md        # One-line "This page moved to ..." stubs for pre-0.26 paths
+```
+- Each concept has one canonical page; others link to it. The previous-frame rule lives in
+  `docs/guide/02-state.md#the-previous-frame-rule`.
+- Every ```` ```rust ```` fence in README.md, docs/ and the skills is either compiled
+  (`<!-- slt-check: {"name": ..., "features": [...], "context": "module"|"ui"} -->`, built with
+  `#![deny(warnings)]`) or marked `<!-- slt-check-skip: <reason> -->`. Only `docs/internals/`
+  and `docs/archive/` may use the file-level illustrative default. Run
+  `python3 scripts/check_doc_examples.py` after any doc or API change.
+- `.agents/skills/` and `.claude/skills/` must stay byte-identical.
 
 ## Commit Style
 - Conventional Commits: `feat:`, `fix:`, `refactor:`, `perf:`, `test:`, `docs:`, `chore:`
