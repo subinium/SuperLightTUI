@@ -211,7 +211,7 @@ fn run_with_inner(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Res
             true,
             input_wait,
             &mut || term.handle_resize(),
-            &config,
+            InputPolicy::fullscreen(&config),
             &mut on_suspend,
         )? {
             break;
@@ -331,7 +331,7 @@ fn run_inline_with_inner(
     let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
     let mut term = InlineTerminal::new(
         height,
-        config.effective_mouse_mode(),
+        config.effective_inline_mouse_mode(),
         config.kitty_keyboard,
         config.report_all_keys,
         color_depth,
@@ -388,7 +388,7 @@ fn run_inline_with_inner(
             true,
             input_wait,
             &mut || term.handle_resize(),
-            &config,
+            InputPolicy::inline(&config),
             &mut on_suspend,
         )? {
             break;
@@ -446,7 +446,7 @@ fn run_static_with_inner(
     let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
     let mut term = InlineTerminal::new(
         dynamic_height,
-        config.effective_mouse_mode(),
+        config.effective_inline_mouse_mode(),
         config.kitty_keyboard,
         config.report_all_keys,
         color_depth,
@@ -510,7 +510,7 @@ fn run_static_with_inner(
             true,
             input_wait,
             &mut || term.handle_resize(),
-            &config,
+            InputPolicy::inline(&config),
             &mut on_suspend,
         )? {
             break;
@@ -621,6 +621,36 @@ fn input_poll_wait(state: &FrameState, size: (u32, u32), idle: Duration) -> Dura
 /// when only the last geometry survives. The SIGCONT/resume redraw path in
 /// [`run_with`] is unaffected — it calls `handle_resize` directly, outside this
 /// function.
+/// The `RunConfig` input settings the poller applies, with the mouse mode
+/// already resolved for the run mode (#444).
+#[cfg(feature = "crossterm")]
+#[derive(Clone, Copy)]
+pub(super) struct InputPolicy {
+    handle_ctrl_c: bool,
+    handle_suspend: bool,
+    mouse_mode: crate::MouseMode,
+}
+
+#[cfg(feature = "crossterm")]
+impl InputPolicy {
+    /// Fullscreen runs: the automatic mouse default is `Drag` / `Click`.
+    pub(super) fn fullscreen(config: &RunConfig) -> Self {
+        Self {
+            handle_ctrl_c: config.handle_ctrl_c,
+            handle_suspend: config.handle_suspend,
+            mouse_mode: config.effective_mouse_mode(),
+        }
+    }
+
+    /// Inline and static runs: the automatic mouse default is `Off`.
+    pub(super) fn inline(config: &RunConfig) -> Self {
+        Self {
+            mouse_mode: config.effective_inline_mouse_mode(),
+            ..Self::fullscreen(config)
+        }
+    }
+}
+
 #[cfg(feature = "crossterm")]
 pub(super) fn poll_events(
     events: &mut Vec<Event>,
@@ -628,14 +658,18 @@ pub(super) fn poll_events(
     accept_input: bool,
     tick_rate: Duration,
     on_resize: &mut impl FnMut() -> io::Result<()>,
-    config: &RunConfig,
+    policy: InputPolicy,
     on_suspend: &mut impl FnMut() -> io::Result<()>,
 ) -> io::Result<bool> {
+    let InputPolicy {
+        handle_ctrl_c,
+        handle_suspend,
+        mouse_mode,
+    } = policy;
     let mut has_resize = false;
     let batch_start = events.len();
     // #444: drop pointer events above the requested reporting level (Windows
     // consoles report every mouse record regardless of the mode).
-    let mouse_mode = config.effective_mouse_mode();
 
     fn process_ev(ev: &Event, has_resize: &mut bool) {
         *has_resize |= matches!(ev, Event::Resize(_, _));
@@ -645,10 +679,10 @@ pub(super) fn poll_events(
         let raw = event::read()?;
         let mut raw_events = 1;
         if let Some(ev) = event::from_crossterm(raw) {
-            if config.handle_ctrl_c && is_ctrl_c(&ev) {
+            if handle_ctrl_c && is_ctrl_c(&ev) {
                 return Ok(false);
             }
-            if config.handle_suspend && is_ctrl_z(&ev) {
+            if handle_suspend && is_ctrl_z(&ev) {
                 on_suspend()?;
                 return Ok(true);
             }
@@ -667,10 +701,10 @@ pub(super) fn poll_events(
             let raw = event::read()?;
             raw_events += 1;
             if let Some(ev) = event::from_crossterm(raw) {
-                if config.handle_ctrl_c && is_ctrl_c(&ev) {
+                if handle_ctrl_c && is_ctrl_c(&ev) {
                     return Ok(false);
                 }
-                if config.handle_suspend && is_ctrl_z(&ev) {
+                if handle_suspend && is_ctrl_z(&ev) {
                     on_suspend()?;
                     return Ok(true);
                 }

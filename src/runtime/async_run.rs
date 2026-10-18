@@ -489,7 +489,7 @@ fn run_async_loop_inner<M: Send + 'static>(
                 !input_disconnected,
                 wait,
                 &mut || term.handle_resize(),
-                &config,
+                InputPolicy::fullscreen(&config),
                 &mut on_suspend,
             )? {
                 break 'app;

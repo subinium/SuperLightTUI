@@ -66,6 +66,9 @@
   wheel, drag handles, scrollbar thumbs and the built-in text selection) and
   to `MouseMode::Click` when an SSH or mosh session is detected, so plain
   `slt::run` apps react to the mouse out of the box without a motion flood.
+  Inline and static runs (`run_inline*`, `run_static*`) default to
+  `MouseMode::Off` so CLI-style apps keep the terminal's scrollback wheel and
+  native selection (`RunConfig::effective_inline_mouse_mode()`).
   Hover styling and tooltips need `MouseMode::Hover`. The `RunConfig::mouse`
   field is replaced by `mouse_mode: Option<MouseMode>` (`None` = automatic);
   `RunConfig::mouse(true)` is kept and maps to `Hover` (the previous

@@ -129,6 +129,27 @@ fn runtime_pty_child() {
         println!("SLT_RESULT focus_scroll=true");
         return;
     }
+    if case == "default_inline" || case == "default_static" {
+        // #444: CLI-style runs keep the terminal's mouse (scrollback wheel,
+        // native selection) unless the app opts in.
+        let start = Instant::now();
+        let config = RunConfig::default().handle_suspend(false);
+        let draw = |ui: &mut slt::Context| {
+            ui.text("INLINE");
+            if start.elapsed() >= Duration::from_millis(300) {
+                ui.quit();
+            }
+        };
+        if case == "default_inline" {
+            slt::run_inline_with(3, config, draw).unwrap();
+        } else {
+            let mut output = slt::StaticOutput::new();
+            output.println("scrollback line");
+            slt::run_static_with(&mut output, 3, config, draw).unwrap();
+        }
+        println!("SLT_RESULT default_mouse_off=true");
+        return;
+    }
     if case == "boundary" || case.starts_with("inline") {
         let start = Instant::now();
         let mut first = true;
@@ -243,6 +264,11 @@ fn caught_panic_keeps_inline_modes() {
 #[test]
 fn supervised_panic_keeps_fullscreen_modes() {
     verify("background");
+}
+#[test]
+fn inline_and_static_default_to_mouse_off() {
+    verify("default_inline");
+    verify("default_static");
 }
 #[test]
 fn inline_mouse_uses_physical_viewport() {

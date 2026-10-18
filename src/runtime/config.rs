@@ -70,8 +70,8 @@ impl MouseMode {
     }
 }
 
-/// Resolve the reporting mode: an explicit mode always wins; the default is
-/// `Drag` locally and `Click` in a remote (SSH/mosh) session.
+/// Resolve the fullscreen reporting mode: an explicit mode always wins; the
+/// default is `Drag` locally and `Click` in a remote (SSH/mosh) session.
 pub(crate) fn resolve_mouse_mode(explicit: Option<MouseMode>, remote: bool) -> MouseMode {
     match explicit {
         Some(mode) => mode,
@@ -109,11 +109,22 @@ pub struct RunConfig {
     pub tick_rate: Duration,
     /// Mouse reporting mode, or `None` for the automatic default.
     ///
-    /// `None` (the default) resolves to [`MouseMode::Drag`] locally and to
-    /// [`MouseMode::Click`] when an SSH or mosh session is detected, so
-    /// clicks, the wheel, drag handles and text selection work out of the box
-    /// without flooding a remote link with motion events. Set an explicit mode
-    /// with [`mouse_mode`](Self::mouse_mode) (or the [`mouse`](Self::mouse)
+    /// `None` (the default) depends on the run mode:
+    ///
+    /// - Fullscreen ([`run`](crate::run), [`run_with`](crate::run_with), the
+    ///   async variants): [`MouseMode::Drag`] locally and [`MouseMode::Click`]
+    ///   when an SSH or mosh session is detected, so clicks, the wheel, drag
+    ///   handles and text selection work out of the box without flooding a
+    ///   remote link with motion events.
+    /// - Inline and static output ([`run_inline`](crate::run_inline),
+    ///   [`run_inline_with`](crate::run_inline_with),
+    ///   [`run_static`](crate::run_static),
+    ///   [`run_static_with`](crate::run_static_with)): [`MouseMode::Off`]. These
+    ///   CLI-style apps live in the normal screen, where mouse tracking would
+    ///   take the wheel away from the terminal's scrollback and replace its
+    ///   native selection.
+    ///
+    /// Set an explicit mode with [`mouse_mode`](Self::mouse_mode) (or the [`mouse`](Self::mouse)
     /// shorthand); an explicit mode is never overridden. Hover styling and
     /// tooltips need [`MouseMode::Hover`]. Since 0.26.0 (replaces the
     /// `mouse: bool` field).
@@ -372,9 +383,11 @@ impl RunConfig {
         self
     }
 
-    /// The mode a run loop will request: the explicit
+    /// The mode a fullscreen run loop will request: the explicit
     /// [`mouse_mode`](Self::mouse_mode), else [`MouseMode::Drag`] locally and
-    /// [`MouseMode::Click`] in an SSH or mosh session.
+    /// [`MouseMode::Click`] in an SSH or mosh session. Inline and static runs
+    /// use the explicit mode or [`MouseMode::Off`]; see
+    /// [`effective_inline_mouse_mode`](Self::effective_inline_mouse_mode).
     pub fn effective_mouse_mode(&self) -> MouseMode {
         // The run loops ask on every input poll; the environment is read once.
         static REMOTE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -382,6 +395,22 @@ impl RunConfig {
             self.mouse_mode,
             *REMOTE.get_or_init(crate::context::session_is_remote),
         )
+    }
+
+    /// The mode an inline or static run loop will request: the explicit
+    /// [`mouse_mode`](Self::mouse_mode), else [`MouseMode::Off`] so the
+    /// terminal keeps its scrollback wheel and native selection. Since 0.26.0.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::{MouseMode, RunConfig};
+    /// assert_eq!(RunConfig::default().effective_inline_mouse_mode(), MouseMode::Off);
+    /// let opted_in = RunConfig::default().mouse_mode(MouseMode::Click);
+    /// assert_eq!(opted_in.effective_inline_mouse_mode(), MouseMode::Click);
+    /// ```
+    pub fn effective_inline_mouse_mode(&self) -> MouseMode {
+        self.mouse_mode.unwrap_or(MouseMode::Off)
     }
 
     /// Enable or disable Kitty keyboard protocol.

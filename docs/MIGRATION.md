@@ -96,7 +96,10 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
   region can move is left unconsumed, so `ui.scroll_up()` / `ui.scroll_down()`
   may now see it where the innermost region used to swallow it.
 - **Mouse on by default (#444).** Plain `slt::run` now captures the mouse in
-  `MouseMode::Drag` (or `Click` over SSH/mosh). Apps that relied on the
+  `MouseMode::Drag` (or `Click` over SSH/mosh). Inline and static runs
+  (`run_inline*`, `run_static*`) keep the mouse off unless you pass a mode, so
+  their wheel still scrolls the terminal; an inline app that already called
+  `.mouse(true)` is unchanged. Apps that relied on the
   terminal's native selection by default should set
   `RunConfig::default().mouse_mode(MouseMode::Off)` (or `.mouse(false)`);
   users can also Shift-drag to select natively on most emulators. Hover

@@ -11,8 +11,12 @@ Since v0.26, `slt::run` turns mouse reporting **on**. `RunConfig::default()`
 leaves `mouse_mode` at `None`, which resolves to `MouseMode::Drag` locally and
 to `MouseMode::Click` when an SSH or mosh session is detected (`SSH_CONNECTION`,
 `SSH_TTY` or `MOSH_IP` set). Clicks, the wheel, split handles, scrollbar thumbs
-and the built-in text selection work with no configuration. An explicit mode
-is never overridden:
+and the built-in text selection work with no configuration. Inline and static
+runs (`run_inline`, `run_inline_with`, `run_static`, `run_static_with`) default
+to `MouseMode::Off` instead: those CLI-style apps share the normal screen with
+the shell, where mouse tracking would take the wheel away from the terminal's
+scrollback and replace its native selection. Pass a mode to opt in. An
+explicit mode is never overridden:
 
 <!-- slt-check: {"name":"ix_enable_mouse","features":["crossterm"],"context":"module"} -->
 ```rust

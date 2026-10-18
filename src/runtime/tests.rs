@@ -568,6 +568,30 @@ fn remote_fallback_applies_only_to_the_default() {
 }
 
 #[test]
+fn inline_and_static_runs_default_to_mouse_off() {
+    use crate::MouseMode;
+    assert_eq!(
+        RunConfig::default().effective_inline_mouse_mode(),
+        MouseMode::Off
+    );
+    for mode in [MouseMode::Click, MouseMode::Drag, MouseMode::Hover] {
+        assert_eq!(
+            RunConfig::default()
+                .mouse_mode(mode)
+                .effective_inline_mouse_mode(),
+            mode,
+            "an explicit mode is honored inline too"
+        );
+    }
+    assert_eq!(
+        RunConfig::default()
+            .mouse(true)
+            .effective_inline_mouse_mode(),
+        MouseMode::Hover
+    );
+}
+
+#[test]
 fn mouse_mode_filter_matches_the_reporting_level() {
     use crate::MouseMode;
     let moved = Event::mouse_move(1, 1);

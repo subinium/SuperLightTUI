@@ -197,6 +197,11 @@ try:
     elif case == "boundary":
         assert data.count(b"\x1b[?1049h") == data.count(b"\x1b[?1049l") == 0, data
         assert data.count(b"\x1b[?1000h") == data.count(b"\x1b[?1000l") == 1, data
+    elif case.startswith("default_"):
+        assert b"default_mouse_off=true" in data, data
+        for mode in (b"1000", b"1002", b"1003", b"1006"):
+            assert b"\x1b[?" + mode + b"h" not in data, data
+            assert b"\x1b[?" + mode + b"l" not in data, data
     elif case == "background":
         assert b"panic=true" in data, data
         assert data.count(b"\x1b[?1049h") == data.count(b"\x1b[?1049l") == 1, data
